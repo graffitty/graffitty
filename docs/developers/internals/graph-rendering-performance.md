@@ -54,18 +54,27 @@ interaction and lifecycle behavior.
 
 ## Process discovery is separate from graph rendering
 
-Recurring agent/app discovery no longer executes `ps` on macOS, Linux or Android.
-`apps/cli/src/process_inventory.rs` uses libproc on macOS and `/proc` on Linux /
-Android, retaining UTC start-time identity checks. Windows retains its native process
-adapter. This is not a claim that all discovery is event-driven: the server's bounded
-discovery timers still exist.
+The server refreshes foreground apps on a group change and every 400 ms. A background
+thread reads the pane processes in the server. The periodic read detects an exec or a
+new integration within the same foreground group.
 
-They also detect exec within an unchanged foreground process group and provider session
-registration after launch. Removing those timers requires equivalent process and
-provider-file notifications, not just dropping the refresh and leaving stale identities.
+Provider discovery runs in a separate helper every two seconds while there are panes.
+A manager thread launches, times out and reaps helpers. The input thread queues requests
+and collects completed results.
 
-Resource Monitor is separate: `crates/platform/resource-monitor` has its own shared
-sampling worker and native backends; it does not use this CLI process inventory.
+- macOS reads foreground group members and their parent chains back to the pane shell.
+- Linux and Android walk the shell’s descendants using each thread’s `children` file.
+  Kernels without this procfs interface use a process table.
+- Windows uses a Toolhelp parent snapshot and opens processes in the pane trees for
+  executable names and creation times. Job Objects provide terminal resource accounting.
+
+An agent registered in a pane may keep running in the background. Its PID and start
+time can be checked directly. Checkpoint capture and hook ancestry still use process
+tables. Resource Monitor has its own sampling worker and native backends.
+
+Run `python3 tests/server/private_session_latency.py` for private-server key-to-echo
+and provider scan timings. Set `GRAFFITTY_TEST_SERVER` to compare binaries built with
+the same profile. The probe measures a complete scene update for each numbered echo.
 
 Test servers must be shut down after replay tests. Abandoned servers duplicate
 inventory work even when no frontend is attached. Profiling should isolate these

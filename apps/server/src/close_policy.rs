@@ -76,6 +76,21 @@ mod windows_tests {
     use portable_pty::{CommandBuilder, PtySize};
     use std::time::{Duration, Instant};
 
+    /// ConPTY asks the terminal to identify itself (DA1) and holds the shell
+    /// for up to 3 s until it answers. Answer like a terminal does.
+    fn answer_device_attributes(master: &dyn portable_pty::MasterPty) {
+        let mut reader = master.try_clone_reader().unwrap();
+        let mut writer = master.take_writer().unwrap();
+        std::thread::spawn(move || {
+            let mut buffer = [0u8; 4096];
+            while let Ok(read @ 1..) = std::io::Read::read(&mut reader, &mut buffer) {
+                if buffer[..read].windows(3).any(|w| w == b"\x1b[c") {
+                    let _ = std::io::Write::write_all(&mut writer, b"\x1b[?62;22c");
+                }
+            }
+        });
+    }
+
     #[test]
     fn fresh_job_query_distinguishes_idle_shell_and_child() {
         for (script, expected) in [
@@ -88,6 +103,7 @@ mod windows_tests {
             command.args(["/d", "/k", script]);
             command.set_job(boundary.handle());
             let mut child = pair.slave.spawn_command(command).unwrap();
+            answer_device_attributes(&*pair.master);
             let pid = child.process_id().unwrap();
             boundary.register(pid);
             let deadline = Instant::now() + Duration::from_secs(2);

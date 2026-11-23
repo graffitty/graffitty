@@ -467,11 +467,20 @@ impl Holder {
             st.core_left = now;
             let restart = st.restart.clone();
             drop(st);
-            if let Err(e) = pty::spawn_detached(&restart, &self.log) {
+            if let Err(e) = spawn_detached(&restart, &self.log) {
                 eprintln!("holder: cannot start server: {e}");
             }
         }
     }
+}
+
+/// Starts the server again on its own, logging to `log`.
+fn spawn_detached(argv: &[String], log: &std::path::Path) -> io::Result<()> {
+    let (program, args) = argv.split_first().ok_or_else(|| io::Error::other("empty restart command"))?;
+    let output = std::fs::OpenOptions::new().create(true).append(true).open(log)?;
+    let mut cmd = std::process::Command::new(program);
+    cmd.args(args).stdin(std::process::Stdio::null()).stdout(output.try_clone()?).stderr(output);
+    crate::holder_link::spawn_apart(&mut cmd)
 }
 
 /// herdr's platform PTY calls, served by Graffitty's portable-pty fork so held
@@ -608,15 +617,6 @@ mod pty {
             }
         }
     }
-
-    /// Starts the server again on its own, logging to `log`.
-    pub fn spawn_detached(argv: &[String], log: &std::path::Path) -> io::Result<()> {
-        let (program, args) = argv.split_first().ok_or_else(|| io::Error::other("empty restart command"))?;
-        let output = std::fs::OpenOptions::new().create(true).append(true).open(log)?;
-        let mut cmd = std::process::Command::new(program);
-        cmd.args(args).stdin(std::process::Stdio::null()).stdout(output.try_clone()?).stderr(output);
-        crate::holder_link::spawn_apart(&mut cmd).map(drop)
-    }
 }
 
 /// The same calls on Windows:
@@ -739,14 +739,5 @@ mod pty {
 
     pub fn wait(child: &mut Process) -> io::Result<(Option<i32>, Option<i32>)> {
         child.wait().map(|status| (Some(status.exit_code() as i32), None))
-    }
-
-    /// Starts the server again as an independent process. Its output goes to `log`.
-    pub fn spawn_detached(argv: &[String], log: &std::path::Path) -> io::Result<()> {
-        let (program, args) = argv.split_first().ok_or_else(|| io::Error::other("empty restart command"))?;
-        let output = std::fs::OpenOptions::new().create(true).append(true).open(log)?;
-        let mut cmd = std::process::Command::new(program);
-        cmd.args(args).stdin(std::process::Stdio::null()).stdout(output.try_clone()?).stderr(output);
-        crate::holder_link::spawn_apart(&mut cmd).map(drop)
     }
 }

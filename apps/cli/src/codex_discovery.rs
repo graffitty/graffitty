@@ -241,9 +241,7 @@ pub fn verify(target: &Value, home: &Path, pid: i64) -> Result<Rpc> {
     if !same_binding(&found, target) {
         return Err("Codex frontend thread binding changed".into());
     }
-    let table = crate::sessions::processes();
-    if table
-        .get(&pid)
+    if crate::sessions::process(pid).ok()
         .is_none_or(|p| target["started"].as_str() != Some(p.started.as_str()))
         || listener_ports(pid) != ports
     {

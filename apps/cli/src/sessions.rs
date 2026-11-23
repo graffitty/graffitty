@@ -253,8 +253,7 @@ pub(crate) struct Process {
 }
 #[cfg(windows)]
 pub(crate) fn processes() -> HashMap<i64, Process> {
-    crate::platform::processes().into_iter().map(|(pid, parent, started, executable)|
-        (pid, Process { pid, parent, started, executable, group: 0, foreground: 0, tty: String::new(), state: String::new() })).collect()
+    crate::platform::processes(None)
 }
 #[cfg(any(target_os = "macos", target_os = "linux", target_os = "android"))]
 pub(crate) fn processes() -> HashMap<i64, Process> {
@@ -263,6 +262,25 @@ pub(crate) fn processes() -> HashMap<i64, Process> {
 #[cfg(all(unix, not(any(target_os = "macos", target_os = "linux", target_os = "android"))))]
 pub(crate) fn processes() -> HashMap<i64, Process> {
     process_list(&output("ps", &["-ax", "-o", PROCESS_LIST_FORMAT]).unwrap_or_default())
+}
+
+/// Only the supplied panes need executable paths and creation times during discovery.
+pub(crate) fn pane_processes(roots: &[i64]) -> HashMap<i64, Process> {
+    #[cfg(windows)]
+    { crate::platform::processes(Some(roots)) }
+    #[cfg(any(target_os = "macos", target_os = "linux", target_os = "android"))]
+    { crate::process_inventory::panes(roots) }
+    #[cfg(all(unix, not(any(target_os = "macos", target_os = "linux", target_os = "android"))))]
+    { let _ = roots; processes() }
+}
+
+#[cfg(windows)]
+pub(crate) use crate::platform::process;
+#[cfg(any(target_os = "macos", target_os = "linux", target_os = "android"))]
+pub(crate) use crate::process_inventory::process;
+#[cfg(all(unix, not(any(target_os = "macos", target_os = "linux", target_os = "android"))))]
+pub(crate) fn process(pid: i64) -> std::io::Result<Process> {
+    processes().remove(&pid).ok_or(std::io::ErrorKind::NotFound.into())
 }
 
 /// The columns of a process list: `ps -ax -o` with this format prints one.
@@ -388,7 +406,7 @@ pub(crate) fn foreground(pid: i64, table: &HashMap<i64, Process>) -> Option<&Pro
     loop {
         let before = descendants.len();
         for process in table.values() {
-            if descendants.contains(&process.parent) && table.get(&process.parent).is_some_and(|parent| parent.started <= process.started) {
+            if descendants.contains(&process.parent) && table.get(&process.parent).is_some_and(|parent| parent.started.parse::<u64>().ok().zip(process.started.parse::<u64>().ok()).is_some_and(|(parent, child)| parent <= child)) {
                 descendants.insert(process.pid);
             }
         }
