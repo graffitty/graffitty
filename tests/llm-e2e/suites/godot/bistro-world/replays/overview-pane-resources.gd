@@ -32,7 +32,7 @@ func play() -> void:
 	for key in keys:
 		var pane: Control = view.panes[key]
 		var sample_at: Vector2 = view.canvas.canvas_transform * (pane.position + pane.size * Vector2(.5, .8))
-		# Canvas coordinates are logical pixels; its texture is supersampled.
+		# Convert the logical sample point to the allocated texture’s pixels.
 		sample_at *= Vector2(canvas_image.get_size()) / Vector2(view.canvas.size_2d_override)
 		var alpha := canvas_image.get_pixelv(Vector2i(sample_at)).a
 		check(absf(alpha - .85) < .02, "%s renders an 85%% opaque blank background (%.3f at %s)" % [key, alpha, sample_at])

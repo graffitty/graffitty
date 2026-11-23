@@ -4,6 +4,7 @@ signal workspace_typed
 
 var _workspace_projection: Array = []
 var _workspace_clip_top := 0.0
+const ViewportUpdates := preload("res://scenes/TerminalViewportUpdates.gd")
 const RenderUpdates := preload("res://scenes/RenderUpdates.gd")
 ## Optional all-in-one workspace presenter. Basic worlds own their own UI.
 @export var terminal_space_scene: PackedScene
@@ -75,10 +76,6 @@ const TERMINAL_FRAME_FRACTION := 0.90
 # 1.0 covers the window exactly. Larger pulls the camera back and lets the world
 # show around the canvas, which is a letterbox by another name.
 const CANVAS_COVER_MARGIN := 1.0
-# A window can be any shape, and the covering texture grows with the shorter
-# axis. This bounds it; past the cap the grid is simply sampled below 1:1.
-const TERMINAL_TEXTURE_MAX_SIDE := 8192.0
-const TERMINAL_SUPERSAMPLING := 2.0
 # The terminal surface is a decal over the corresponding world wall. Keep it
 # a few centimetres toward the viewer to avoid coplanar depth fighting.
 const TERMINAL_SURFACE_LIFT := 0.06
@@ -897,10 +894,10 @@ func _make_terminal() -> Dictionary:
 	var initial_rect := _terminal_content_rect(Vector2i(1600, 1000))
 	t.position = initial_rect.position
 	t.size = initial_rect.size
-	preload("res://scenes/TerminalViewportUpdates.gd").configure(vp, t)
+	ViewportUpdates.configure(vp, t)
 	if host != null:
 		# Topology can create mirrors for tabs that have never been selected.
-		preload("res://scenes/TerminalViewportUpdates.gd").set_visible(vp, false)
+		ViewportUpdates.set_visible(vp, false)
 	vp.add_child(t)
 	var integration := preload("res://scenes/TerminalIntegrationUI.gd").new()
 	integration.application = host.application if host != null else null
@@ -1363,6 +1360,12 @@ func _update_ink_view() -> void:
 
 
 func _prepare_ink_frame() -> void:
+	if ink_active and not session_transition_capture.is_empty():
+		# Binding can repaint the live canvas at the destination's density.
+		# Keep the last rendered ink (including any interrupted passes) until
+		# the retained departure takes its place. No GPU readback is needed.
+		ink_vp.render_target_update_mode = SubViewport.UPDATE_DISABLED
+		return
 	# SceneTree tweens (pane reveals, fit and Main View) run after _process. Copy
 	# their final camera before rendering, not one frame earlier: the canvas crop
 	# and scenery already use that new pose.
@@ -1512,30 +1515,25 @@ func _sync_terminal_viewport_size() -> void:
 		if fx_mat != null:
 			RenderUpdates.uniform(fx_mat, "tex_size", _sheet_size())
 		return
-	## The texture keeps the authored canvas aspect, and is the smallest such
-	## rectangle that COVERS the window — the same rectangle the camera frames.
-	##
-	## Keep layout in logical pixels; rasterize at twice the width and height.
-	## Canvas stretching enables font oversampling without changing PTY metrics.
+	# The authored sheet covers the window at its own aspect. The window size
+	# is already in backing pixels. Keep the layout used for PTY and font
+	# metrics even when the area budget requires a smaller texture.
 	if term_vp == null:
 		return
 	var aspect := _canvas_aspect()
 	var win := _window_render_size()
-	var height := maxf(win.y, win.x / aspect)
-	height = minf(height, TERMINAL_TEXTURE_MAX_SIDE / maxf(aspect, 1.0))
-	height = minf(height, TERMINAL_TEXTURE_MAX_SIDE)
-	var desired := Vector2i(maxi(int(ceili(height * aspect)), 1), maxi(int(ceili(height)), 1))
-	var raster_scale := minf(
-		TERMINAL_SUPERSAMPLING,
-		TERMINAL_TEXTURE_MAX_SIDE / maxf(desired.x, desired.y),
-	)
-	var raster_size := Vector2i(Vector2(desired) * raster_scale)
+	var height := minf(maxf(win.y, win.x / aspect), ViewportUpdates.MAX_SIDE / maxf(aspect, 1.0))
+	var desired := Vector2i(ceili(height * aspect), ceili(height)).max(Vector2i.ONE)
+	var raster_scale := ViewportUpdates.bounded_scale(Vector2(desired), 1.0, ViewportUpdates.target_pixel_limit())
+	var raster_size := Vector2i((Vector2(desired) * raster_scale).floor()).max(Vector2i.ONE)
 	term_vp.size_2d_override = desired
 	term_vp.size_2d_override_stretch = true
 	term_vp.oversampling = true
 	if term_vp.size != raster_size:
 		term_vp.size = raster_size
 	if term != null:
+		if term.has_method("set_raster_scale"):
+			term.set_raster_scale(raster_scale)
 		var content_rect := _terminal_content_rect(desired)
 		term.position = content_rect.position
 		term.size = content_rect.size
@@ -2224,17 +2222,28 @@ func begin_session_transition(animate := true) -> void:
 		return
 	var origin := _effect_surface_frame(Vector2.ZERO).origin
 	var shape := _piece_sheet_shape()
-	var layers: Array = []
+	# The live sheet can still draw while the server binds the destination.
+	# Freeze its complete lens with its displayed pose through that interval.
+	# The short Fly Away handoff lands while its scatter is still departing.
+	# Reach its idle look by mid-flight even when the backings outlast it.
+	var fade_end := minf(CellShatterScript.BACKING_FLIGHT_FRACTION, 0.5 * _transition_duration() / _tab_departure_duration())
+	var departing_lens := Vector3(terminal_effects.focus_depth, terminal_effects.blur_radius, terminal_effects.depth_range)
+	session_transition_capture = {"origin": origin, "du": uv_du, "dv": uv_dv, "layers": [], "retiring": retiring,
+		"camera": {"transform": cam.global_transform, "rect": proj_rect},
+		"focus_depth": departing_lens.x, "lens_zoom": terminal_lens_zoom,
+		# Only the departing pieces carry the aperture after binding.
+		"optics": Vector3(0.0, departing_lens.z, terminal_effects.defocus_weight)}
+	cancel_typing_effects()
 	if not interrupted:
-		layers = _workspace_transition_layers(origin, uv_du, uv_dv, shape)
+		var layers := _workspace_transition_layers(origin, uv_du, uv_dv, shape)
 		var windows := _shown_panes()
 		for i in windows.size():
 			layers.append_array(_window_layers(windows[i], origin, uv_du, uv_dv, shape, i))
-	for layer in layers: layer.hide()
-	session_transition_capture = {"origin": origin, "du": uv_du, "dv": uv_dv, "layers": layers, "retiring": retiring,
-		"camera": {"transform": cam.global_transform, "rect": proj_rect},
-		"focus_depth": terminal_effects.focus_depth, "lens_zoom": terminal_lens_zoom,
-		"optics": Vector3(terminal_effects.blur_radius, terminal_effects.depth_range, terminal_effects.defocus_weight)}
+		for layer in layers:
+			layer.departing_lens = departing_lens
+			layer.aperture_end_phase = fade_end / CellShatterScript.BACKING_FLIGHT_FRACTION if layer.has_meta("panel") else fade_end
+			layer.hide()
+		session_transition_capture.layers = layers
 
 func finish_session_transition() -> void:
 	if session_transition_capture.is_empty(): return
@@ -2252,22 +2261,17 @@ func finish_session_transition() -> void:
 	# departing view before starting the session's actual world-space flight.
 	camera_motion.reset(captured.camera)
 	_display_camera_frame(captured.camera)
-	# Restore the departing camera's optical plane before interpolation.
-	# Binding the new session resets the live lens, but the departing panes
-	# are still visible and need their original focus.
+	# Restore the captured focus and tint before any retained pass draws.
 	lens_transition_from = captured.focus_depth
 	lens_transition_zoom_from = captured.lens_zoom
 	lens_transition_optics_from = captured.optics
 	lens_transition_t = 0.0
-	terminal_effects.focus_depth = captured.focus_depth
-	terminal_effects.blur_radius = captured.optics.x
-	terminal_effects.depth_range = captured.optics.y
-	terminal_effects.defocus_weight = captured.optics.z
-	terminal_lens_zoom = captured.lens_zoom
-	# Only the arriving flight target should drop the old adaptive correction.
-	# Its departure is already the complete captured camera frame above.
-	if fx_camera != null: fx_camera.reset_projection()
+	# The departure already includes the typing transform. Aim directly at
+	# the arriving session's resting view, as for a tab navigation.
+	fx_typing = 0.0
+	_settle_camera_at_rest()
 	_begin_navigation(-1, active, 0.0)
+	_update_terminal_lens()
 	_start_tab_transition(captured.origin, captured.du, captured.dv,
 		walls[surface.id], surface.eye, term, term_vp, [], {}, [], captured.layers)
 	_sync_tab_transition_deadline()
@@ -2493,6 +2497,10 @@ func _process_body(dt: float) -> void:
 	):
 		term.grab_focus()
 	_step_navigation(elapsed)
+	# Focus and tint land with the camera even when a slow frame exceeds
+	# the typing simulation's 50 ms step.
+	if lens_transition_t >= 0.0:
+		lens_transition_t += elapsed
 	_step_terminal_dof(minf(dt, elapsed))
 	if world_awake or Time.get_ticks_msec() < pointer_active_until or fly_dur > 0.0:
 		_fx_step(minf(dt, elapsed))
@@ -2701,7 +2709,11 @@ func _fx_step(dt: float) -> void:
 	RenderUpdates.uniform(fx_mat, "edge_shadow_width", fx_edge_shadow_width)
 	RenderUpdates.uniform(fx_mat, "content_gloss", fx_content_gloss * effect_control.weight("sheet.gloss"))
 	_sync_graphics_planes()
+	_update_terminal_lens()
 
+
+func _update_terminal_lens() -> void:
+	if not session_transition_capture.is_empty(): return
 	# Focus on the cursor. update_lens() hands Godot's bokeh pass the focus and
 	# dof_blur_amount directly; the physical attributes only carry exposure.
 	if fx_attr != null and active >= 0:
@@ -2719,7 +2731,6 @@ func _fx_step(dt: float) -> void:
 		var lens_progress := 1.0
 		terminal_lens_zoom = fx_cam_zoom * gesture_zoom
 		if lens_transition_t >= 0.0:
-			lens_transition_t += dt
 			lens_progress = smoothstep(0.0, 1.0, lens_transition_t / lens_transition_duration)
 			lens_depth = transition_focus_depth(
 				lens_transition_from,
@@ -2728,12 +2739,15 @@ func _fx_step(dt: float) -> void:
 			)
 			# The destination camera controller resets at a switch. The displayed
 			# lens must retain the outgoing zoom and follow the same smooth flight.
-			terminal_lens_zoom = lerpf(lens_transition_zoom_from, terminal_lens_zoom,
-				smoothstep(0.0, 1.0, lens_transition_t / lens_transition_duration))
+			terminal_lens_zoom = lerpf(lens_transition_zoom_from, terminal_lens_zoom, lens_progress)
 			if lens_transition_t >= lens_transition_duration:
 				lens_transition_t = -1.0
 		terminal_effects.blur_limit = 24.0
 		terminal_effects.blur_weight = terminal_dof_weight
+		# Input may already reach the new terminal while frozen pieces are
+		# still on screen, including dust that outlives the live handoff.
+		if session_transition_active and (tab_fx_wall != null or not tab_fx_stale.is_empty()):
+			terminal_effects.blur_weight = 0.0
 		terminal_effects.screen_dof = ink_active and ink_dof != null
 		terminal_effects.update_lens(
 			cam,
@@ -2778,7 +2792,7 @@ func _sync_graphics_planes() -> void:
 		if pair.term.get_meta("graphics_plane_binding", []) != binding:
 			pair.term.set_image_plane_material(material)
 			pair.term.set_meta("graphics_plane_binding", binding)
-			preload("res://scenes/TerminalViewportUpdates.gd").request(pair.vp)
+			ViewportUpdates.request(pair.vp)
 		var pane_scale: float = host.workspace_view.terminal_scale(key)
 		var at: Vector2 = host.workspace_view.terminal_origin(key) + Vector2(pair.term.position) * pane_scale
 		var projection := preload("res://scenes/GraphicsPlane.gd").projection(
@@ -2795,7 +2809,7 @@ func _sync_graphics_planes() -> void:
 		if RenderUpdates.uniform(material, "plane_projection", projection):
 			# This material transforms cached images inside the terminal viewport.
 			# Camera motion must redraw it even when no terminal frame has changed.
-			preload("res://scenes/TerminalViewportUpdates.gd").request(pair.vp)
+			ViewportUpdates.request(pair.vp)
 
 
 func _step_terminal_dof(dt: float) -> void:
@@ -3931,10 +3945,10 @@ func _shatter_test() -> void:
 	add_child(pieces)
 	# Text: many small pieces, scattered wide, gently turning.
 	var cells: Array = []
-	for glyph in term.cell_glyphs():
-		var at := Vector2i(glyph.col, glyph.row)
+	for cut in preload("res://scenes/RetainedViewport.gd").terminal_state(term).flight_cells():
+		var at := Vector2i(cut.x, cut.y)
 		if not claimed.any(func(region): return region.has_point(at)):
-			cells.append(Vector3i(at.x, at.y, 2 if glyph.get("wide", false) else 1))
+			cells.append(cut)
 	var count: int = pieces.build_cells(
 		term,
 		term_vp,
@@ -4313,7 +4327,7 @@ func _start_tab_transition(
 			tab_fx_out.append(layer)
 		_await_arrival(wall)
 		return
-	var out_ratio := dust_flying_ratio(out_term)
+	var out_ratio := dust_flying_ratio(out_term) if dust_effect() else -1.0
 	var out_cells: Array = _transition_cells(out_term, out_ratio)
 	out_cells = CellShatterScript.limit_layers(out_cells, scatter_block_budget())
 	var out_rect := _terminal_content_rect(CoreTerminalEffects.layout_size(out_vp))
@@ -4388,7 +4402,7 @@ func _release_prepared_viewports() -> void:
 	for viewport in _tab_fx_prepared_viewports:
 		if is_instance_valid(viewport):
 			viewport.remove_meta("terminal_transition_live")
-			preload("res://scenes/TerminalViewportUpdates.gd").set_capture_active(viewport, false)
+			ViewportUpdates.set_capture_active(viewport, false)
 			# Restore the camera crop once preparation and live-layer holds end.
 			viewport.emit_signal("render_budget_changed")
 	_tab_fx_prepared_viewports.clear()
@@ -4430,7 +4444,7 @@ func _transition_sources_ready(check_painted := true) -> bool:
 		if pair.vp not in _tab_fx_prepared_viewports:
 			_tab_fx_prepared_viewports.append(pair.vp)
 			pair.vp.set_meta("terminal_transition_live", live_arrival())
-			preload("res://scenes/TerminalViewportUpdates.gd").set_capture_active(pair.vp, true)
+			ViewportUpdates.set_capture_active(pair.vp, true)
 			pair.vp.emit_signal("render_budget_changed")
 		ready = ready and (not check_painted or pair.term.is_render_snapshot_ready())
 		layout_frame.append([pair.term.get_instance_id(), pair.term.position, pair.term.size, pair.term.get_grid_size()])
@@ -4559,16 +4573,8 @@ func _window_layers(
 			terminal = [
 				_build_background_pieces(pair.vp, rect, window_origin, window_du, window_dv)
 			]
-			var fly_ratio := dust_flying_ratio(pair.term)
+			var fly_ratio := dust_flying_ratio(pair.term) if dust_effect() else -1.0
 			var cells: Array = _transition_cells(pair.term, fly_ratio)
-			# The cursor holds no glyph, but it is drawn with the text and goes with it.
-			var cursor: Vector2i = pair.term.get_cursor_cell()
-			var covered := cursor.x < 0
-			for group in cells:
-				for cell in group:
-					covered = covered or (cursor.x >= cell.x and cursor.x < cell.x + cell.z and cell.y == cursor.y)
-			if not covered and not dust_effect():
-				cells[0].append(Vector3i(cursor.x, cursor.y, 1))
 			cells = CellShatterScript.limit_layers(cells, scatter_block_budget())
 			for i in LAYERS.size():
 				if cells[i].is_empty():
@@ -4827,7 +4833,7 @@ func _build_arriving_layers_at_destination() -> void:
 		return
 	if term == null or term_vp == null:
 		return
-	var fly_ratio := dust_flying_ratio(term)
+	var fly_ratio := dust_flying_ratio(term) if dust_effect() else -1.0
 	var cells: Array = _transition_cells(term, fly_ratio)
 	cells = CellShatterScript.limit_layers(cells, scatter_block_budget())
 	var rect := _terminal_content_rect(CoreTerminalEffects.layout_size(term_vp))
@@ -5199,6 +5205,7 @@ func _prepare_transition_layer(layer: Node) -> void:
 
 
 func _update_transition_lens(layer: Node) -> void:
+	if layer.departing_lens.y > 0.0: return # set_fly owns this capture's lens
 	layer._material().set_shader_parameter("focus_depth", terminal_effects.focus_depth)
 	layer._material().set_shader_parameter(
 		"blur_radius",
@@ -5225,7 +5232,7 @@ func _layer_fly(layer: Node, value: float, arriving := false) -> float:
 		mat.render_priority = int(layer.get_meta("depth_priority")) - (0 if front else 128)
 		return DepthMotion.phase(value)
 	# Backings leave first and return last; arrival runs value from one to zero.
-	return clampf(value / 0.30, 0.0, 1.0) if layer.has_meta("panel") else value
+	return clampf(value / CellShatterScript.BACKING_FLIGHT_FRACTION, 0.0, 1.0) if layer.has_meta("panel") else value
 
 
 func _build_background_pieces(
@@ -5433,9 +5440,12 @@ func dust_flying_ratio(source: Node = null) -> float:
 		# choose this before switching focus, separately for departure/arrival.
 		for key in _shown_windows():
 			var pair: Dictionary = host.sessions.get(int(key.substr(1)), {})
-			if not pair.is_empty(): count += builder.cells(pair.term, 0).size()
+			if not pair.is_empty():
+				var snapshot := preload("res://scenes/RetainedViewport.gd").terminal_state(pair.term)
+				if snapshot != null: count += snapshot.occupied_cell_count()
 	elif source != null:
-		count = builder.cells(source, 0).size()
+		var snapshot := preload("res://scenes/RetainedViewport.gd").terminal_state(source)
+		if snapshot != null: count = snapshot.occupied_cell_count()
 	var settings: Dictionary = fx_cfg.scene.session_switch
 	return builder.flying_ratio(count, float(settings.fly_ratio_sparse), float(settings.fly_ratio_dense), int(settings.fly_dense_count))
 
@@ -5468,14 +5478,14 @@ func _layer_split(from: Node = null) -> Dictionary:
 	var cells: Array = [[], [], [], [], []]
 	var samples: Array = ["", "", "", "", ""]
 	var total := 0
-	if source == null or not source.has_method("cell_glyphs"):
+	if source == null or not source.has_method("capture_render_state"):
 		return { "cells": cells, "samples": samples, "total": total }
-	for entry in source.call("cell_glyphs"):
+	var snapshot := preload("res://scenes/RetainedViewport.gd").terminal_state(source)
+	if snapshot == null: return { "cells": cells, "samples": samples, "total": total }
+	for entry in snapshot.flight_glyphs():
 		var g: Dictionary = entry
 		var layer := _glyph_layer(int(g["cp"]), int(g["style"]), int(g["font"]))
-		cells[layer].append(
-			Vector3i(int(g["col"]), int(g["row"]), 2 if g.get("wide", false) else 1)
-		)
+		cells[layer].append(g.rect)
 		if samples[layer].length() < 12:
 			samples[layer] += char(int(g["cp"]))
 		total += 1

@@ -1,38 +1,54 @@
 # SSH server deployment
 
-Build a bundle for the destination computer before using `gft remote connect`.
-For user setup, see [remote access](../../remote-access/index.md).
+Run `gft remote connect user@computer` from the client. OpenSSH handles
+authentication and host-key checks. For user setup, see [remote access](../../remote-access/index.md).
 
-## Build a bundle
+## Release installations
 
-```sh
-mise run cli:build
-mise run server:bundle
-```
+Graffitty reuses a running Graffitty server that holds the SSH connection descriptor’s lock. To start a server, it looks for
+the client’s exact `gft --version` in the standard installer locations.
 
-- Build on the destination platform, or a matching VM/CI runner.
-- Output: `dist/remote/<os>-<arch>/`.
-- Copy that folder into the client's `dist/remote/`.
-- The CLI selects the matching OS/CPU bundle; it does not download a substitute.
+| Remote platform | Installer location |
+| --- | --- |
+| Linux | `~/.local/bin/gft` or `$XDG_DATA_HOME/graffitty/installs/current/tools/gft` (the data directory defaults to `~/.local/share`) |
+| macOS | `~/.local/bin/gft` or `/Applications/Graffitty.app/Contents/Resources/graffitty/tools/gft` |
+| Windows | `%LOCALAPPDATA%\Programs\Graffitty\tools\gft.exe` |
 
-```sh
-dist/bin/gft remote connect user@computer
-```
+The Unix lookup also honors the remote account’s `GRAFFITTY_BIN_DIR`,
+`GRAFFITTY_INSTALL_DIR` (Linux), and `GRAFFITTY_APP_DIR` (macOS).
 
-Or provide an executable built for the destination:
+On a fresh host or a version mismatch, the client runs the current
+`install.sh` or `install.ps1` from graffitty.com over SSH. It sets
+`GRAFFITTY_VERSION` to the client’s release tag and `GRAFFITTY_NO_DESKTOP=1`.
+The remote downloads the archive for its own OS and CPU. If it cannot
+download, the client reads the same release listing, verifies the archive’s
+SHA-256, and uploads the archive, installer, and a one-entry listing. The
+installer verifies the uploaded archive again. The client removes the staging
+files after installation.
+
+Set `GRAFFITTY_RELEASES` on the client to use a release mirror. An HTTPS base
+URL is used on both computers. An absolute local directory is read on the
+client and selects the upload path directly. The installer itself comes from
+graffitty.com in either case.
+
+## Development builds
+
+To use a custom build, point the client at the executable built for the remote
+platform. An adjacent filetree or macOS Chromium runtime archive from
+`mise run server:bundle` is uploaded with it.
 
 ```sh
 gft remote connect build-server --server-binary /path/to/gft
 ```
 
-## Install the bundle
+If the client version has no published release and its OS and CPU match the
+destination, the client can upload its own executable. For other development
+targets, supply `--server-binary`.
 
-- Linux/macOS: binaries under `~/.local/lib/graffitty/`; descriptor and log under `~/.local/state/graffitty/`.
-- Windows OpenSSH: bundles under `%LOCALAPPDATA%\graffitty\bin`; descriptor under `%LOCALAPPDATA%\graffitty\state`.
-- Connections use normal OpenSSH authentication and host-key checking.
-- Existing daemons are reused; uploading a bundle does not replace a running daemon.
-- Plan upgrades separately from connecting. Do not kill a server with live sessions just to deploy a bundle.
-- Hosts that terminate user processes on logout need a service/session policy allowing persistence.
+The Graffitty server descriptor and log for SSH connections on Linux and macOS are under
+`~/.local/state/graffitty/`. Windows keeps the descriptor under
+`%LOCALAPPDATA%\graffitty\state`. Hosts that terminate user processes on
+logout need a service or session policy that allows persistence.
 
 ## One server per user
 

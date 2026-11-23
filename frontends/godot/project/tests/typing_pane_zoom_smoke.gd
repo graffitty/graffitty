@@ -30,6 +30,10 @@ func play() -> void:
 	await hold(0.45)
 	var visual: Rect2 = pane.get_transform() * Rect2(Vector2.ZERO, pane.size)
 	check(pane.scale.x > 1.095, "Actual keyboard typing enlarges only the focused pane by ten percent")
+	var viewport: SubViewport = host.sessions[int(third.substr(1))].vp
+	var density := ceilf(view.canvas_scale() * pane.scale.x * 2.0) / 2.0
+	check(viewport.size == Vector2i(pane._layout_region.size * density),
+		"The enlarged pane rerasterizes at its own half-step density")
 	check(view.panes[first].scale == Vector2.ONE and view.panes[second].scale == Vector2.ONE, "Tiled neighbors keep their sizes")
 	check(visual.position.x < before[third].position.x and visual.position.y < before[third].position.y, "Bottom-right tile grows toward the top left")
 	check(view.content_rect().grow(0.1).encloses(visual), "All enlarged content stays inside Main View")
@@ -60,7 +64,7 @@ func play() -> void:
 	check(absf(left_visual.get_center().y - before[first].get_center().y) < 0.1, "Three-edge pane expands equally above and below")
 	await hold(5.0)
 	# Let the production physics settle a floating layout before testing typing.
-	await view_menu("Tiling")
+	await toggle_tiling()
 	await panes_at_rest()
 	host.focus_pane(third)
 	await hold(0.2)

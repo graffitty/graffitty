@@ -101,6 +101,7 @@ fn agents(server: &Server, key: &str) -> Vec<Value> {
             *entry = (status.to_owned(), turn_title(&session.title(), pane));
         }
         Some(json!({"pane": pane, "provider": provider, "status": value["status"],
+            "status_history": value["status_history"].as_array().and_then(|h| h.last()).into_iter().collect::<Vec<_>>(),
             "title": entry.1, "program": program}))
     }).collect();
     result.sort_by_key(|agent| agent["pane"].as_u64());

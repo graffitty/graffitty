@@ -95,3 +95,9 @@ func test_page_layer_matches_texture_rect_aspect_fit() -> void:
 		"A tall page pillarboxes with TextureRect's integer width")
 	expect(Pane.keep_aspect_centered(Vector2(999.5, 600.5), Vector2i(1000, 600)) == Rect2(0.25, 0.75, 999, 599),
 		"Fractional pane sizes truncate like TextureRect")
+
+func test_render_stats_report_wrapped_texture_bytes_as_unavailable() -> void:
+	var stats := preload("res://graffitty/render_stats.gd")
+	expect(stats._texture_memory(-29_492_322_048) == "unavailable", "Wrapped Metal texture byte count")
+	expect(stats._texture_memory(0) == "0MiB", "A genuine zero remains measurable")
+	expect(stats._texture_memory(64 * 1048576) == "64MiB", "Positive memory remains in MiB")

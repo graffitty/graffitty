@@ -59,6 +59,18 @@ func run() -> void:
 	check(blurred.get_pixel(124, 128).a < .8, "The original stroke edge is softened, not retained as a sharp silhouette")
 	var ratio := coverage(blurred) / coverage(sharp)
 	check(absf(ratio - 1.0) < .03, "Normalized blur preserves thin-stroke coverage: %.4f" % ratio)
+	# On this plane the normalized depth offset is one. A uniform floor must
+	# produce the same kernel, both exactly on a band and between bands.
+	for radius: float in [6.0, 4.5]:
+		lens.set_lens(1, radius, .5, 24)
+		var variable := await frame(view)
+		lens.set_lens(1, 0, .5, 24, radius)
+		var uniform := await frame(view)
+		var error := 0.0
+		for y in range(88, 168):
+			for x in range(112, 144):
+				error = maxf(error, absf(variable.get_pixel(x, y).a - uniform.get_pixel(x, y).a))
+		check(error < .002, "Uniform %.1f px arrival matches the depth kernel (max alpha error %.4f)" % [radius, error])
 	lens.set_lens(2, 12, .5, 24)
 	var focused := await frame(view)
 	check(absf(coverage(focused) / coverage(sharp) - 1.0) < .01 and focused.get_pixel(120, 128).a < .001, "In-focus strokes retain their original footprint")

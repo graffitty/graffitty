@@ -48,7 +48,7 @@ func attach(settings: Dictionary) -> Node:
 	transport.sessions_changed.connect(func(): changed.emit())
 	transport.changed.connect(_merge)
 	transport.panes_updated.connect(_merge_pane_update.bind(transport))
-	transport.session_switching.connect(func(): session_switching.emit())
+	transport.session_switching.connect(_session_switching.bind(transport))
 	transport.session_switched.connect(_session_switched.bind(transport))
 	transport.resources_received.connect(func(id, data, interval): resources_received.emit(id, data, interval))
 	transport.state_changed.connect(
@@ -176,14 +176,22 @@ func _merge_pane_update(ids: Array, transport: Node) -> void:
 	panes_updated.emit(changed_ids)
 
 
+func _session_switching(transport: Node) -> void:
+	if transport != selected and transport.session_restored: return
+	session_switching.emit()
+
+
 func _session_switched(transport: Node) -> void:
 	# The owner's new attachment has no pane subscriptions, even when its
 	# session and pane IDs are unchanged after a socket reconnect.
 	subscriptions = subscriptions.filter(func(id): return owners.get(int(id)) != transport)
 	for id in frames.keys():
 		if owners.get(int(id)) == transport: frames.erase(id)
-	selected = transport
 	labels[transport] = transport.display_name + " / " + transport.workspace
+	# A background server reconnects independently. Refresh its attachment,
+	# without presenting it as a user-requested change of the current view.
+	if transport != selected and transport.session_restored: return
+	selected = transport
 	session_switched.emit()
 
 

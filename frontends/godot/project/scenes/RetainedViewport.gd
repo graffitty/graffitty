@@ -6,19 +6,22 @@ var terminal_view: Control
 var _requested_extent := Vector2.ZERO
 
 
+## All cuts and retained textures for a terminal share the same painted frame.
+static func terminal_state(node: Node) -> RefCounted:
+	var frame := Engine.get_process_frames()
+	var state: Dictionary = node.get_meta("transition_render_state", {})
+	if state.get("frame", -1) != frame:
+		state = {"frame": frame, "snapshot": node.capture_render_state()}
+		node.set_meta("transition_render_state", state)
+		node.call_deferred("remove_meta", "transition_render_state")
+	return state.snapshot
+
+
 static func capture_state(source: SubViewport, mask: int, parent: Node = null) -> SubViewport:
 	var snapshot: RefCounted
 	if source.has_meta("terminal_render_node"):
 		var reference: WeakRef = source.get_meta("terminal_render_node")
-		var node: Node = reference.get_ref()
-		var frame := Engine.get_process_frames()
-		var state: Dictionary = source.get_meta("transition_render_state", {})
-		if state.get("frame", -1) != frame:
-			state = {"frame": frame, "snapshot": node.capture_render_state()}
-			source.set_meta("transition_render_state", state)
-			# Views own the immutable native state; the live terminal does not retain it.
-			source.call_deferred("remove_meta", "transition_render_state")
-		snapshot = state.snapshot
+		snapshot = terminal_state(reference.get_ref())
 	var viewport := new()
 	viewport.disable_3d = true
 	viewport.transparent_bg = true

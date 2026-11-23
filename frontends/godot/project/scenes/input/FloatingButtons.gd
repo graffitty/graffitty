@@ -170,6 +170,11 @@ func can_reposition() -> bool:
 	return not movement_allowed.is_valid() or movement_allowed.call()
 
 
+## Keep a companion surface usable by another finger during a held action.
+func allow_during_gesture(control: Control) -> void:
+	_pointer_capture.shield.passthrough.append(control)
+
+
 func is_repositioning() -> bool:
 	return _gesture.get("dragging", false)
 

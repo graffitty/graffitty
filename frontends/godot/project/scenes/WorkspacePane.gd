@@ -1,6 +1,7 @@
 extends Panel
 const DesktopText := preload("res://scenes/DesktopText.gd")
 signal header_changed
+const ViewportUpdates := preload("res://scenes/TerminalViewportUpdates.gd")
 const RenderUpdates := preload("res://scenes/RenderUpdates.gd")
 const ViewportInput := preload("res://scenes/TerminalViewportInput.gd")
 ## Freely positioned window chrome on the workspace canvas. It draws its
@@ -382,7 +383,7 @@ func _resize_terminal_preview() -> void:
 	region.position = (region.position - origin) / pane_scale
 	region.size /= pane_scale
 	var hold_targets: bool = host.workspace_view.holding_navigation_render_targets()
-	if pair.vp.get_meta("terminal_capture_active", false) or preload("res://scenes/TerminalViewportUpdates.gd").is_transition_live(pair.vp):
+	if pair.vp.get_meta("terminal_capture_active", false) or ViewportUpdates.is_transition_live(pair.vp):
 		# Both frozen captures and live arrivals need the destination's complete
 		# geometry, even when it is outside the travelling camera's current crop.
 		#
@@ -396,15 +397,14 @@ func _resize_terminal_preview() -> void:
 		region = region.intersection(full)
 	if not region.has_area():
 		_layout_held = false
-		preload("res://scenes/TerminalViewportUpdates.gd").set_visible(pair.vp, false)
+		ViewportUpdates.set_visible(pair.vp, false)
 		return
-	preload("res://scenes/TerminalViewportUpdates.gd").set_visible(pair.vp, true)
+	ViewportUpdates.set_visible(pair.vp, true)
 	# Reuse density, not just pixel dimensions. A changed crop must never be
 	# squeezed into the old allocation with different X/Y sampling scales.
 	if hold_targets and _layout_held and _layout_scale > 0.0: scale = _layout_scale
-	scale = minf(scale, 8192.0 / maxf(region.size.x, region.size.y))
-	var pixel_budget: float = pair.vp.get_meta("terminal_pixel_budget", 4_000_000)
-	scale = minf(scale, sqrt(pixel_budget / maxf(region.get_area(), 1.0)))
+	var pixel_budget: int = pair.vp.get_meta("terminal_pixel_budget", 4_000_000)
+	scale = ViewportUpdates.bounded_scale(region.size, scale, pixel_budget)
 	var raster := Vector2i((region.size * scale).floor()).max(Vector2i.ONE)
 	if pair.term.has_method('set_raster_scale'):
 		pair.term.set_raster_scale(ceilf(scale * 2.0) / 2.0)
@@ -446,7 +446,7 @@ func _resize_terminal_preview() -> void:
 	pair.term.position = Vector2(padding.x, padding.y)
 	pair.term.size = (Vector2(extent) - Vector2(padding.x + padding.z, padding.y + padding.w)).max(Vector2.ONE)
 	# A crop transform changes pixels even when the PTY and target size stay still.
-	preload("res://scenes/TerminalViewportUpdates.gd").request(pair.vp)
+	ViewportUpdates.request(pair.vp)
 
 
 func _sync_terminal_grid() -> void:

@@ -225,6 +225,22 @@ fn status_history_discovery_respects_hooks_and_bounds_retention() {
     assert!(graph.nodes["%1"].get("status_history").is_none());
 }
 
+#[test]
+fn discovered_provider_timestamp_survives_a_fresh_server_and_cannot_override_hooks() {
+    let mut graph = Graph::default();
+    graph.add(1, "Task".into());
+    let state = json!({"provider":"codex", "pid":10, "status":"idle", "status_at":"2026-11-22T19:00:00+09:00"});
+    graph.observe_agent(1, &state);
+    assert_eq!(graph.nodes["%1"]["status_history"][0]["at"], "2026-11-22T19:00:00.000+09:00");
+    graph.observe_agent(1, &state);
+    assert_eq!(graph.nodes["%1"]["status_history"].as_array().unwrap().len(), 1);
+    graph.dispatch(1, "agent.event", &json!({"provider":"codex", "event":"PreToolUse", "integrated":true, "pid":10})).unwrap();
+    let hooked = graph.nodes["%1"]["status_history"].clone();
+    graph.observe_agent(1, &state);
+    assert_eq!(graph.nodes["%1"]["status"], "busy");
+    assert_eq!(graph.nodes["%1"]["status_history"], hooked, "Old transcript state cannot change hook status or its clock");
+}
+
 fn graph() -> Graph {
     let mut g = Graph::default();
     for id in 1..=3 {

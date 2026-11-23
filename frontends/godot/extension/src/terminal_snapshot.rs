@@ -3,7 +3,8 @@
 //! live terminal, viewport texture, or screenshot of the terminal.
 use crate::{
     font::Fonts,
-    run::{PixelGrid, Run, RunCache},
+    flight_grid::{FlightGrid, FlightPiece},
+    run::{Cluster, PixelGrid, Run, RunCache},
     sprite,
 };
 use godot::{
@@ -21,6 +22,7 @@ enum Drawing {
     Image(Rect2, Gd<Texture2D>, Rect2),
     Sprite(Rect2, Color, f32, u32),
     Underline(Rect2, Color, f32, f32, Underline),
+    Cluster(Rc<Cluster>, Vector2, Color, i32, Color),
     Char(Gd<Font>, Vector2, u32, i32, Color, i32, Color),
     Text(Gd<Font>, Vector2, String, i32, Color, f32, i32, Color),
     Run(Gd<Font>, Run, f32, f32, i32, PixelGrid, i32, Color),
@@ -39,6 +41,9 @@ impl Drawing {
             }
             Self::Underline(rect, color, thick, y, style) => {
                 sprite::underline(canvas, *rect, *color, *thick, *y, *style)
+            }
+            Self::Cluster(cluster, at, color, outline, edge) => {
+                cluster.draw(canvas, *at, *color, density, *outline, *edge);
             }
             Self::Char(font, at, cp, size, color, outline, edge) => {
                 if *outline > 0 {
@@ -81,6 +86,7 @@ impl Drawing {
                 *grid,
                 *outline,
                 *edge,
+                None,
             ),
         }
     }
@@ -89,6 +95,9 @@ impl Drawing {
 #[derive(Default)]
 pub struct Presentation {
     drawings: Vec<(usize, Drawing)>,
+    pieces: Vec<FlightPiece>,
+    occupied_count: usize,
+    flight_grid: Rect2,
     transforms: [Transform2D; 5],
     image_material: Option<Gd<ShaderMaterial>>,
     background: Color,
@@ -100,13 +109,15 @@ pub struct Painter {
     grid: PixelGrid,
     canvases: [Rid; 5],
     recording: Option<RefCell<Presentation>>,
+    pub flight: Option<RefCell<FlightGrid>>,
 }
 
 impl Painter {
-    pub fn new(canvases: [Rid; 5], record: bool, grid: PixelGrid) -> Self {
+    pub fn new(canvases: [Rid; 5], record: bool, grid: PixelGrid, pad: f32, step: Vector2, ascent: f32) -> Self {
         Self {
             grid,
             canvases,
+            flight: record.then(|| RefCell::new(FlightGrid::new(pad, step, ascent))),
             recording: record.then(|| RefCell::new(Presentation::default())),
         }
     }
@@ -124,11 +135,16 @@ impl Painter {
         self,
         material: Option<&Gd<ShaderMaterial>>,
         background: Color,
+        flight_grid: Rect2,
     ) -> Option<Presentation> {
         self.recording.map(|recording| {
             let mut value = recording.into_inner();
             value.image_material = material.map(|m| m.duplicate_resource());
             value.background = background;
+            let flight = self.flight.unwrap().into_inner();
+            value.occupied_count = flight.occupied_count();
+            value.pieces = flight.pieces();
+            value.flight_grid = flight_grid;
             value
         })
     }
@@ -194,7 +210,11 @@ impl Painter {
         outline: i32,
         edge: Color,
     ) {
+        let head = at;
         let at = self.grid.point(at);
+        if let Some(cuts) = &self.flight {
+            cuts.borrow_mut().character(font, cp, size, outline, head, at);
+        }
         if outline > 0 {
             font.draw_char_outline_ex(canvas, at, cp, size)
                 .size(outline)
@@ -255,6 +275,7 @@ impl Painter {
     pub fn grapheme(
         &self,
         fonts: &Fonts,
+        runs: &mut RunCache,
         canvas: Rid,
         at: Vector2,
         chars: &[char],
@@ -272,18 +293,14 @@ impl Painter {
         let Some(font) = fonts.resolve(chars[0] as u32, style, || wide) else {
             return false;
         };
-        self.text(
-            &font,
-            canvas,
-            at,
-            &chars.iter().collect::<String>(),
-            size,
-            color,
-            -1.0,
-            density,
-            outline,
-            edge,
-        );
+        let cluster = runs.cluster(&font, chars.iter().collect(), size);
+        let baseline = self.grid.point(at);
+        if cluster.ink.has_area() && let Some(cuts) = &self.flight {
+            let ink = Rect2::new(baseline + cluster.ink.position, cluster.ink.size);
+            cuts.borrow_mut().ink(at, ink.grow(outline as f32));
+        }
+        cluster.draw(canvas, baseline, color, density, outline, edge);
+        self.record(canvas, || Drawing::Cluster(cluster, baseline, color, outline, edge));
         true
     }
     pub fn run(
@@ -313,6 +330,7 @@ impl Painter {
         });
         runs.draw(
             canvas, font, run, baseline, cell_w, size, density, self.grid, outline, edge,
+            self.flight.as_ref().map(RefCell::borrow_mut).as_deref_mut(),
         );
     }
 }
@@ -363,6 +381,33 @@ impl TerminalRenderSnapshot {
         view.set_mouse_filter(godot::classes::control::MouseFilter::IGNORE);
         view.upcast()
     }
+    #[func]
+    fn flight_grid(&self) -> Rect2 {
+        self.presentation.flight_grid
+    }
+
+    #[func]
+    fn occupied_cell_count(&self) -> i64 {
+        self.presentation.occupied_count as i64
+    }
+
+    #[func]
+    fn flight_cells(&self) -> Array<Vector4i> {
+        self.presentation.pieces.iter().map(FlightPiece::span).collect()
+    }
+
+    #[func]
+    fn flight_glyphs(&self) -> Array<VarDictionary> {
+        self.presentation.pieces.iter().map(|p| {
+            let mut entry = VarDictionary::new();
+            entry.set("rect", p.span());
+            entry.set("cp", p.cp as i64);
+            entry.set("style", i64::from(p.styled));
+            entry.set("font", p.font);
+            entry
+        }).collect()
+    }
+
     #[func]
     fn drawing_count(&self) -> i64 {
         self.presentation.drawings.len() as i64

@@ -23,11 +23,24 @@ def main():
     root = Path(tempfile.mkdtemp(prefix="graffitty-dictation-"))
     print("Evidence:", root, flush=True)
     received, failures = [], []
+    transcript = {"text": "Interim words"}
 
     class Provider(BaseHTTPRequestHandler):
         protocol_version = "HTTP/1.1"
         def log_message(self, *_):
             pass
+
+        def do_POST(self):
+            if self.path != "/transcript":
+                self.send_error(404)
+                return
+            size = int(self.headers.get("Content-Length", "0"))
+            if not 0 < size < 100000:
+                self.send_error(400)
+                return
+            transcript["text"] = self.rfile.read(size).decode("utf-8")
+            self.send_response(204)
+            self.end_headers()
 
         def event(self, value):
             payload = json.dumps(value).encode()
@@ -65,6 +78,7 @@ def main():
                 assert setup["inputAudioTranscription"]["languageCodes"] == ["ko-KR"]
                 time.sleep(.2)  # Exercise queued audio and Stop before setup completes.
                 self.event({"setupComplete": {}})
+                transcript["text"] = "Interim words"
                 started = False
                 while True:
                     value = self.read_event()["realtimeInput"]
@@ -78,7 +92,7 @@ def main():
                         raw = base64.b64decode(audio["data"])
                         assert raw and len(raw) % 2 == 0
                         received.append(len(raw))
-                        self.event({"serverContent": {"interimInputTranscription": {"text": "Interim words"}}})
+                        self.event({"serverContent": {"interimInputTranscription": {"text": transcript["text"]}}})
                     elif "activityEnd" in value:
                         assert started
                         # turnComplete alone is not final source transcription.
@@ -99,6 +113,7 @@ def main():
     for kind in ("CONFIG", "STATE", "CACHE", "DATA"):
         env[f"XDG_{kind}_HOME"] = str(root / kind.lower())
     env.update(GRAFFITTY_DICTATION_TEST_OUTPUT=str(root / "typed.txt"),
+               GRAFFITTY_DICTATION_TEST_PROVIDER_CONTROL=f"http://127.0.0.1:{server.server_port}/transcript",
                GRAFFITTY_GEMINI_API_KEY="server-secret",
                GRAFFITTY_SERVER__DICTATION__ENABLED="true",
                GRAFFITTY_SERVER__DICTATION__PROVIDER="gemini",

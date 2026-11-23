@@ -5,10 +5,10 @@
 //! Each glyph is anchored to its own cell because the cell grid uses the
 //! ceiled advance and pen-advanced drawing drifts off it.
 
-use std::collections::HashMap;
+use std::{collections::HashMap, rc::Rc};
 
 use godot::classes::text_server::Direction;
-use godot::classes::{Font, TextServerManager};
+use godot::classes::{Font, TextLine, TextServerManager};
 use godot::prelude::*;
 
 /// Snap shared cell edges in the final window's pixels. Rounding each origin
@@ -68,11 +68,79 @@ struct Entry {
     used: u64,
 }
 
+/// TextLine stores font RIDs. A snapshot must also own the font resource so
+/// these RIDs stay valid after its terminal closes or changes font.
+pub struct Cluster {
+    line: Gd<TextLine>,
+    _font: Gd<Font>,
+    pub ink: Rect2,
+    ascent: f32,
+}
+
+impl Cluster {
+    fn new(font: &Gd<Font>, text: &str, size: i32) -> Self {
+        let mut line = TextLine::new_gd();
+        line.add_string(text, font, size);
+        let ascent = line.get_line_ascent(); // Complete the layout used by draw().
+        let mut bounds: Option<Rect2> = None;
+        if let Some(ts) = TextServerManager::singleton().get_primary_interface() {
+            let mut pen = Vector2::ZERO;
+            for g in ts.shaped_text_get_glyphs(line.get_rid()).iter_shared() {
+                let rid: Rid = g.at("font_rid").to();
+                let index: i64 = g.at("index").to();
+                let size: i64 = g.at("font_size").to();
+                let offset: Vector2 = g.at("offset").to();
+                let advance: f32 = g.at("advance").to();
+                let glyph = crate::flight_grid::glyph_ink(&ts, rid, size, index);
+                for _ in 0..g.at("repeat").to::<i64>() {
+                    if glyph.has_area() {
+                        let rect = Rect2::new(pen + offset + glyph.position, glyph.size);
+                        bounds = Some(bounds.map_or(rect, |b| b.merge(rect)));
+                    }
+                    pen.x += advance;
+                }
+            }
+        }
+        Self {
+            line,
+            _font: font.clone(),
+            ink: bounds.unwrap_or_default(),
+            ascent,
+        }
+    }
+
+    pub fn draw(
+        &self,
+        canvas: Rid,
+        baseline: Vector2,
+        color: Color,
+        density: f32,
+        outline: i32,
+        edge: Color,
+    ) {
+        let top = baseline - Vector2::DOWN * self.ascent;
+        if outline > 0 {
+            self.line
+                .draw_outline_ex(canvas, top)
+                .outline_size(outline)
+                .color(edge)
+                .oversampling(density)
+                .done();
+        }
+        self.line
+            .draw_ex(canvas, top)
+            .color(color)
+            .oversampling(density)
+            .done();
+    }
+}
+
 /// Shaped runs keyed on content per style font, kept exactly as large as
 /// the last repaint. Scrolled rows keep the same content, so they hit.
 pub struct RunCache {
     entries: [HashMap<String, Entry>; 4],
     generation: u64,
+    clusters: HashMap<(InstanceId, String, i32), (Rc<Cluster>, u64)>,
 }
 
 impl RunCache {
@@ -80,6 +148,7 @@ impl RunCache {
         Self {
             entries: Default::default(),
             generation: 0,
+            clusters: HashMap::new(),
         }
     }
 
@@ -97,6 +166,7 @@ impl RunCache {
         grid: PixelGrid,
         outline_width: i32,
         outline_color: Color,
+        mut flight: Option<&mut crate::flight_grid::FlightGrid>,
     ) {
         let glyph_at = |glyph: &Glyph| {
             grid.point(Vector2::new(run.x + glyph.cell as f32 * cell_w, baseline)) + glyph.offset
@@ -124,11 +194,16 @@ impl RunCache {
             }
         }
         for glyph in &entry.glyphs {
+            let at = glyph_at(glyph);
+            if let Some(cuts) = flight.as_deref_mut() {
+                let head = Vector2::new(run.x + glyph.cell as f32 * cell_w, baseline);
+                cuts.glyph(&ts, head, at, glyph.font_rid, glyph.font_size, glyph.index, outline_width);
+            }
             ts.font_draw_glyph_ex(
                 glyph.font_rid,
                 canvas,
                 glyph.font_size,
-                glyph_at(glyph),
+                at,
                 glyph.index,
             )
             .color(run.fg)
@@ -137,12 +212,22 @@ impl RunCache {
         }
     }
 
+    /// Font.draw_string uses a TextLine internally. Retain that same layout
+    /// for a whole grapheme so capture can reuse its bounds and its draw.
+    pub fn cluster(&mut self, font: &Gd<Font>, text: String, size: i32) -> Rc<Cluster> {
+        let entry = self.clusters.entry((font.instance_id(), text, size))
+            .or_insert_with_key(|(_, text, _)| (Rc::new(Cluster::new(font, text, size)), self.generation));
+        entry.1 = self.generation;
+        entry.0.clone()
+    }
+
     /// Drop runs not drawn since the last call.
     pub fn end_frame(&mut self) {
         let generation = self.generation;
         for map in &mut self.entries {
             map.retain(|_, entry| entry.used == generation);
         }
+        self.clusters.retain(|_, entry| entry.1 == generation);
         self.generation += 1;
     }
 }

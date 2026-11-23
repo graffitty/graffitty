@@ -120,7 +120,7 @@ export default class Agents extends View {
       .child(icon(a.provider, 16, a.status))
       .child(div().flex_1().min_w(0).truncate().tooltip_on_truncate().text_color(a.status === "idle" && !a.focused ? t.idle : t.foreground).child(a.title))
       .when(subs.length > 0, (el) => el.child(fold))
-      .when(!hovered, (el) => el.child(div().id(`time-${a.id}`).flex_none().text_size(11).text_color(t.idle).child(duration(now - a.at))))
+      .when(!hovered && a.at > 0, (el) => el.child(div().id(`time-${a.id}`).flex_none().text_size(11).text_color(t.idle).child(duration(now - a.at))))
       .when(hovered, (el) => el.child(pin))
       .child(div().id(`status-${a.id}`).flex_none().flex().items_center()
         .child(a.status === "blocked" && !a.pinned ? this.status(t, "blocked", true) : this.status(t, a.status)));

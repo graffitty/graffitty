@@ -155,6 +155,8 @@ func test_agents_in_other_sessions_and_servers_are_listed() -> void:
 	host.workspace_layout.tabs = [{"id":1, "focused":"%1", "tree":{"type":"windows", "windows":[{"pane":"%1", "shown":true}]}}]
 	app.agent_api.graph.nodes = {"%1": {"provider":"pi", "status":"busy"}}
 	app.agent_api.graph.remote_owners = {"%1": peer}
+	app.agent_api.graph.nodes["%1"].status_history = [{"status":"busy", "at":"2027-01-15T08:00:00Z"}]
+	peer.available_sessions[0].agents[0].status_history = [{"status":"waiting", "at":"2027-01-15T08:05:00Z"}]
 	var controller := preload("res://scenes/Agents.gd").new()
 	controller.application = app
 	controller._sounds = {"enabled": false}
@@ -165,6 +167,7 @@ func test_agents_in_other_sessions_and_servers_are_listed() -> void:
 	expect(by_key.has("%1") and not by_key.has("%7"), "The shown view of an agent wins over its session summary")
 	expect(by_key.has("%3") and by_key["%3"].session == "other" and by_key["%3"].remote == "Office fixture", "Unshown agents carry server and session captions")
 	expect(by_key["%3"].status == "blocked", "Summary status maps like a shown agent's")
+	expect(by_key["%1"].at == 1800000000 and by_key["%3"].at == 1800000300, "Visible and unshown sessions both use the server's transition time")
 	expect(by_key.has("%4") and by_key["%4"].provider == "codex" and by_key["%4"].title == "Refactor", "OSC-reported agents use their program app and message")
 	peer.url = "shared://local"
 	controller.refresh()

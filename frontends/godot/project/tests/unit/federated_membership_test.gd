@@ -54,9 +54,42 @@ func test_same_session_reconnect_invalidates_only_its_subscriptions() -> void:
 	federation.owners = {1: first, 2: second}
 	federation.subscriptions = [1, 2]
 	federation.frames = {1: {}, 2: {}}
+	federation.selected = first
+	first.session_restored = true
 	federation._session_switched(first)
 	expect(federation.subscriptions == [2] and federation.frames.keys() == [2], "A reconnect requires fresh subscription and frames while preserving the other server")
 	expect(federation.selected == first, "The resumed session becomes the presentation target")
 	federation.free()
 	first.free()
 	second.free()
+
+
+func test_background_restoration_does_not_navigate_but_explicit_switch_does() -> void:
+	var federation := preload("res://scenes/remote/FederatedConnection.gd").new()
+	var foreground := preload("res://scenes/remote/RemoteConnection.gd").new()
+	var background := preload("res://scenes/remote/RemoteConnection.gd").new()
+	federation.selected = foreground
+	federation.owners = {1: foreground, 2: background}
+	background.display_name = "Background fixture"
+	background.connected = true
+	background.session_switching.connect(federation._session_switching.bind(background))
+	background.session_switched.connect(federation._session_switched.bind(background))
+	var events: Array = []
+	federation.session_switching.connect(func(): events.append("switching"))
+	federation.session_switched.connect(func(): events.append("switched"))
+	for previous in ["", "$2"]:
+		background.workspace = ""
+		background._shown_session = previous
+		background._selecting_session = 5
+		federation.subscriptions = [1, 2]
+		federation.frames = {1: {}, 2: {}}
+		background._receive({"type": "session_switched", "workspace": "$2"})
+		expect(federation.selected == foreground and events.is_empty(), "Initial restore and reconnect cannot capture or replace the foreground view")
+		expect(federation.frames.keys() == [1] and federation.subscriptions == [1], "Only the restoring server's stale frames and subscriptions retire")
+		expect(federation.labels[background] == "Background fixture / $2", "Background session labels still update")
+	background._receive({"type": "session_switched", "workspace": "$3"})
+	expect(federation.selected == background and events == ["switching", "switched"], "Explicit navigation to another server still switches and animates normally")
+	expect(not background.session_restored and not background.session_reattached, "Navigation is distinguished from automatic reattachment")
+	federation.free()
+	foreground.free()
+	background.free()

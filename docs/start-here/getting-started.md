@@ -40,3 +40,8 @@ Press and release it, then press:
 - **Save a layout for later:** create a [checkpoint](../everyday-use/checkpoints.md).
 
 A checkpoint recreates a layout and resumes supported agent conversations; it does not preserve running programs.
+
+## Use another computer
+
+Run a Graffitty server there and connect from this app or Android. SSH works too.
+See [Remote access](../remote-access/index.md).

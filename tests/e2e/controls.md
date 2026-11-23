@@ -360,6 +360,15 @@ each session restores its own viewport, including its tab views, without resetti
 to Main View. Repeat through `$session` and CLI attachment. A session left fitted
 stays fitted; newly created sessions start fitted. Other windows keep their own
 views, and a rejected switch does not change the current camera.
+While viewing server A, disconnect and reconnect background server B using a
+disposable network fixture. B restores its session and list rows without changing
+A's active tab, focused pane, camera, or starting/canceling a session transition.
+Repeat with B's first automatic attachment. Explicitly choosing B must still
+switch normally. Repeat through app background/resume with several servers.
+Agents' elapsed times use the server-recorded status transition, including agents
+in unshown sessions. Reconnect after an agent completed while this client was
+away: its age must include that gap, and opening the row must not reset it.
+An agent whose transition time is unknown shows no invented elapsed time.
 Compact session labels show actual server session IDs without the `$` prefix, not
 list ordinals: gaps such as 0, 2, 3, 4 remain intact within each server group.
 The per-server + opens the existing new-session flow for that server only.
@@ -740,6 +749,30 @@ previous playback audio-session category/mode/options are restored on normal sto
 cancel and device-open failure; check speaker and Bluetooth microphone routes.
 The prompt must use the selected device language. These checks require a physical
 device and are not implied by desktop capture tests or an iOS signed build.
+
+### UI-06S — Live transcript scrolling
+
+- Speak long enough for a single paragraph to wrap beyond the four-line preview.
+  Every new transcript shows the final wrapped line; repeat with explicit newlines,
+  final transcription corrections and a viewport width change.
+- While holding the microphone with one finger, drag the preview with another.
+  Scroll in either direction without moving/canceling the microphone or sending
+  text. Lifting the preview finger must not stop capture. Only the microphone's
+  finger owns hold/release and slide-to-cancel, including the desktop toolbar.
+- Scrolling away from the bottom pauses following. Incoming words preserve the
+  reviewed position, including an update queued just before the drag starts.
+  A finger held still, a pan, a fling or a scrollbar drag must not be interrupted
+  by automatic scrolling. Returning to the bottom re-enables following once the
+  gesture/momentum ends. A fresh recording starts with following enabled.
+- Show a usable scrollbar when text overflows. Finger/trackpad scrolling follows
+  travel, glides and stretches at both ends; the thumb shortens with the pull and
+  returns as it settles (GE-12). Mouse wheels do not stretch. Draft editing after
+  recording retains normal caret scrolling and cancels pending transcription.
+
+Reuse `tests/android/dictation_e2e.py` / `tests/dictation_smoke.gd` for the
+production preview and two-finger hold, and `tests/selectable_text_smoke.gd` for
+wheel, pan, drag, scrollbar, layout and elastic-boundary checks. Desktop simulated
+events do not establish physical Android/iOS touch or microphone acceptance.
 
 ### UI-06C — Optional client-side Gemini credentials
 

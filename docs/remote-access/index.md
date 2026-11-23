@@ -3,25 +3,23 @@
 Use another computer's terminals, browsers, and agents from desktop or Android.
 Programs keep running there when you disconnect.
 
-## Connect with SSH
+## Connect to a Graffitty server (recommended)
 
-If you already use SSH, prepare a [server bundle](../developers/build-and-run/remote-server.md), then run:
+Graffitty connects to its own server on the other computer. Set it up in either way.
+
+### Install it on the remote computer
 
 ```sh
-gft remote connect user@computer
+curl -fsSL https://graffitty.com/install.sh | sh
+gft server --set-password
+gft server --listen 0.0.0.0:7183   # or its Tailscale IP
 ```
 
-For address and tunnel behavior, see [connection settings](connection-settings.md#connect-over-ssh).
+Use a [trusted network or Tailscale](connection-settings.md#listen-on-the-right-network).
+On a desktop, you can instead open **Sessions → Remote Access** to share the
+running app, and **Sessions → Remote Access Settings…** for the password.
 
-## Connect with Tailscale or a trusted network
-
-On the computer running your sessions:
-
-1. [Choose a listening address](connection-settings.md#listen-on-the-right-network).
-2. Open **Sessions → Remote Access** to enable sharing.
-3. Open **Sessions → Remote Access Settings…** to view or set the password.
-
-On your other device:
+Then, on your other device:
 
 1. Open **Sessions → Servers… → Add server**, or **Add server** on Android.
 2. Enter the server address and password.
@@ -29,6 +27,27 @@ On your other device:
 
 Sharing is off by default. The menu toggle lasts for the current launch.
 Android requires a server; it has no local terminal mode.
+
+### Or set it up from your computer
+
+```sh
+gft remote connect user@remote-host
+```
+
+`user@remote-host` is an SSH destination. Graffitty reuses the same version
+if it is already installed there. Otherwise it runs the standard installer
+for the remote OS and CPU. If the remote cannot download the release, your
+computer uploads it over SSH. The connection uses an SSH tunnel, so you only
+need SSH access to the remote. See [connection settings](connection-settings.md#set-up-the-server-over-ssh).
+
+## Plain `ssh` from a Graffitty terminal
+
+Graffitty uses Ghostty, so remote computers need its terminfo. Run this once
+per remote; it installs to `~/.terminfo` there:
+
+```sh
+infocmp -x xterm-ghostty | ssh user@remote-host -- tic -x -
+```
 
 ## Leave safely
 

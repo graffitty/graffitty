@@ -7,6 +7,7 @@ mod session_transport;
 mod session_client;
 mod terminal_scene;
 mod terminal_snapshot;
+mod flight_grid;
 use graffitty_terminal_core::binding_core;
 mod bindings;
 #[cfg(any(target_os = "macos", target_os = "linux", windows))]

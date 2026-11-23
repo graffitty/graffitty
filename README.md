@@ -53,6 +53,34 @@ Download the APK from [Releases](https://github.com/graffitty/graffitty/releases
 
 Currently source build only. The working app already exists, but we're preparing a signed build. Coming soon!
 
+### Remote server
+
+Graffitty connects to its own server on the other computer. Either install it there:
+
+```sh
+curl -fsSL https://graffitty.com/install.sh | sh
+gft server --set-password
+gft server --listen 0.0.0.0:7183   # or its Tailscale IP
+```
+
+then add it in Graffitty: **Sessions → Servers… → Add server**.
+
+Or set it up from your computer, using SSH to reach it:
+
+```sh
+gft remote connect user@remote-host
+```
+
+Graffitty reuses a matching installation or runs its installer for your version and the remote OS and CPU. If the remote is offline, your computer uploads the release over SSH. See [remote access](https://docs.graffitty.com/remote-access/).
+
+### Plain `ssh` from a Graffitty terminal
+
+Graffitty uses Ghostty, so remote computers need its terminfo. Run this once per remote; it installs to `~/.terminfo` there:
+
+```sh
+infocmp -x xterm-ghostty | ssh user@remote-host -- tic -x -
+```
+
 ## Start using Graffitty
 
 Open Graffitty from your application launcher, then follow the

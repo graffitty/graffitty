@@ -191,6 +191,19 @@ func test_slide_cancel_returns_mic_and_drops_draft() -> void:
 	expect(not controller.bar.visible and not controller.submit_when_done, "Cancel cannot submit")
 	controller.free()
 
+func test_toolbar_microphone_ignores_another_fingers_release() -> void:
+	var controller := GestureController.new()
+	controller.press_started = Time.get_ticks_msec() - 500
+	controller.press_finger = 0
+	var lift := InputEventScreenTouch.new()
+	lift.index = 1
+	controller._input(lift)
+	expect(controller.sends == 0 and controller.press_finger == 0, "Lifting the preview finger leaves the toolbar microphone held")
+	lift.index = 0
+	controller._input(lift)
+	expect(controller.sends == 1 and controller.press_finger == -1, "Only the microphone's finger stops and sends")
+	controller.free()
+
 func test_capture_drain_gates_controls_but_provider_wait_does_not() -> void:
 	var controller := Dictation.new()
 	controller.preview.text = "Earlier words"

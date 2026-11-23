@@ -210,9 +210,9 @@ rules in `frontends/godot/project/tests/unit/`. First build the isolated Rust gr
 fixture with `cargo build -p graffitty-workspace-core --example graph_fixture`,
 then run (`godot --headless --path frontends/godot/project --script tests/run.gd`).
 
-Each test-site card embeds the full rendered Markdown specification and its raw
-source in an expandable **LLM suite specification** section, including cases
-without a recorded replay. The page works offline without fetching Markdown.
+The page starts with totals and a per-suite table, then lists cases that need
+attention. Each suite shows recorded cards first and folds unrecorded cases into
+one list. Every case links to its Markdown steps instead of embedding them.
 
 `bistro-world/overview-pane-resources` checks 85% backdrop alpha in rendered
 canvas pixels, compact PID/CPU/RAM captions for three panes, a real CPU workload

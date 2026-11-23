@@ -92,7 +92,7 @@ mod tests {
             "No agent status yet. Agents show up here when they report their status.",
             "Unpin", "Pin to the top", "This Computer", "Servers…", "New Session",
             "New session on %s", "Connected", "Not connected",
-            "Connect to a server…", "Opening %s…",
+            "Connect to a server…",
             "Could not switch session", "Could not create session", "Could not rename session",
             "Rename", "Rename Session", "Rename Session…", "Automatic name", "Server is not connected",
             "All Sessions…", "Switch Session", "Agent sounds", "Close",

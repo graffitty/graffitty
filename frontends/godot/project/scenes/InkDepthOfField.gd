@@ -12,9 +12,10 @@ layout(push_constant,std430) uniform Params {
     mat4 inverse_projection;
     vec4 lens; // focus, radius, relative depth range, pass (-1=footprint, 0=x, 1=y, 2=resolve)
     vec4 raster; // width, height, blur limit, minimum radius
-    vec4 band; // previous radius, current radius, next radius, band index
+    vec4 band; // previous radius, current radius, next radius, accumulation index
 } p;
 const int MAX_RADIUS = 24;
+shared float taps[MAX_RADIUS + 1];
 float kernel(float offset, float radius) {
     if (radius <= .45) return offset == 0. ? 1. : 0.;
     float t = abs(offset) / radius;
@@ -30,8 +31,9 @@ float inverse_normalization(float radius) {
 }
 void main() {
     ivec2 pixel=ivec2(gl_GlobalInvocationID.xy), size=ivec2(p.raster.xy);
-    if(any(greaterThanEqual(pixel,size)))return;
+    bool outside=any(greaterThanEqual(pixel,size));
     if (p.lens.w < -.5) {
+        if(outside)return;
         float alpha=texelFetch(source_image,pixel,0).a;
         float radius=0.;
         if (alpha > .000001) {
@@ -42,10 +44,11 @@ void main() {
             radius=min(min(p.raster.z,float(MAX_RADIUS)),max(p.raster.w,
                 abs(1.-p.lens.x/d)*p.lens.y/max(p.lens.z,.001)));
         }
-        imageStore(destination_footprint,pixel,vec4(radius,inverse_normalization(radius),0,0));
+        imageStore(destination_footprint,pixel,vec4(radius,0,0,0));
         return;
     }
     if (p.lens.w > 1.5) {
+        if(outside)return;
         vec4 ink=imageLoad(destination_footprint,pixel);
         imageStore(destination,pixel,ink/max(1.,ink.a));
         return;
@@ -55,11 +58,16 @@ void main() {
     ivec2 axis=p.lens.w<.5?ivec2(1,0):ivec2(0,1);
     vec4 sum=vec4(0.);
     int reach=int(ceil(p.band.y));
-    float normalization=inverse_normalization(p.band.y);
+    // All 64 pixels use the same normalized taps. Partial workgroups
+    // participate in the barrier too, before out-of-bounds pixels return.
+    int lane=int(gl_LocalInvocationIndex);
+    if(lane<=reach)taps[lane]=kernel(float(lane),p.band.y)*inverse_normalization(p.band.y);
+    barrier();
+    if(outside)return;
     for(int i=-reach;i<=reach;i++) {
         ivec2 q=pixel+axis*i;
         if(any(lessThan(q,ivec2(0)))||any(greaterThanEqual(q,size)))continue;
-        float weight=kernel(float(i),p.band.y)*normalization;
+        float weight=taps[abs(i)];
         if(p.lens.w<.5) {
             float radius=texelFetch(source_footprint,q,0).x;
             float fraction=radius<=p.band.y
@@ -76,6 +84,8 @@ void main() {
     }
 }
 """
+const BAND_RADII := [0.0, 3.0, 6.0, 12.0, 24.0]
+
 var rd: RenderingDevice
 var shader := RID()
 var pipeline := RID()
@@ -160,15 +170,21 @@ func _render_callback(kind: int, data: RenderData) -> void:
 		for i in 2: footprints.append(rd.texture_create(format, RDTextureView.new()))
 		texture_size = size
 	var inverse: Projection = data.get_render_scene_data().get_cam_projection().inverse()
+	# Only adjacent bands receive a source's coverage. Fly Away's authored
+	# arrival has one uniform radius, often between the 3 and 6 px bands.
+	var lower := clampf(minimum, 0.0, minf(parameters.w, BAND_RADII.back()))
+	var upper := minf(parameters.w, BAND_RADII.back()) if parameters.y > 0.0 else lower
+	var first := 0
+	var last := BAND_RADII.size() - 1
+	while first < last and BAND_RADII[first + 1] <= lower: first += 1
+	while last > first and BAND_RADII[last - 1] >= upper: last -= 1
+	var resolve_step := 1 + (last - first + 1) * 2
 	for view in buffers.get_view_count():
 		var color := buffers.get_color_layer(view)
 		var depth := buffers.get_depth_layer(view)
-		# Radius map, five independent horizontal/vertical bands, then resolve.
-		# The second scratch image accumulates premultiplied coverage across bands.
-		var radii := [0.0, 3.0, 6.0, 12.0, 24.0]
-		for step in 12:
-			var axis := -1 if step == 0 else (2 if step == 11 else (step - 1) % 2)
-			var band_index := clampi((step - 1) / 2, 0, 4)
+		for step in resolve_step + 1:
+			var axis := -1 if step == 0 else (2 if step == resolve_step else (step - 1) % 2)
+			var band_index := clampi(first + (step - 1) / 2, first, last)
 			var uniforms: Array[RDUniform] = []
 			var textures := [color if axis <= 0 else temporary, depth,
 				temporary if axis <= 0 else color,
@@ -199,7 +215,8 @@ func _render_callback(kind: int, data: RenderData) -> void:
 					minimum,
 				]
 			)
-			constants.append_array([radii[maxi(band_index - 1, 0)], radii[band_index], radii[mini(band_index + 1, 4)], float(band_index)])
+			constants.append_array([BAND_RADII[maxi(band_index - 1, 0)], BAND_RADII[band_index],
+				BAND_RADII[mini(band_index + 1, BAND_RADII.size() - 1)], float(band_index - first)])
 			var list := rd.compute_list_begin()
 			rd.compute_list_bind_compute_pipeline(list, pipeline)
 			rd.compute_list_bind_uniform_set(

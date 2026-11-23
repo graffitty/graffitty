@@ -28,12 +28,18 @@ static func tick(tree: SceneTree) -> void:
 	print(FrameProfile.take())
 
 
+# Performance converts the unsigned byte count to float. Read the signed
+# RenderingServer value so Metal accounting underflow survives as a negative.
+static func _texture_memory(bytes: int) -> String:
+	return "unavailable" if bytes < 0 else "%.0fMiB" % (bytes / 1048576.0)
+
+
 static func report(tree: SceneTree) -> String:
 	var mib := 1048576.0
 	var lines := PackedStringArray()
-	lines.append("[render-stats] video=%.0fMiB textures=%.0fMiB buffers=%.0fMiB nodes=%d orphans=%d draw_calls=%d objects=%d process=%.1fms static=%.0fMiB" % [
+	lines.append("[render-stats] video=%.0fMiB textures=%s buffers=%.0fMiB nodes=%d orphans=%d draw_calls=%d objects=%d process=%.1fms static=%.0fMiB" % [
 		Performance.get_monitor(Performance.RENDER_VIDEO_MEM_USED) / mib,
-		Performance.get_monitor(Performance.RENDER_TEXTURE_MEM_USED) / mib,
+		_texture_memory(RenderingServer.get_rendering_info(RenderingServer.RENDERING_INFO_TEXTURE_MEM_USED)),
 		Performance.get_monitor(Performance.RENDER_BUFFER_MEM_USED) / mib,
 		Performance.get_monitor(Performance.OBJECT_NODE_COUNT),
 		Performance.get_monitor(Performance.OBJECT_ORPHAN_NODE_COUNT),
