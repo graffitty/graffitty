@@ -290,8 +290,8 @@ mod tests {
             assert_eq!(env, vec![("GRAFFITTY_INSTALL_DIR", installs.clone().into_os_string())]);
             installs.join("0.1.0/tools/gft")
         };
-        let tag = format!("v{}", env!("GRAFFITTY_VERSION"));
-        for (requested, expected) in [(Some(tag.as_str()), tag.as_str()), (None, "latest")] {
+        // A fixed tag: development builds have no release-format version.
+        for (requested, expected) in [(Some("v0.1.0"), "v0.1.0"), (None, "latest")] {
             let env = self_update_env(&exe, requested).unwrap();
             assert!(env.contains(&("GRAFFITTY_VERSION", expected.into())));
             assert!(env.contains(&("GRAFFITTY_INSTALL_SKIP_IF_EXISTS", "1".into())));

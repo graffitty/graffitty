@@ -90,6 +90,17 @@ class ForegroundApps(unittest.TestCase):
                             text("\x03")
                             observe(Path(shell).name)
 
+                    # exec keeps the foreground group and PID. The timer must still see the new app.
+                    launcher = root / "wait-for-exec"
+                    shutil.copy(shell, launcher)
+                    text(shlex.join([str(launcher), "-c", 'read -r go; exec "$1" 60',
+                                     "launcher", str(root / "nvim")]) + "\n")
+                    waiting = observe("wait-for-exec")
+                    text("go\n")
+                    self.assertEqual(observe("nvim")["pid"], waiting["pid"])
+                    text("\x03")
+                    observe(Path(shell).name)
+
                     text(shlex.quote(str(root / "node")) + " 60\n")
                     runtime = observe("node")
                     reply = client.action("rpc", pane, method="agent.event",

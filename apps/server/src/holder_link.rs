@@ -62,7 +62,7 @@ pub fn build_id() -> String {
 
 /// Starts `cmd` as an independent process. It keeps running when the process
 /// that started it ends, for example when that terminal closes or its job ends.
-pub(crate) fn spawn_apart(cmd: &mut std::process::Command) -> io::Result<std::process::Child> {
+pub(crate) fn spawn_apart(cmd: &mut std::process::Command) -> io::Result<()> {
     #[cfg(unix)]
     {
         use std::os::unix::process::CommandExt;
@@ -72,7 +72,10 @@ pub(crate) fn spawn_apart(cmd: &mut std::process::Command) -> io::Result<std::pr
                 Ok(())
             });
         }
-        cmd.spawn()
+        let mut child = cmd.spawn()?;
+        // Either peer may outlive the other. Reap ours even after the link closes.
+        std::thread::spawn(move || child.wait());
+        Ok(())
     }
     #[cfg(windows)]
     {
@@ -89,7 +92,7 @@ pub(crate) fn spawn_apart(cmd: &mut std::process::Command) -> io::Result<std::pr
                 cmd.spawn()
             }
             started => started,
-        }
+        }.map(drop)
     }
 }
 
@@ -555,4 +558,26 @@ impl Holders {
     pub fn is_empty(&self) -> bool {
         self.links.is_empty()
     }
+}
+
+#[cfg(all(test, unix))]
+#[test]
+fn detached_children_are_reaped_while_the_parent_lives() {
+    use std::process::Command;
+    let path = std::env::temp_dir().join(format!("holder-child-{}", uuid::Uuid::new_v4()));
+    for _ in 0..8 {
+        spawn_apart(Command::new("/bin/sh").args(["-c", r#"echo $$ >> "$1""#, "child"]).arg(&path)).unwrap();
+    }
+    let deadline = Instant::now() + Duration::from_secs(5);
+    loop {
+        let pids: Vec<i32> = std::fs::read_to_string(&path).unwrap_or_default()
+            .lines().filter_map(|pid| pid.parse().ok()).collect();
+        if pids.len() == 8 && pids.iter().all(|pid| unsafe { libc::kill(*pid, 0) } == -1
+            && io::Error::last_os_error().raw_os_error() == Some(libc::ESRCH)) {
+            break;
+        }
+        assert!(Instant::now() < deadline, "detached child still exists");
+        std::thread::sleep(Duration::from_millis(10));
+    }
+    std::fs::remove_file(path).unwrap();
 }

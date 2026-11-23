@@ -233,7 +233,18 @@ mod session_storage_tests {
         };
         let aged = |path: &Path| {
             let old = std::time::SystemTime::now() - NEW_SESSION_AGE * 2;
-            fs::File::open(path).unwrap().set_modified(old).unwrap();
+            let mut options = fs::OpenOptions::new();
+            options.read(true);
+            // Windows opens a directory only with backup semantics, and
+            // changing its time needs write-attributes access.
+            #[cfg(windows)]
+            {
+                use std::os::windows::fs::OpenOptionsExt;
+                const FILE_WRITE_ATTRIBUTES: u32 = 0x100;
+                const FILE_FLAG_BACKUP_SEMANTICS: u32 = 0x0200_0000;
+                options.access_mode(FILE_WRITE_ATTRIBUTES).custom_flags(FILE_FLAG_BACKUP_SEMANTICS);
+            }
+            options.open(path).unwrap().set_modified(old).unwrap();
         };
         let live = SessionDirectory::new(&settings).unwrap();
         aged(&live.path);

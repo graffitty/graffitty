@@ -443,7 +443,7 @@ impl Server {
             if key.starts_with("context:") {
                 agent_context::finish(self, &key, &context, &result);
             } else if key == "foreground_apps" {
-                for root in context["roots"].as_array().into_iter().flatten() {
+                for root in context.as_array().into_iter().flatten() {
                     let Some(id) = root["id"].as_u64() else { continue };
                     let Some(session) = self.sessions.get(&id) else { continue };
                     // Ignore a worker observation of a job that has already left.
@@ -466,6 +466,7 @@ impl Server {
                         let Some(session) = self.sessions.get(&id) else {
                             continue;
                         };
+                        if session.exited && state["status"] != "offline" { continue; }
                         let graph = self.graphs.get_mut(&session.workspace).unwrap();
                         let Some(previous) = graph.nodes.get(key).cloned() else {
                             continue;
@@ -590,25 +591,25 @@ impl Server {
                     "agent":{"pid":node["pid"],"provider":node["provider"],"started":node["started"],
                         "integrated":node["integrated"]}})
             }).collect();
-            if self.workers.start(&self.cli, "foreground_apps".into(),
-                json!({"op":"foreground_apps","roots":roots}), json!({"roots":roots})) {
+            if self.workers.foreground(json!(roots)) {
                 self.app_groups = groups;
                 self.app_scan_at = Instant::now();
             }
         }
         self.foreground_apps.retain(|id, _| self.sessions.get(id).is_some_and(|s| !s.exited));
         if self.scan_at.elapsed() > Duration::from_secs(2) && !self.workers.busy("scan") {
-            let roots:Vec<_>=self.sessions.values().map(|s|{
-                let key=format!("%{}",s.id);
-                let node=&self.graphs[&s.workspace].nodes[&key];
-                json!({"node":key,"pid":s.pid(),"agent_pid":node["pid"],"started":node["started"],"provider_home":node["provider_home"],"launch_context":node["launch_context"]})
+            let roots: Vec<_> = self.sessions.values().filter_map(|s| {
+                let key = format!("%{}", s.id);
+                let node = &self.graphs[&s.workspace].nodes[&key];
+                // A closed shell's PID can be reused. Only check its registered agent.
+                let shell = if s.exited { None } else { s.pid() };
+                if shell.is_none() && (node["pid"].is_null() || node["status"] == "offline") { return None; }
+                Some(json!({"node":key,"pid":shell,"agent_pid":node["pid"],"started":node["started"],
+                    "provider_home":node["provider_home"],"launch_context":node["launch_context"]}))
             }).collect();
-            self.workers.start(
-                &self.cli,
-                "scan".into(),
-                json!({"op":"scan","roots":roots}),
-                json!({}),
-            );
+            if !roots.is_empty() {
+                self.workers.start(&self.cli, "scan".into(), json!({"op":"scan","roots":roots}), json!({}));
+            }
             let mut targets: HashMap<String, Vec<Value>> = HashMap::new();
             for record in self.native_pending.values() {
                 targets.entry(record["event"]["target"].as_str().unwrap_or("").into()).or_default().push(record.clone());
@@ -2049,7 +2050,7 @@ pub fn handover_environment_path(descriptor: &std::path::Path) -> PathBuf {
     descriptor.with_extension("environment.json")
 }
 
-pub fn run(options: Options) -> Result<(), Error> {
+pub fn run(options: Options, foreground_apps: fn(&Value) -> Value) -> Result<(), Error> {
     if options.version {
         println!("gft server {} protocol={} {} {}", env!("GRAFFITTY_VERSION"), VERSION,
             std::env::consts::OS, std::env::consts::ARCH);
@@ -2231,7 +2232,7 @@ pub fn run(options: Options) -> Result<(), Error> {
         uploads: Default::default(),
         chromium_ticket: 0,
         retired_chromiums: vec![],
-        workers: workers::Workers::new(descriptor.parent().unwrap_or(std::path::Path::new(".")), settings.workers.clone())?,
+        workers: workers::Workers::new(descriptor.parent().unwrap_or(std::path::Path::new(".")), settings.workers.clone(), foreground_apps)?,
         scan_at: Instant::now(),
         app_scan_at: Instant::now(),
         app_groups: HashMap::new(),

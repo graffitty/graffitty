@@ -495,7 +495,7 @@ fn main() -> ExitCode {
             eprintln!("gft gui: {}", launch(app.args, app.cwd));
             ExitCode::FAILURE
         },
-        WorkspaceCommand::Server(options) => match graffitty_server::run(options) {
+        WorkspaceCommand::Server(options) => match graffitty_server::run(options, foreground_apps::scan) {
             Ok(()) => ExitCode::SUCCESS,
             Err(error) => {
                 eprintln!("gft server: {error}");

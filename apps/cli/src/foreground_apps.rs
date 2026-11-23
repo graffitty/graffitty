@@ -4,7 +4,8 @@ use serde_json::{Value, json};
 use std::collections::{HashMap, HashSet};
 
 pub(crate) fn scan(roots: &Value) -> Value {
-    let table = crate::sessions::processes();
+    let pids: Vec<_> = roots.as_array().into_iter().flatten().filter_map(|r| r["pid"].as_i64()).collect();
+    let table = crate::sessions::pane_processes(&pids);
     // A failed inventory is not an app exit. Preserve the last observation.
     if table.is_empty() {
         return json!({"error": {"message": "Cannot read process inventory"}});

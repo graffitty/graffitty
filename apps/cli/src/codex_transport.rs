@@ -38,9 +38,8 @@ fn queue_request(target: &Value, method: &str, mut params: Value) -> Result<Valu
     use tungstenite::Message;
     let thread = target["session_id"].as_str().ok_or("Codex thread not resolved from process evidence")?;
     uuid::Uuid::parse_str(thread)?;
-    let table = crate::sessions::processes();
     let pid = target["pid"].as_f64().ok_or("Codex PID missing")?;
-    let owner = table.get(&(pid as i64)).ok_or("Codex process exited")?;
+    let owner = crate::sessions::process(pid as i64)?;
     if pid != owner.pid as f64 || target["started"].as_str() != Some(&owner.started) {
         return Err("Codex process identity changed".into());
     }

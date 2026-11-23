@@ -149,7 +149,8 @@ fn codex_files(paths: &[PathBuf]) -> Value {
 }
 
 pub fn scan(roots: &Value) -> Value {
-    let table = crate::sessions::processes();
+    let pids: Vec<_> = roots.as_array().into_iter().flatten().filter_map(|r| integer(&r["pid"])).collect();
+    let table = crate::sessions::pane_processes(&pids);
     let mut result = serde_json::Map::new();
     let mut daemon_inventories = std::collections::HashMap::<PathBuf, std::result::Result<Vec<Value>, String>>::new();
     for root in roots.as_array().into_iter().flatten() {
@@ -158,10 +159,14 @@ pub fn scan(roots: &Value) -> Value {
             // Godot's process-running API only tracks its own children. Agents
             // are grandchildren launched by the PTY shell; use the OS snapshot.
             if let (Some(key), Some(pid)) = (root["node"].as_str(), integer(&root["agent_pid"])) {
-                let alive = table.get(&pid).is_some_and(|p| {
-                    root["started"].as_str().is_none_or(|started| started == p.started)
-                });
-                if !alive {
+                // A registered process can leave the shell tree. Permission errors
+                // give no exit evidence, so retain the last observation.
+                let offline = match crate::sessions::process(pid) {
+                    Ok(p) => p.state == "Z" || root["started"].as_str().is_some_and(|s| s != p.started),
+                    Err(e) => e.kind() == std::io::ErrorKind::NotFound
+                        || cfg!(unix) && e.raw_os_error() == Some(libc::ESRCH),
+                };
+                if offline {
                     result.insert(key.into(), json!({"status":"offline"}));
                 }
             }
@@ -386,8 +391,7 @@ pub fn transcript(path: &Path, offset: Option<u64>) -> Result<Value> {
 
 pub fn send_claude(target: &Value, text: &str, event_id: &str) -> Result<Value> {
     let pid = integer(&target["pid"]).ok_or("Claude PID missing")?;
-    let table = crate::sessions::processes();
-    let p = table.get(&pid).ok_or("Claude exited")?;
+    let p = crate::sessions::process(pid)?;
     if target["started"].as_str() != Some(&p.started) {
         return Err("Claude process changed".into());
     }
@@ -491,7 +495,6 @@ pub fn worker(request: &str) -> Result<Value> {
     let v = read_json_up_to(Path::new(request), crate::MAX_MESSAGE).ok_or("Invalid worker request")?;
     match v["op"].as_str().unwrap_or("") {
         "scan" => Ok(scan(&v["roots"])),
-        "foreground_apps" => Ok(crate::foreground_apps::scan(&v["roots"])),
         "codex_queue_status" => crate::codex_transport::queued_ids(&v["target"]),
         "codex_cancel" => crate::codex_transport::cancel_queue(
             &v["target"], v["submission_id"].as_str().ok_or("Missing submission ID")?,
@@ -574,6 +577,23 @@ mod claude_send_tests {
 #[cfg(test)]
 mod codex_discovery_tests {
     use super::*;
+    #[cfg(unix)]
+    #[test]
+    fn scan_checks_registered_process_outside_the_pane_and_rejects_pid_reuse() {
+        let mut child = std::process::Command::new("/bin/sleep").arg("20").spawn().unwrap();
+        let pid = i64::from(child.id());
+        let started = crate::sessions::process(pid).unwrap().started;
+        // An exited pane has no shell root. Its registered agent may still live.
+        let roots = |start: &str| json!([{"node":"%1","agent_pid":pid,"started":start}]);
+        let live = scan(&roots(&started));
+        let reused = scan(&roots("different birth time"));
+        child.kill().unwrap();
+        child.wait().unwrap();
+        assert_eq!(live, json!({}));
+        assert_eq!(reused["%1"]["status"], "offline");
+        assert_eq!(scan(&roots(&started))["%1"]["status"], "offline");
+    }
+
     #[test]
     fn long_turn_recovers_status_and_original_time_outside_the_preview_tail() {
         let directory = tempfile::tempdir().unwrap();

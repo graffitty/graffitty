@@ -1113,10 +1113,12 @@ mod tests {
     }
     #[test]
     fn encoded_paths_and_foreign_hosts() {
-        assert_eq!(
-            directory_from_report("file://localhost/tmp/a%20%25%CE%A9"),
-            Some(PathBuf::from("/tmp/a %Ω"))
-        );
+        // Each platform's own absolute form: PowerShell reports file:///C:/...
+        #[cfg(unix)]
+        let (report, path) = ("file://localhost/tmp/a%20%25%CE%A9", "/tmp/a %Ω");
+        #[cfg(windows)]
+        let (report, path) = ("file:///C:/tmp/a%20%25%CE%A9", "C:/tmp/a %Ω");
+        assert_eq!(directory_from_report(report), Some(PathBuf::from(path)));
         assert!(directory_from_report("file://foreign-host.invalid/tmp").is_none());
         assert!(directory_from_report("relative").is_none());
     }
