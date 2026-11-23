@@ -50,6 +50,19 @@ func check_federated_departure(manager: Node, alpha: int, beta: int) -> void:
 	check(await until(func(): return host.active_session_id == other_pane), "Panel shows P on the second server")
 	panel_select(host, peer, alpha_session)
 	check(await until(func(): return host.active_session_id == alpha and host.world.tab_fx_t < 0), "Cross-server switch lands on A")
+	var restored_generation: int = other.topology_generation
+	var current_tab: int = host.workspace_layout.active
+	var current_focus: String = host.pane_focus
+	var zoom: float = host.workspace_view.navigation_zoom
+	var center: Vector2 = host.workspace_view.navigation_center - host.workspace_view.inset_shift / zoom
+	var unexpected_switches: Array = []
+	var watch := func(): unexpected_switches.append(true)
+	manager.federation.session_switched.connect(watch)
+	other.socket.close(1000, "Reconnect fixture")
+	check(await until(func(): return other.topology_generation > restored_generation and other.connected and other.session_reattached), "Background server reconnects and restores its live session")
+	check(host.workspace_layout.active == current_tab and host.pane_focus == current_focus and at_view(host, center, zoom), "Background reconnect preserves the foreground tab, focus, pan and zoom")
+	check(manager.federation.selected == peer and unexpected_switches.is_empty() and host.world.tab_fx_t < 0, "Background reconnect emits no presentation switch or animation")
+	manager.federation.session_switched.disconnect(watch)
 	var source: int = host.sessions[alpha].vp.get_instance_id()
 	var focuses: Array = []
 	var observe := func(id: int): focuses.append(id)

@@ -51,3 +51,15 @@ func test_default_preserves_fine_scatter_on_dense_text() -> void:
 		for x in 80: cells.append(Vector3i(x, y, 1))
 	var layers: Array = [cells, [Vector3i(0, 41, 2)]]
 	expect(Pieces.limit_layers(layers, 0) == layers, "Disabled budget preserves dense cells and semantic layers")
+
+func test_block_budget_keeps_multiline_overhangs_together() -> void:
+	var cells := [Vector4i(0, 0, 1, 1), Vector4i(3, 2, 3, 3), Vector4i(8, 6, 1, 1)]
+	var ink := Rect2i(3, 2, 3, 3)
+	for budget in [2, 6, 12, 24]:
+		var owners := 0
+		for block: Vector4i in Blocks.build(cells, budget):
+			var rect := Rect2i(block.x, block.y, block.z, block.w)
+			if rect.intersects(ink):
+				owners += 1
+				expect(rect.encloses(ink), "A budget cut cannot slice an overhang in either axis")
+		expect(owners == 1, "One budgeted block owns the full overhang")

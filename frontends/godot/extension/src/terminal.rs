@@ -4981,7 +4981,11 @@ impl State {
 
     fn paint(&mut self, size: Vector2, record: bool) -> libghostty_vt::error::Result<(bool, Option<Presentation>)> {
         let (canvas_bg, canvas_fg) = (self.canvas_bg, self.canvas_fg);
-        let rs = Painter::new([canvas_bg, canvas_fg, self.canvas_img_below, self.canvas_img_above, self.canvas_quick], record, self.pixel_grid);
+        let cell_size = Vector2::new(self.geo.cell_w, self.geo.cell_h);
+        let rs = Painter::new(
+            [canvas_bg, canvas_fg, self.canvas_img_below, self.canvas_img_above, self.canvas_quick],
+            record, self.pixel_grid, self.geo.pad, cell_size, self.geo.ascent,
+        );
         rs.canvas_item_clear(canvas_bg);
         rs.canvas_item_clear(canvas_fg);
         rs.canvas_item_clear(self.canvas_quick);
@@ -5160,7 +5164,7 @@ impl State {
             }
             (row, col, end)
         });
-        let mut flush = |run: &mut Option<Run>, y: f32| {
+        let flush = |runs: &mut RunCache, run: &mut Option<Run>, y: f32| {
             if let Some(r) = run.take() {
                 rs.run(
                     runs,
@@ -5347,7 +5351,7 @@ impl State {
                         .as_ref()
                         .is_some_and(|link| link.cells.contains(&(col, u32::from(row_i))));
                     if n == 0 || invisible || under_preedit {
-                        flush(&mut run, y);
+                        flush(runs, &mut run, y);
                         if hovered && !invisible && !under_preedit {
                             let mut ink = color(fg);
                             if faint {
@@ -5376,7 +5380,7 @@ impl State {
                     // image coordinates, never font glyphs (even if the image
                     // has been deleted or has not finished uploading yet).
                     if graphemes[0] == graffitty_terminal_core::image_render::PLACEHOLDER {
-                        flush(&mut run, y);
+                        flush(runs, &mut run, y);
                         x += self.geo.cell_w;
                         col += 1;
                         continue;
@@ -5386,6 +5390,16 @@ impl State {
                     let baseline = Vector2::new(x, y + self.geo.ascent);
                     let wide =
                         || matches!(cell.raw_cell().and_then(|c| c.wide()), Ok(CellWide::Wide));
+                    if let Some(cuts) = &rs.flight {
+                        let cp = graphemes[0] as u32;
+                        let wide = wide();
+                        let styled = style != 0 || faint || underline != Underline::None
+                            || strikethrough || overline || cell.style()?.inverse || cell.style()?.blink;
+                        cuts.borrow_mut().cell(
+                            col, row_i, if wide { 2 } else { 1 }, cp, styled,
+                            self.fonts.resolve_index(cp, style, || wide),
+                        );
+                    }
                     let at_cursor = cursor_vp
                         .as_ref()
                         .is_some_and(|vp| vp.x == col && vp.y == row_i);
@@ -5405,7 +5419,7 @@ impl State {
                         .as_ref()
                         .is_some_and(|r| !run_cell || r.style != style || r.fg != fg)
                     {
-                        flush(&mut run, y);
+                        flush(runs, &mut run, y);
                     }
                     if run_cell {
                         match run.as_mut() {
@@ -5425,7 +5439,7 @@ impl State {
                             glyphs[..count].copy_from_slice(&graphemes[..count]);
                             cursor_cell = Some((glyphs, count, style, baseline, wide()));
                         }
-                        let shaped = rs.grapheme(&self.fonts, canvas_fg, baseline, &graphemes[..count], style,
+                        let shaped = rs.grapheme(&self.fonts, runs, canvas_fg, baseline, &graphemes[..count], style,
                             wide(), self.font_size, fg, raster_scale, outline_width, outline_color);
                         for ch in if shaped { &graphemes[..0] } else { &graphemes[..count] } {
                             let cp = *ch as u32;
@@ -5476,12 +5490,11 @@ impl State {
                     x += self.geo.cell_w;
                     col += 1;
                 }
-                flush(&mut run, y);
+                flush(runs, &mut run, y);
                 y += self.geo.cell_h;
                 row_i += 1;
             }
         }
-        self.runs.end_frame();
 
         if !self.preedit.is_empty() {
             // Drawn here, not by the host: the composition belongs on the
@@ -5535,6 +5548,7 @@ impl State {
         let cursor_focused = self.focused
             && (self.win_focused || crate::movie_writer::is_active());
         // No cursor while composing, like ghostty: the composition is the caret.
+        let cursor_needs_piece = cursor_cell.is_none();
         if let Some(vp) = cursor_vp.filter(|_| {
             self.preedit.is_empty()
                 && (!self.cursor_blinks || self.cursor_blink_on || !cursor_focused)
@@ -5637,7 +5651,7 @@ impl State {
                             Vector2::new(baseline.x, baseline.y - self.geo.ascent),
                             Vector2::new(self.geo.cell_w, self.geo.cell_h),
                         );
-                        let shaped = rs.grapheme(&self.fonts, canvas_fg, baseline, &chars[..count], style,
+                        let shaped = rs.grapheme(&self.fonts, &mut self.runs, canvas_fg, baseline, &chars[..count], style,
                             wide, self.font_size, text, self.raster_scale, 0, text);
                         for ch in if shaped { &chars[..0] } else { &chars[..count] } {
                             let cp = *ch as u32;
@@ -5736,7 +5750,12 @@ impl State {
 
         let mut background = self.bg;
         background.a = self.bg_opacity;
-        let frame = rs.finish(self.image_material.as_ref(), background);
+        if cursor_needs_piece && let Some(vp) = cursor_vp && let Some(cuts) = &rs.flight {
+            cuts.borrow_mut().cell(vp.x, vp.y, 1, 0, false, 0);
+        }
+        self.runs.end_frame();
+        let grid = transform * Rect2::new(Vector2::splat(self.geo.pad), cell_size);
+        let frame = rs.finish(self.image_material.as_ref(), background, grid);
         self.visible_area.publish(visible_area);
         Ok((bg_changed, frame))
     }

@@ -1,10 +1,19 @@
 extends RefCounted
 ## Session state stays on the owner; only visible replicas prepare visual work.
 ## Shared across windows/hosts, not multiplied by the number of saved tabs.
+const MAX_SIDE := 8192.0
 static var _viewports: Array[WeakRef] = []
 
 static func pixel_budget() -> int:
 	return 8_000_000 if OS.has_feature("android") or OS.has_feature("ios") else 32_000_000
+
+static func target_pixel_limit() -> int:
+	return 4_000_000 if OS.has_feature("android") or OS.has_feature("ios") else 20_000_000
+
+static func bounded_scale(extent: Vector2, density: float, pixels: int) -> float:
+	var side_limit := MAX_SIDE / maxf(extent.x, extent.y)
+	var area_limit := sqrt(float(pixels) / maxf(extent.x * extent.y, 1.0))
+	return minf(density, minf(side_limit, area_limit))
 
 static func image_budget() -> int:
 	return 64 * 1024 * 1024 if OS.has_feature("android") or OS.has_feature("ios") else 256 * 1024 * 1024
@@ -16,8 +25,7 @@ static func _rebalance() -> void:
 		var viewport: SubViewport = reference.get_ref()
 		if viewport.is_inside_tree() and is_active(viewport) and not viewport.is_queued_for_deletion(): active.append(viewport)
 	for viewport in active:
-		var pane_limit := 4_000_000 if OS.has_feature("android") or OS.has_feature("ios") else 20_000_000
-		var pixels := mini(pane_limit, maxi(1, pixel_budget() / active.size()))
+		var pixels := mini(target_pixel_limit(), maxi(1, pixel_budget() / active.size()))
 		var bytes := image_budget() / active.size()
 		if viewport.get_meta("terminal_pixel_budget", 0) == pixels and viewport.get_meta("terminal_image_budget", 0) == bytes: continue
 		viewport.set_meta("terminal_pixel_budget", pixels)

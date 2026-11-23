@@ -18,6 +18,13 @@ See Claude, Codex, Pi and OpenCode across connected servers and sessions.
 - Connected browsers, terminals and agents appear below their agent.
 - Drag the panel title to move or dock it.
 
+The elapsed time starts at the server-recorded status change, including time
+while this client was disconnected. Viewing a finished agent changes Done to Idle
+without resetting its age. If no transition time is known, the age stays blank.
+Codex discovery reads the latest complete lifecycle record even when a long turn
+has pushed it outside the transcript preview. Its original timestamp survives a
+server restart; partial trailing records do not change the displayed state.
+
 ## Client-only sound configuration
 
 In `client.toml`:

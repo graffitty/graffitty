@@ -97,7 +97,7 @@ def verify_graph_landing(evidence):
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--evidence", type=Path)
-    parser.add_argument("--case", choices=("effects", "landing", "graph-landing", "adaptive"), default="effects")
+    parser.add_argument("--case", choices=("effects", "switch-lens", "landing", "graph-landing", "adaptive", "raster", "overview-fit"), default="effects")
     args = parser.parse_args()
     if args.evidence:
         args.evidence.mkdir(parents=True, exist_ok=False)
@@ -112,7 +112,15 @@ def main():
         with PrivateServer(env, directory, "pwsh.exe" if os.name == "nt" else "/bin/sh") as owner:
             for name in ("alpha", "beta"):
                 subprocess.run([str(owner.binary), "session", "new", "-d", "-s", name], env=env, check=True, timeout=20)
-            script = {"landing": "session_landing_smoke.gd", "graph-landing": "session_graph_landing_smoke.gd", "effects": "session_effects_smoke.gd", "adaptive": "adaptive_projection_smoke.gd"}[args.case]
+            script = {
+                "landing": "session_landing_smoke.gd",
+                "graph-landing": "session_graph_landing_smoke.gd",
+                "effects": "session_effects_smoke.gd",
+                "switch-lens": "session_switch_lens_smoke.gd",
+                "adaptive": "adaptive_projection_smoke.gd",
+                "raster": "zoom_raster_quality.gd",
+                "overview-fit": "flat_3d_overview_fit_smoke.gd",
+            }[args.case]
             evidence = directory / Path(script).stem
             evidence.mkdir()
             env["GRAFFITTY_TEST_EVIDENCE"] = str(evidence)

@@ -87,6 +87,7 @@ func refresh_body() -> void:
 				input[id] = {"id": id, "key": key, "title": host.pane_title(key),
 					"provider": node.get("provider", ""), "status": node.get("status", ""),
 					"program": node.get("program_status"),
+					"status_history": node.get("status_history", []),
 					"looking": shown, "focused": focused}
 		host_trees.append([host, ids_by_key])
 	_add_away(input, remotes, sessions)
@@ -133,7 +134,7 @@ func _add_away(input: Dictionary, remotes: Dictionary, sessions: Dictionary) -> 
 				if title.is_empty() and program is Dictionary: title = str(program.get("msg", ""))
 				input[id] = {"id": id, "key": "%%%d" % pane, "title": title,
 					"provider": str(agent.get("provider", "")), "status": str(agent.get("status", "")),
-					"program": program, "looking": false, "focused": false}
+					"program": program, "status_history": agent.get("status_history", []), "looking": false, "focused": false}
 
 ## Server-owned session label (manual or automatic name), falling back to its ID.
 static func session_label(connection: Object) -> String:

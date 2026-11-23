@@ -12,7 +12,7 @@ static func build(cells: Array, maximum: int) -> Array:
 		left = mini(left, cell.x)
 		top = mini(top, cell.y)
 		right = maxi(right, cell.x + cell.z)
-		bottom = maxi(bottom, cell.y + 1)
+		bottom = maxi(bottom, cell.y + (cell.w if cell is Vector4i else 1))
 	var width := right - left
 	var height := bottom - top
 	# Terminal cells are roughly twice as tall as they are wide.
@@ -27,10 +27,17 @@ static func build(cells: Array, maximum: int) -> Array:
 	for x in width:
 		if cuts[x]: edges.append(left + x)
 	edges.append(right)
+	var row_cuts := PackedByteArray()
+	row_cuts.resize(height)
+	for i in range(1, rows): row_cuts[height * i / rows] = 1
+	for cell in cells:
+		if cell is Vector4i:
+			for y in range(cell.y + 1, cell.y + cell.w): row_cuts[y - top] = 0
 	var blocks: Array = []
-	for y in rows:
-		var y0 := top + height * y / rows
-		var y1 := top + height * (y + 1) / rows
+	var y0 := top
+	for y1 in range(top + 1, bottom + 1):
+		if y1 < bottom and not row_cuts[y1 - top]: continue
 		for x in edges.size() - 1:
 			blocks.append(Vector4i(edges[x], y0, edges[x + 1] - edges[x], y1 - y0))
+		y0 = y1
 	return blocks

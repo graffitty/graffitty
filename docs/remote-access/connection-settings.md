@@ -38,15 +38,22 @@ On `ws://`, setup metadata and framing remain visible. Use trusted TLS,
 Tailscale, or SSH for additional protection. Addresses, timing, and traffic sizes
 can still be observable.
 
-## Connect over SSH
+## Set up the server over SSH
 
 ```sh
 gft remote connect user@computer
 ```
 
-Prepare a [matching server bundle](../developers/build-and-run/remote-server.md)
-for the remote OS and CPU. OpenSSH handles authentication, host-key checks,
-and SSH aliases. Existing shells are reused.
+Graffitty checks the remote installation with `gft --version`. If it needs to
+install Graffitty, it runs the standard installer pinned to your client’s
+version. The installer selects the release for the remote OS and CPU. If that
+computer cannot download it, the client verifies the archive’s SHA-256 and
+uploads it with the installer over SSH.
+
+Graffitty starts or reuses the remote server and connects through an SSH tunnel.
+OpenSSH handles authentication, host-key checks, and SSH aliases. For a custom
+build, pass `--server-binary PATH` with a `gft` executable built for the
+destination. See [SSH server deployment](../developers/build-and-run/remote-server.md).
 
 The client keeps the tunnel open and retries dropped connections. Closing it
 closes tunnels while remote shells continue. A remote reboot ends the programs;

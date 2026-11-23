@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 # /// script
-# dependencies = ["markdown-it-py==4.2.0"]
+# dependencies = []
 # ///
 """Test replays, record them with Movie Maker, or rebuild the test dashboard.
 
@@ -45,7 +45,6 @@ from av1 import check_encoder, encoder_args, probe_av1
 from e2e_background import background_failures, clear_background, prepare_background
 from e2e_bistro import share_installed_bistro
 from e2e_server import PrivateServer
-from markdown_it import MarkdownIt
 
 ROOT = Path(__file__).resolve().parents[2]
 GODOT_ROOT = ROOT / "frontends/godot/project"
@@ -563,123 +562,160 @@ ICON = {
     "fail": "❌ fail",
     "error": "💥 error",
     "timeout": "⏱ timeout",
+    "blocked": "⛔ blocked",
 }
+
+
+def outcome(case: dict, results: dict) -> str:
+    """pass, a problem (fail/error/timeout/blocked), or unrecorded."""
+    return results.get(f"{case['suite']}/{case['name']}", {}).get("status", "unrecorded")
+
+
+def attention_label(count: int) -> str:
+    return f"{count} {'needs' if count == 1 else 'need'} attention"
 
 
 def build() -> None:
     results = load_results()
     all_cases = sorted(cases(), key=lambda case: (case["suite"], case["name"]))
+    suites = sorted({c["suite"] for c in all_cases})
     rules, rules_summary = fast_rules()
+    states = {f"{c['suite']}/{c['name']}": outcome(c, results) for c in all_cases}
+    passed = sum(s == "pass" for s in states.values())
+    unrecorded = sum(s == "unrecorded" for s in states.values())
+    problems = len(states) - passed - unrecorded
+    totals = f"{passed} passed · {attention_label(problems)} · {unrecorded} not recorded (of {len(states)} cases)"
+
+    def counts(suite: str) -> tuple[int, int, int]:
+        members = [states[f"{suite}/{c['name']}"] for c in all_cases if c["suite"] == suite]
+        good = members.count("pass")
+        missing = members.count("unrecorded")
+        return good, len(members) - good - missing, missing
+
     lines = [
         "# Test dashboard",
         "",
-        "Open [the video wall](index.html) to inspect recorded replays.",
-        "Specifications live in `tests/llm-e2e/suites/`. A recorded pass covers that case's assertions, not full product acceptance.",
+        "Open [the video wall](index.html) to watch recorded replays.",
         "",
-        "## Find a suite",
+        f"**{totals}.** Unrecorded cases are not passes.",
         "",
-        "| Suite | Cases | Recorded passes | Other recorded outcomes |",
+        "## Suites",
+        "",
+        "| Suite | Passed | Needs attention | Not recorded |",
         "| --- | ---: | ---: | ---: |",
     ]
-    for suite in sorted({c["suite"] for c in all_cases}):
-        members = [c for c in all_cases if c["suite"] == suite]
-        outcomes = [results[f"{suite}/{c['name']}"]["status"]
-                    for c in members if f"{suite}/{c['name']}" in results]
-        lines.append(
-            f"| [{suite}](index.html#{suite}) | {len(members)} | {outcomes.count('pass')} | "
-            f"{sum(status != 'pass' for status in outcomes)} |"
-        )
+    for suite in suites:
+        good, bad, missing = counts(suite)
+        lines.append(f"| [{suite}](index.html#{suite}) | {good} | {bad} | {missing} |")
     lines += [
-        "", "Unrecorded cases are not passes. See each suite for failures, blocked cases, and missing recordings.",
-        "", "## Update recordings", "",
+        "",
+        "## Update recordings",
+        "",
         "1. Record Mac replays: `uv run tests/godot/test_dashboard.py record`.",
         "2. Import APK evidence: `uv run tests/godot/test_dashboard.py import-android EVIDENCE_DIRECTORY`.",
-        "3. Rebuild this index: `uv run tests/godot/test_dashboard.py build`.",
-    ]
-    lines += [
+        "3. Rebuild this page and the video wall: `uv run tests/godot/test_dashboard.py build`.",
         "",
         f"## Fast rules ({rules_summary})",
         "",
-        "Build the isolated Rust graph fixture with `cargo build -p graffitty-workspace-core --example graph_fixture`, then run `godot --headless --path frontends/godot/project --script tests/run.gd`. No application sessions or model calls are used.",
-        "",
-        "The video wall retains every case, assertion, replay, recording, and full fast-rule result. This page lists only fast-rule failures below.",
+        "Run them: `cargo build -p graffitty-workspace-core --example graph_fixture`, then",
+        "`godot --headless --path frontends/godot/project --script tests/run.gd`.",
+        "No application sessions or model calls are used.",
         "",
     ]
-    lines += [f"- ❌ {rule}" for status, rule in rules if status != "PASS"]
-    lines += ["", "The video wall contains the full fast-rule results."]
+    failing_rules = [rule for status, rule in rules if status != "PASS"]
+    lines += [f"- ❌ {rule}" for rule in failing_rules] or ["All fast rules pass."]
     (PAGES / "README.md").write_text(public_text("\n".join(lines) + "\n"), encoding="utf-8")
 
-    markdown = MarkdownIt("commonmark", {"html": False})
-    cards = []
-    for suite in sorted({c["suite"] for c in all_cases}):
-        cards.append(f'<h2 id="{html.escape(suite, quote=True)}">{html.escape(suite)}</h2><div class=grid>')
-        for case in [c for c in all_cases if c["suite"] == suite]:
-            key = f"{case['suite']}/{case['name']}"
-            stem = key.replace("/", "--")
-            result = results.get(key, {})
-            media = (
-                f"<video src='media/{stem}.mp4' poster='media/{stem}.jpg' muted playsinline controls preload=none></video>"
-                if (MEDIA / f"{stem}.mp4").exists()
-                else "<div class=novideo>"
-                + ("no replay yet" if not case["replay"] else "not recorded")
-                + "</div>"
+    def spec_link(case: dict) -> str:
+        target = Path(os.path.relpath(case["steps"], PAGES)).as_posix()
+        return f"<a href='{html.escape(target, quote=True)}'>steps</a>"
+
+    def card(case: dict) -> str:
+        key = f"{case['suite']}/{case['name']}"
+        stem = key.replace("/", "--")
+        result = results.get(key, {})
+        status = states[key]
+        media = (
+            f"<video src='media/{stem}.mp4' poster='media/{stem}.jpg' muted playsinline controls preload=none></video>"
+            if (MEDIA / f"{stem}.mp4").exists()
+            else ""
+        )
+        checks = result.get("checks", [])
+        failing = [m for s, m in checks if s != "PASS"]
+        check_items = "".join(f"<li class={s.lower()}>{html.escape(m)}</li>" for s, m in checks)
+        return (
+            f"<div class='card {status}'>{media}"
+            f"<h3>{ICON.get(status, '')} {html.escape(case['name'])}</h3>"
+            f"<p>{html.escape(case['goal'])}</p>"
+            + "".join(f"<p class=why>{html.escape(m)}</p>" for m in failing[:3])
+            + f"<p class=meta>{result.get('video_s', '—')} s · {result.get('recorded_at', '')} · {spec_link(case)}</p>"
+            + (f"<details><summary>{len(checks)} {'check' if len(checks) == 1 else 'checks'}</summary><ul>{check_items}</ul></details>" if checks else "")
+            + "</div>"
+        )
+
+    body = [
+        "<h1>Graffitty tests</h1>",
+        f"<p class=totals>{html.escape(totals)}</p>",
+        f"<p class=meta>Fast rules: {html.escape(rules_summary)}. Each clip replays an e2e case at a person's pace.</p>",
+        "<table><tr><th>Suite</th><th>Passed</th><th>Needs attention</th><th>Not recorded</th></tr>",
+    ]
+    for suite in suites:
+        good, bad, missing = counts(suite)
+        body.append(
+            f"<tr><td><a href='#{html.escape(suite, quote=True)}'>{html.escape(suite)}</a></td>"
+            f"<td>{good or ''}</td><td class={'bad' if bad else ''}>{bad or ''}</td><td>{missing or ''}</td></tr>"
+        )
+    body.append("</table>")
+    attention = [c for c in all_cases if states[f"{c['suite']}/{c['name']}"] not in ("pass", "unrecorded")]
+    if attention:
+        body.append("<h2 id=attention>Needs attention</h2><div class=grid>")
+        body += [card(c) for c in attention]
+        body.append("</div>")
+    for suite in suites:
+        members = [c for c in all_cases if c["suite"] == suite]
+        recorded = [c for c in members if states[f"{suite}/{c['name']}"] == "pass"]
+        missing = [c for c in members if states[f"{suite}/{c['name']}"] == "unrecorded"]
+        good, bad, _ = counts(suite)
+        summary = f"{good} passed" + (f" · {attention_label(bad)}" if bad else "") + (f" · {len(missing)} not recorded" if missing else "")
+        body.append(f"<h2 id='{html.escape(suite, quote=True)}'>{html.escape(suite)} <small>{summary}</small></h2>")
+        if recorded:
+            body.append("<div class=grid>" + "".join(card(c) for c in recorded) + "</div>")
+        if missing:
+            items = "".join(
+                f"<li><b>{html.escape(c['name'])}</b>{'' if c['replay'] else ' (manual)'}: "
+                f"{html.escape(c['goal'])} {spec_link(c)}</li>"
+                for c in missing
             )
-            checks = "".join(
-                f"<li class={s.lower()}>{html.escape(m)}</li>"
-                for s, m in result.get("checks", [])
-            )
-            spec = case["steps"].read_text(encoding="utf-8")
-            specification = (
-                "<details class=spec><summary>LLM suite specification</summary>"
-                + "<article>"
-                + markdown.render(spec)
-                + "</article>"
-                + "<details><summary>Markdown source</summary><pre>"
-                + html.escape(spec)
-                + "</pre></details></details>"
-            )
-            cards.append(
-                f"<div class='card {result.get('status', 'none')}'>{media}"
-                f"<h3>{html.escape(case['name'])}</h3>"
-                f"<p>{html.escape(case['goal'])}</p>"
-                f"<p class=meta>{ICON.get(result.get('status'), 'not recorded')} · {result.get('video_s', '—')} s · {html.escape(result.get('codec', 'unverified').upper())} · {result.get('recorded_at', '')}</p>"
-                + specification
-                + (
-                    f"<details><summary>Replay checks</summary><ul>{checks}</ul></details>"
-                    if checks
-                    else ""
-                )
-                + "</div>"
-            )
-        cards.append("</div>")
-    rule_items = "".join(
-        f"<li class={s.lower()}>{html.escape(r)}</li>" for s, r in rules
+            body.append(f"<details><summary>{len(missing)} not recorded</summary><ul class=missing>{items}</ul></details>")
+    rule_items = "".join(f"<li class={s.lower()}>{html.escape(r)}</li>" for s, r in rules)
+    failing_items = "".join(f"<li class=fail>{html.escape(r)}</li>" for r in failing_rules)
+    body.append(
+        f"<h2 id=fast-rules>Fast rules <small>{html.escape(rules_summary)}</small></h2>"
+        + (f"<ul>{failing_items}</ul>" if failing_items else "<p>All fast rules pass.</p>")
+        + f"<details><summary>All {len(rules)} rules</summary><ul>{rule_items}</ul></details>"
     )
     (
         PAGES / "index.html"
     ).write_text(public_text(f"""<!doctype html><meta charset=utf-8><title>Graffitty tests</title>
+<meta name=viewport content="width=device-width,initial-scale=1">
 <style>
-body{{font:14px -apple-system,system-ui,sans-serif;background:#111418;color:#dde3ea;margin:24px}}
+body{{font:14px -apple-system,system-ui,sans-serif;background:#111418;color:#dde3ea;margin:24px;max-width:1600px}}
 a{{color:#8fc1ff}} h2{{margin:32px 0 12px;border-bottom:1px solid #2a313a;padding-bottom:6px}}
-.grid{{display:grid;grid-template-columns:repeat(auto-fill,minmax(480px,1fr));gap:16px}}
+h2 small{{font-weight:normal;font-size:13px;color:#8b949e;margin-left:8px}}
+.totals{{font-size:18px;margin:8px 0}}
+table{{border-collapse:collapse;margin:12px 0}} th,td{{padding:3px 12px;text-align:right;border-bottom:1px solid #2a313a}}
+th:first-child,td:first-child{{text-align:left}} td.bad{{color:#f85149;font-weight:bold}}
+.grid{{display:grid;grid-template-columns:repeat(auto-fill,minmax(420px,1fr));gap:16px}}
 .card{{background:#1a1f26;border:1px solid #2a313a;border-radius:8px;padding:12px;border-top:3px solid #555}}
-.card.pass{{border-top-color:#3fb950}} .card.fail{{border-top-color:#f85149}} .card.error,.card.timeout{{border-top-color:#d29922}}
-video,.novideo{{width:100%;aspect-ratio:16/10;background:#000;border-radius:4px}}
-.novideo{{display:flex;align-items:center;justify-content:center;color:#666}}
-h3{{margin:10px 0 4px}} p{{margin:4px 0}} .meta{{color:#8b949e;font-size:12px}}
+.card.pass{{border-top-color:#3fb950}} .card.fail{{border-top-color:#f85149}} .card.error,.card.timeout,.card.blocked{{border-top-color:#d29922}}
+video{{width:100%;aspect-ratio:16/10;background:#000;border-radius:4px}}
+h3{{margin:10px 0 4px}} p{{margin:4px 0}} .meta{{color:#8b949e;font-size:12px}} .why{{color:#f0a8a3}}
 ul{{margin:6px 0;padding-left:20px}} li.pass::marker{{content:'✓ ';color:#3fb950}} li.fail::marker{{content:'✗ ';color:#f85149}}
+.missing li{{margin:3px 0;color:#aab4bf}}
 summary{{cursor:pointer;padding:8px 0;color:#8fc1ff}}
-.spec{{margin-top:10px;border-top:1px solid #394350}}
-.spec article{{max-height:65vh;overflow:auto;line-height:1.6;padding:4px 8px}}
-.spec h1{{font-size:20px}} .spec h2{{font-size:17px;margin:16px 0 8px}}
-.spec pre{{white-space:pre-wrap;overflow-wrap:anywhere;background:#111418;padding:10px;border-radius:4px}}
-.spec p{{margin:8px 0}} .spec code{{color:#b9d6f7}}
 @media(max-width:540px){{.grid{{grid-template-columns:1fr}} body{{margin:12px}}}}
 </style>
-<h1>Graffitty tests</h1>
-<p>Each clip replays an e2e case at a person's pace. Fast rules: {html.escape(rules_summary)}.</p>
-{"".join(cards)}
-<h2>Fast rules</h2><ul>{rule_items}</ul>
+{"".join(body)}
 """), encoding="utf-8")
     print(f"Wrote {PAGES / 'README.md'} and {PAGES / 'index.html'}")
 

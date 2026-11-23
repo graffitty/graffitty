@@ -237,6 +237,9 @@ before dragging still repositions the floating menu.
   panel lists, menus, settings, and dialog text (Android's overlay scrollbar,
   which never covers the text).
 - Mouse wheels scroll in steps and never stretch; a wheel ends any pull.
+- The live dictation preview follows the same scrolling and thumb behavior,
+  including a second finger while the microphone is held. Reviewing earlier
+  words pauses automatic following until the user returns to the bottom (UI-06S).
 - A drag that starts on a row, button or menu command scrolls and never
   activates it; a tap made while a pull settles still activates.
 - A touch on a list that is still gliding brakes it without activating the row

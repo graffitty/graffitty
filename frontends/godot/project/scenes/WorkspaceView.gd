@@ -1,5 +1,6 @@
 extends Control
 signal navigation_changed
+const ViewportUpdates := preload("res://scenes/TerminalViewportUpdates.gd")
 const RenderUpdates := preload("res://scenes/RenderUpdates.gd")
 ## Workspace chrome and windows. The tab bar lives in window space; dockable
 ## tools are owned separately by the application Window.
@@ -27,12 +28,6 @@ const EDGE_PAN_DELAY := .25
 ## Ease from rest to the cap after the dwell, in screen pixels per second.
 const EDGE_PAN_RAMP := .8
 const EDGE_PAN_MAX_SPEED := 800.0
-## Canvas texels per window pixel, as the single-terminal sheet had: typing
-## zoom magnifies the canvas without softening text.
-const SUPERSAMPLING := 2.0
-const TEXTURE_MAX_SIDE := 8192.0
-## A wall far wider than the window must not cost a canvas far larger than it.
-const TEXTURE_MAX_PIXELS := 20_000_000.0
 var host: Node
 var tab_bar: Control
 ## Clip fixed workspace overlays below the tabs without changing their
@@ -73,6 +68,13 @@ var raster_region := Rect2()
 var navigation_render_until := 0
 var navigation_render_frame := -10
 var _navigation_render_timer := Timer.new()
+const MILD_RASTER_ZOOM := 1.10
+const LARGE_RASTER_ZOOM := 1.15
+const RASTER_ZOOM_HYSTERESIS := 0.001
+var _raster_zoom := 1.0
+var _pending_raster_zoom := 0.0
+var _pending_raster_region := Rect2()
+var _raster_settle_timer := Timer.new()
 var drop_hint := Panel.new()
 var hint_text := Label.new()
 var _refreshing := false
@@ -148,6 +150,10 @@ func _ready() -> void:
 	_navigation_render_timer.wait_time = 0.16
 	_navigation_render_timer.timeout.connect(_finish_navigation_render)
 	add_child(_navigation_render_timer)
+	_raster_settle_timer.one_shot = true
+	_raster_settle_timer.wait_time = 0.16
+	_raster_settle_timer.timeout.connect(_projection_changed)
+	add_child(_raster_settle_timer)
 	mouse_filter = Control.MOUSE_FILTER_IGNORE
 	foreground_clip.name = "ForegroundClip"
 	foreground_clip.mouse_filter = Control.MOUSE_FILTER_IGNORE
@@ -460,31 +466,84 @@ func sync_canvas() -> void:
 		return
 	if not raster_region.has_area():
 		raster_region = Rect2(Vector2.ZERO, Vector2(layout))
-	var physical := get_viewport().get_final_transform().get_scale().x
-	# Respect device pixel density on mobile: one logical pixel may cover several
-	# screen pixels. Keep desktop's extra supersampling out of phone render targets.
-	var mobile := OS.has_feature("android") or OS.has_feature("ios")
-	var pixel_budget := 4_000_000.0 if mobile else TEXTURE_MAX_PIXELS
-	var zoom := 1.0
-	var world: Node = host.world
-	if world != null and (is_overview() or world.fx_cam_zoom * world.gesture_zoom > 1.15) and world.fly_dur <= 0.0 and world.tab_fx_t < 0.0:
-		zoom = maxf(world._navigation_camera_zoom() if is_overview() else world.fx_cam_zoom * world.gesture_zoom, 0.05)
-	# The crop includes off-screen padding and perspective bounds. A fixed-size
-	# target spends pixels on that padding and loses text density while zooming.
-	# Preserve screen density, in half-step increments to avoid per-frame reallocs.
-	var density := ceilf((1.0 if mobile else SUPERSAMPLING) * maxf(physical, 1.0) * zoom * 2.0) / 2.0
-	var scale := minf(
-		density,
-		TEXTURE_MAX_SIDE / maxf(raster_region.size.x, raster_region.size.y),
-	)
-	scale = minf(scale, sqrt(pixel_budget / maxf(raster_region.get_area(), 1.0)))
-	var raster := Vector2i((raster_region.size * scale).floor()).max(Vector2i.ONE)
 	canvas.size_2d_override = layout
 	canvas.size_2d_override_stretch = true
 	canvas.oversampling = true
-	if canvas.size != raster and not holding_navigation_render_targets():
-		canvas.size = raster
+	if not holding_navigation_render_targets():
+		var raster := _canvas_raster_size(get_viewport().get_final_transform().get_scale().x)
+		if canvas.size != raster:
+			canvas.size = raster
 	canvas_root.size = Vector2(layout)
+
+
+func _canvas_raster_size(physical: float) -> Vector2i:
+	var density := ceilf(maxf(physical, 1.0) * _canvas_raster_zoom() * 2.0) / 2.0
+	var scale := ViewportUpdates.bounded_scale(raster_region.size, density, ViewportUpdates.target_pixel_limit())
+	return Vector2i((raster_region.size * scale).floor()).max(Vector2i.ONE)
+
+
+func _canvas_raster_zoom() -> float:
+	var world: Node = host.world
+	if world == null or not _presentation_settled():
+		return _use_raster_zoom(1.0)
+	if is_overview():
+		_use_raster_zoom(1.0)
+		return maxf(world._navigation_camera_zoom(), 0.05)
+
+	var controller: float = world.fx_cam_zoom * world.gesture_zoom
+	if OS.has_feature("android") or OS.has_feature("ios"):
+		return controller if controller > LARGE_RASTER_ZOOM else 1.0
+
+	var shown := _displayed_camera_zoom(controller)
+	if controller > LARGE_RASTER_ZOOM and shown > LARGE_RASTER_ZOOM:
+		# Keep following large zooms during the approach. Adaptive containment
+		# can change the lens after the controller has picked its target.
+		return _use_raster_zoom(shown if world.fx_camera.adaptive_enabled else controller)
+
+	var threshold := MILD_RASTER_ZOOM - (RASTER_ZOOM_HYSTERESIS if _raster_zoom > 1.0 else 0.0)
+	var refine := shown >= threshold or is_equal_approx(shown, threshold)
+	var wanted := shown if refine else 1.0
+	if refine == (_raster_zoom > 1.0):
+		return _use_raster_zoom(wanted)
+	# Both worlds observe the actual displayed pose. A stationary landing
+	# can resize its crop and change density in this same reconciliation.
+	var motion: CameraMotion = world.camera_motion
+	if (
+		motion.velocity.is_zero_approx() and motion.angular_velocity.is_zero_approx()
+		and motion.framing_velocity.is_zero_approx()
+	):
+		return _use_raster_zoom(wanted)
+
+	# A slow approach can spend several frames in this band. Wait for
+	# both the displayed scale and the padded crop to stop changing.
+	if not is_equal_approx(shown, _pending_raster_zoom) or raster_region != _pending_raster_region:
+		_pending_raster_zoom = shown
+		_pending_raster_region = raster_region
+		_raster_settle_timer.start()
+	if _raster_settle_timer.is_stopped():
+		return _use_raster_zoom(wanted)
+	return _raster_zoom
+
+
+func _use_raster_zoom(zoom: float) -> float:
+	_raster_settle_timer.stop()
+	_pending_raster_zoom = 0.0
+	_raster_zoom = zoom
+	return zoom
+
+
+func _displayed_camera_zoom(fallback: float) -> float:
+	var pane: Control = panes.get(host.pane_focus)
+	if pane == null or not pane.visible or not host.world.has_method("sheet_window_fraction"):
+		return fallback
+	# Project a horizontal span in sheet units at the drawn pane centre.
+	# Its length already excludes the pane scale that WorkspacePane applies.
+	var center := pane.get_transform() * (pane.size * 0.5)
+	var radius := Vector2(32, 0)
+	var left: Vector2 = host.world.sheet_window_fraction(center - radius)
+	var right: Vector2 = host.world.sheet_window_fraction(center + radius)
+	var zoom := ((right - left) * size).length() / (2.0 * radius.x)
+	return zoom if is_finite(zoom) and zoom > 0.0 else fallback
 
 
 func update_raster_region() -> void:
@@ -625,7 +684,7 @@ func refresh() -> void:
 		var visible_terminal: bool = ('%%%d' % id) in shown
 		var vp: SubViewport = host.sessions[id].vp
 		# Visible panes set their own raster visibility after crop calculation.
-		if not visible_terminal: preload("res://scenes/TerminalViewportUpdates.gd").set_visible(vp, false)
+		if not visible_terminal: ViewportUpdates.set_visible(vp, false)
 		preload("res://scenes/TerminalViewportInput.gd").set_disabled(vp,
 			not visible_terminal or not host.is_terminal_pane(host.pane_focus)
 			or id != host.active_session_id

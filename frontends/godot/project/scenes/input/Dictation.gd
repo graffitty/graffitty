@@ -10,7 +10,8 @@ var floating: Node
 var button := Button.new()
 var overlay := CanvasLayer.new()
 var bar := PanelContainer.new()
-var preview := TextEdit.new()
+var preview_scroll := preload("res://scenes/input/DictationPreview.gd").new()
+var preview: TextEdit = preview_scroll.view
 var status := Label.new()
 var discard_button := Button.new()
 var slide_hint := Label.new()
@@ -29,6 +30,7 @@ var dispatched := false
 var submit_when_done := false
 var generation := 0
 var press_started := -1
+var press_finger := -1
 var press_stopping := false
 var press_position := Vector2.ZERO
 var mic_position := Vector2.ZERO
@@ -57,6 +59,7 @@ func _ready() -> void:
 		floating.add("microphone", button, Vector2(0.8, 1.0), _press, _release, false, discard, _drag)
 		preload("res://scenes/input/TouchFace.gd").attach(button, {"part": "button", "button": "microphone"})
 	else:
+		button.gui_input.connect(_button_input)
 		button.button_down.connect(_press)
 		button.button_up.connect(_release)
 		host.workspace_view.toolbar.add_child(button)
@@ -100,7 +103,8 @@ func _build_bar() -> void:
 		_fit_preview())
 	preview.resized.connect(_fit_preview)
 	preview.gui_input.connect(_preview_input)
-	column.add_child(preview)
+	column.add_child(preview_scroll)
+	if floating != null: floating.allow_during_gesture(bar)
 	status.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
 	status.add_theme_color_override("font_color", Color("ff8b98"))
 	column.add_child(status)
@@ -157,8 +161,8 @@ func set_bottom_inset(value: float) -> void:
 
 func _fit_preview() -> void:
 	var height := clampi(preview.get_total_visible_line_count(), 1, 4) * preview.get_line_height() + 16.0
-	if not is_equal_approx(preview.custom_minimum_size.y, height):
-		preview.custom_minimum_size.y = height
+	if not is_equal_approx(preview_scroll.custom_minimum_size.y, height):
+		preview_scroll.custom_minimum_size.y = height
 		_layout_bar.call_deferred()
 
 func _preview_input(event: InputEvent) -> void:
@@ -220,17 +224,30 @@ func _release() -> void:
 func _reset_gesture() -> void:
 	if press_started >= 0 and floating == null: button.global_position = mic_position
 	press_started = -1
+	press_finger = -1
 	press_stopping = false
 	slide_hint.hide()
 	slide_hint.modulate.a = 1
 
+func _button_input(event: InputEvent) -> void:
+	if event is InputEventMouse and event.device == InputEvent.DEVICE_ID_EMULATION:
+		button.accept_event()
+	elif event is InputEventScreenTouch:
+		if event.pressed and press_started < 0:
+			press_finger = event.index
+			_press()
+			press_position = button.get_global_transform_with_canvas() * event.position
+		button.accept_event()
+
 func _input(event: InputEvent) -> void:
 	if floating == null and press_started >= 0:
-		if event is InputEventMouseMotion:
+		if event is InputEventScreenDrag and event.index == press_finger:
 			_drag(event.position - press_position)
-		elif event is InputEventMouseButton and event.button_index == MOUSE_BUTTON_LEFT and not event.pressed:
+		elif event is InputEventMouseMotion and event.device != InputEvent.DEVICE_ID_EMULATION and press_finger == -1:
+			_drag(event.position - press_position)
+		elif event is InputEventMouseButton and event.device != InputEvent.DEVICE_ID_EMULATION and press_finger == -1 and event.button_index == MOUSE_BUTTON_LEFT and not event.pressed:
 			_release()
-		elif event is InputEventScreenTouch and not event.pressed:
+		elif event is InputEventScreenTouch and event.index == press_finger and not event.pressed:
 			if event.canceled: discard()
 			else: _release()
 	if not bar.visible: return
@@ -264,9 +281,8 @@ func start() -> void:
 	client.changed.connect(func(text):
 		if current != generation: return
 		applying_transcript = true
-		preview.text = text
+		preview_scroll.set_transcript(text)
 		applying_transcript = false
-		preview.scroll_vertical = preview.get_line_count()
 		_fit_preview())
 	client.failed.connect(func(message):
 		if current == generation: _error(message))
@@ -390,6 +406,7 @@ func discard() -> void:
 	failed = false
 	dispatched = false
 	submit_when_done = false
+	preview_scroll.reset()
 	preview.text = ""
 	status.text = ""
 	if _bar_focus() != null: _bar_focus().release_focus()

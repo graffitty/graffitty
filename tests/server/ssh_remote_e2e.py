@@ -23,7 +23,8 @@ from headless_remote_e2e import BINARY, ROOT, Client
 
 def main():
     sshd = shutil.which("sshd") or "/usr/sbin/sshd"
-    with tempfile.TemporaryDirectory(prefix="gr-ssh-") as directory:
+    # Keep the terminal holder socket under the macOS sockaddr_un path limit.
+    with tempfile.TemporaryDirectory(prefix="gr-ssh-", dir="/tmp") as directory:
         tmp = Path(directory)
         home = tmp / "remote-home"
         home.mkdir()
@@ -146,8 +147,7 @@ LogLevel ERROR
             cli.send_signal(signal.SIGINT)
             assert cli.wait(timeout=10) == 0
             assert not connection_path.exists(), "temporary token file must be removed"
-            assert (home / ".local/lib/graffitty/gft").is_file()
-            assert not (home / ".local/lib/graffitty/gft-server").exists()
+            assert (home / ".local/share/graffitty/remote-build/gft").is_file()
             server = json.loads(descriptor_path.read_text())
             os.kill(server["pid"], 0)
             direct = Client(server, "ssh-test")

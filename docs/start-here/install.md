@@ -9,7 +9,7 @@ curl -fsSL https://graffitty.com/install.sh | sh
 | | Linux | macOS |
 | --- | --- | --- |
 | **Requires** | x86_64 or arm64; glibc 2.35 or later (musl distributions such as Alpine are not supported) | Apple Silicon; macOS 12 or later |
-| **Installs** | For your user under `~/.local`, without root access | `Graffitty.app` in `/Applications` |
+| **Installs** | For your user under `~/.local`, without root access | `/Applications/Graffitty.app` |
 | **Open** | Application menu, or `gft-gui` | Applications, or `gft-gui` |
 
 - On Linux, replacing an existing build uses `mv --exchange` or Perl when the system has an older `mv`.

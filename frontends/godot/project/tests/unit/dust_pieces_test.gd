@@ -4,8 +4,16 @@ const Pieces := preload("res://scenes/CellShatter.gd")
 class Grid extends Node:
  var cell_padding := 0.0
  var glyphs: Array = []
- func cell_glyphs() -> Array: return glyphs
- func get_cell_size() -> Vector2: return Vector2(8,16)
+ class Snapshot extends RefCounted:
+  var glyphs: Array
+  func occupied_cell_count() -> int: return glyphs.size()
+  func flight_grid() -> Rect2: return Rect2(0,0,8,16)
+  func flight_cells() -> Array:
+   return glyphs.map(func(g): return Vector4i(g.col,g.row,2 if g.get("wide",false) else 1,1))
+ func capture_render_state() -> RefCounted:
+  var state := Snapshot.new()
+  state.glyphs = glyphs
+  return state
 
 func test_every_letter_is_partitioned_and_shares_its_scatter_cohort() -> void:
  var term := Grid.new()

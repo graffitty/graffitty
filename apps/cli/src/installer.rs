@@ -18,8 +18,9 @@ use std::{
 type Result<T> = std::result::Result<T, Box<dyn std::error::Error>>;
 
 /// The current Graffitty installer.
-const GRAFFITTY_SCRIPT: &str =
-    if cfg!(windows) { "https://graffitty.com/install.ps1" } else { "https://graffitty.com/install.sh" };
+pub(crate) fn script_url(windows: bool) -> &'static str {
+    if windows { "https://graffitty.com/install.ps1" } else { "https://graffitty.com/install.sh" }
+}
 /// A world's installer, at the root of its repository. It takes the release tag as
 /// its only argument.
 const WORLD_SCRIPT: &str = if cfg!(windows) { "install.ps1" } else { "install.sh" };
@@ -30,7 +31,7 @@ pub const WORLDS: &[(&str, &str)] = &[("bistro", "graffitty/bistro-world")];
 pub fn self_update(version: Option<&str>) -> Result<()> {
     let exe = dunce::canonicalize(std::env::current_exe()?)?;
     let env = self_update_env(&exe, version)?;
-    let script = fetch(GRAFFITTY_SCRIPT)?;
+    let script = fetch(script_url(cfg!(windows)))?;
     if cfg!(windows) {
         // Windows locks a running gft.exe. The install script runs in its own
         // window and this process exits now, so nothing here holds the files
@@ -128,7 +129,7 @@ fn release_tag(requested: Option<&str>, repo: &str) -> Result<String> {
 }
 
 /// The bytes at `url`.
-fn fetch(url: &str) -> Result<Vec<u8>> {
+pub(crate) fn fetch(url: &str) -> Result<Vec<u8>> {
     let response = client()?.get(url).send()?;
     if response.status() == reqwest::StatusCode::NOT_FOUND {
         return Err(format!("{url} was not found").into());
@@ -136,8 +137,10 @@ fn fetch(url: &str) -> Result<Vec<u8>> {
     Ok(response.error_for_status()?.bytes()?.to_vec())
 }
 
-fn client() -> Result<reqwest::blocking::Client> {
+pub(crate) fn client() -> Result<reqwest::blocking::Client> {
     Ok(reqwest::blocking::Client::builder()
+        .https_only(true)
+        .connect_timeout(Duration::from_secs(30))
         .user_agent(concat!("gft/", env!("GRAFFITTY_VERSION")))
         .timeout(Duration::from_secs(60))
         .build()?)
@@ -221,7 +224,7 @@ fn run_detached(_script: &[u8], _env: &[(&str, OsString)]) -> Result<()> {
 }
 
 /// `v` followed by `major.minor.patch` and an optional `-`, `.` or `+` suffix.
-fn valid_tag(tag: &str) -> bool {
+pub(crate) fn valid_tag(tag: &str) -> bool {
     let Some(rest) = tag.strip_prefix('v') else { return false };
     let core_end = rest.find(['-', '+']).unwrap_or(rest.len());
     let (core, suffix) = rest.split_at(core_end);

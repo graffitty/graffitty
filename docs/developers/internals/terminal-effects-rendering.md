@@ -78,7 +78,16 @@ abruptly defocusing the departing text.
 The transition keeps at most four passes (two retiring workspaces and the current pair)
 and releases them after landing. These passes redraw retained terminal state at the
 current resolution; they do not read back or animate screenshots. Other renderers keep
-the per-pane fragment lens. The lens stays active throughout the transition.
+the per-pane fragment lens.
+
+A session switch holds the displayed pose, focus distance, aperture and depth
+range while the destination prepares. The departing ink keeps the typing
+gradient across the tilted sheet, with zero blur on the focal plane. Its aperture
+eases to zero over the first 30% of departure or by the midpoint of a shorter
+live handoff, whichever comes first.
+Only the departing capture carries this aperture. Fly Away's arrival uses its
+own phase-driven 0–6 px blur. The shared typing lens resumes once the retained
+pieces retire.
 
 
 ## Tests

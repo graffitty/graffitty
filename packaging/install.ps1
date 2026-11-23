@@ -5,6 +5,7 @@
 # Set GRAFFITTY_VERSION to a release tag (e.g. v0.1.0); default: latest.
 # Rerunning installs the published archive, even for the same tag.
 # Set GRAFFITTY_INSTALL_SKIP_IF_EXISTS=1 to skip a matching installed archive SHA-256.
+# Set GRAFFITTY_NO_DESKTOP=1 to skip Start menu and Explorer integration.
 # Set GRAFFITTY_RELEASES to where releases are listed: an https URL or a local
 # directory; default: https://graffitty.com/releases. The layout there:
 #   latest.txt     the latest release tag
@@ -368,11 +369,13 @@
                     @(('"' + $chromium + '"'), '/grant', '"*S-1-15-2-2:(OI)(CI)(RX)"', '/T', '/Q')
                 if ($code -ne 0) { throw 'Could not configure the Chromium sandbox runtime.' }
             }
-            New-GraffittyShortcut (Join-Path $destination 'Graffitty.exe')
-            Register-GraffittyContextMenu $destination
+            if ($env:GRAFFITTY_NO_DESKTOP -ne '1') {
+                New-GraffittyShortcut (Join-Path $destination 'Graffitty.exe')
+                Register-GraffittyContextMenu $destination
+            }
             Add-GraffittyPath (Join-Path $destination 'tools')
             [IO.File]::WriteAllText($receipt, $entry.Hash.ToLowerInvariant())
-            Write-Host "Graffitty $tag is installed. Open Graffitty from the Start menu."
+            Write-Host "Graffitty $tag is installed at $destination."
             Write-Host 'Open a new terminal to use gft and gft-gui.'
         } finally {
             # Also after a failure: if Graffitty was closed for the upgrade,

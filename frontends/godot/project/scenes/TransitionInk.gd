@@ -54,6 +54,12 @@ func synchronize(world: Node) -> void:
 			material.set_shader_parameter("screen_dof", true)
 			phase = maxf(phase, float(material.get_shader_parameter("fly")))
 		var effects: Node = world.terminal_effects
+		var first: Node = groups[id][0]
+		if first.departing_lens.y > 0.0:
+			# Preserve the tilted sheet's depth gradient, including zero blur
+			# at its focus plane. This aperture travels only with its capture.
+			render_pass.lens.set_lens(first.departing_lens.x, first.departing_radius, first.departing_lens.z, effects.blur_limit)
+			continue
 		var optics := Vector2(effects.depth_range, phase * 6.0)
 		if not groups[id][0].get_meta("depth_mode", false):
 			optics = departure_lens(effects.depth_range, effects.blur_radius, phase)

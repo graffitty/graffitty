@@ -9,6 +9,10 @@
 | Double-tap, hold the second touch, then drag | Move the button; discards the recording started by the first tap |
 
 - Server dictation shows words while speaking. Client-side dictation returns text after Stop.
+- The preview follows the latest words. Scroll up to review earlier text; automatic
+  scrolling resumes when you return to the bottom. You can scroll with another
+  finger while holding the microphone. Long drafts show a draggable scrollbar;
+  finger and trackpad scrolling have momentum and elastic edges.
 - Text goes to the original terminal or browser field without pressing Enter.
 - Errors or backgrounding preserve received text as a draft.
 - Edit the draft or stop again to cancel a pending final result.

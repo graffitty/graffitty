@@ -72,7 +72,7 @@ func build(world: Node) -> void:
 	depth_direction = world.tab_fx_direction
 	depth_center = world.camera_2d.position
 	depth_projection = get_parent().global_transform
-	var fly_ratio: float = world.dust_flying_ratio()
+	var fly_ratio: float = world.dust_flying_ratio() if dust_mode else -1.0
 	var view: Control = world.host.workspace_view
 	for border in world._workspace_border_captures(not arriving):
 		var rect: Rect2 = border.rect
@@ -166,23 +166,17 @@ func build(world: Node) -> void:
 			pair.vp.tree_exiting.connect(_freeze_live_panel.bind(item))
 			continue
 		panel(capture(pair.vp, (1 << 17) | (1 << 19)), Rect2(origin, layout), group)
+		var snapshot := preload("res://scenes/RetainedViewport.gd").terminal_state(pair.term)
+		if snapshot == null: continue
+		var cells: Array = snapshot.flight_cells()
 		if dust_mode:
-			_build_dust(world, pair, key, origin, layout, group, fly_ratio)
-		var cells: Array = []
-		if dust_mode:
-			var builder := preload("res://scenes/DustPieces.gd")
-			cells = builder.letters(builder.cells(pair.term, world.dust_particle_budget()), fly_ratio)
-		else:
-			for glyph in pair.term.cell_glyphs():
-				cells.append(Vector3i(glyph.col, glyph.row, 2 if glyph.get("wide", false) else 1))
-			var cursor: Vector2i = pair.term.get_cursor_cell()
-			if cursor.x >= 0 and not cells.any(func(cell): return cursor.x >= cell.x and cursor.x < cell.x + cell.z and cell.y == cursor.y):
-				cells.append(Vector3i(cursor.x, cursor.y, 1))
+			_build_dust(world, pair, key, origin, layout, group, cells, fly_ratio)
+			cells = preload("res://scenes/DustPieces.gd").letters(cells, fly_ratio)
 		if cells.is_empty(): continue
 		cells = Capture.limit_layers([cells], world.scatter_block_budget())[0]
 		var runs := Capture.cell_runs(cells, 3)
-		var cell_size: Vector2 = pair.term.get_cell_size()
-		var padding := Vector2.ONE * float(pair.term.cell_padding)
+		var grid: Rect2 = snapshot.flight_grid()
+		var cell_size := grid.size
 		var batch := MultiMesh.new()
 		batch.transform_format = MultiMesh.TRANSFORM_2D
 		batch.use_custom_data = true
@@ -193,7 +187,7 @@ func build(world: Node) -> void:
 		batch.instance_count = runs.positions.size()
 		for i in runs.positions.size():
 			var extent := cell_size * Vector2(runs.widths[i], runs.heights[i])
-			var at: Vector2 = pair.term.position + padding + Vector2(runs.positions[i]) * cell_size
+			var at: Vector2 = pair.term.position + grid.position + Vector2(runs.positions[i]) * cell_size
 			batch.set_instance_transform_2d(i, Transform2D(Vector2(extent.x, 0), Vector2(0, extent.y), origin + at + extent * 0.5))
 			batch.set_instance_custom_data(i, Color(at.x / layout.x, at.y / layout.y, extent.x / layout.x, extent.y / layout.y))
 		var layer := MultiMeshInstance2D.new()
@@ -233,9 +227,8 @@ func build(world: Node) -> void:
 			layer.multimesh.set_instance_color(i, Color(ranks[index], 1, 1, 1))
 			index += 1
 
-func _build_dust(world: Node, pair: Dictionary, key: String, origin: Vector2, layout: Vector2, group: Node2D, fly_ratio: float) -> void:
+func _build_dust(world: Node, pair: Dictionary, key: String, origin: Vector2, layout: Vector2, group: Node2D, cells: Array, fly_ratio: float) -> void:
 	var builder := preload("res://scenes/DustPieces.gd")
-	var cells := builder.cells(pair.term, world.dust_particle_budget())
 	var positions := PackedFloat32Array()
 	for item in cells: positions.append(float(item.x))
 	var particles := builder.particles(pair.term, Rect2(pair.term.position, pair.term.size), cells, world.dust_particle_budget(), Capture.release_ranks(positions), fly_ratio)

@@ -19,7 +19,7 @@ func run() -> void:
 	var effects := preload("res://scenes/TerminalEffects.gd")
 	var departing := Vector3(8.0, 0.0263, 1.0)
 	var incoming := Vector3(0.0, 100.0, 0.0)
-	check(effects.blend_lens(departing, incoming, 0.0).is_equal_approx(departing), "Session binding preserves the departing optical state")
+	check(effects.blend_lens(departing, incoming, 0.0).is_equal_approx(departing), "Tab lens interpolation starts at the captured optical state")
 	var first: Vector3 = effects.blend_lens(departing, incoming, smoothstep(0.0, 1.0, 1.0 / 120.0))
 	check(first.x / first.y > departing.x / departing.y * .999, "A distant destination cannot abruptly remove departure blur")
 	check(effects.blend_lens(departing, incoming, 1.0).is_equal_approx(incoming), "Optical transition reaches the incoming state")

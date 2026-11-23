@@ -14,9 +14,14 @@ pub struct Input {
     pub status: String,
     /// Optional OSC 7501 root report. Presentation only; never grants a graph identity.
     pub program: Option<graffitty_terminal_core::program_status::Status>,
+    /// Server-recorded transitions, including when this client was disconnected.
+    #[serde(default)]
+    pub status_history: Vec<StatusChange>,
     pub looking: bool,
     pub focused: bool,
 }
+#[derive(Clone, Debug, Deserialize)]
+pub struct StatusChange { pub status: String, pub at: String }
 #[derive(Clone, Debug, Default, Deserialize, Serialize)]
 #[serde(deny_unknown_fields)]
 pub struct Stamp { pub state: String, pub at: u64 }
@@ -99,6 +104,7 @@ impl Agents {
             if item.title.trim().is_empty() { item.title = app_name(&item.provider).into(); }
             let next = word(&item.status);
             let old = self.agents.get(&item.id);
+            let observed_change = old.is_some_and(|a| a.word != next);
             if old.is_none_or(|a| a.word != next) {
                 if let Some(sound) = alert(old.map(|a| a.word.as_str()), next, item.looking) {
                     alerts.push(sound.to_owned());
@@ -120,7 +126,17 @@ impl Agents {
             let shown_rank = if status == "idle" && item.focused && self.held.as_ref().is_some_and(|h| h.0 == item.id && h.1 == 3) { 3 } else { rank(status) };
             // Looking isn't work: Done and Idle share one duration.
             let stamp = self.saved.changed.entry(item.id.clone()).or_default();
-            if stamp.state != next { *stamp = Stamp { state: next.into(), at: now }; }
+            // The server observed the transition even if the phone was asleep.
+            // Discovering an already idle agent is not a fresh completion.
+            let recorded = item.status_history.last()
+                .filter(|change| change.status == item.status)
+                .and_then(|change| chrono::DateTime::parse_from_rfc3339(&change.at).ok())
+                .and_then(|time| u64::try_from(time.timestamp()).ok());
+            if let Some(at) = recorded {
+                *stamp = Stamp { state: next.into(), at };
+            } else if stamp.state != next {
+                *stamp = Stamp { state: next.into(), at: if observed_change { now } else { 0 } };
+            }
             let pinned = self.saved.pins.contains(&item.id);
             rows.push(Row { id: item.id, key: item.key, title: item.title, provider: item.provider,
                 status: status.into(), section: if pinned { "Pinned" } else { section(shown_rank) }.into(),
@@ -142,7 +158,7 @@ impl Agents {
 mod tests {
     use super::*;
     fn input(status: &str, looking: bool, focused: bool) -> Vec<Input> {
-        vec![Input { id: "server/epoch/1".into(), key: "%1".into(), title: "task".into(), provider: "pi".into(), status: status.into(), program: None, looking, focused }]
+        vec![Input { id: "server/epoch/1".into(), key: "%1".into(), title: "task".into(), provider: "pi".into(), status: status.into(), program: None, status_history: vec![], looking, focused }]
     }
     #[test] fn attention_rules() {
         assert_eq!(alert(Some("working"), "blocked", true), Some("blocked"));
@@ -206,7 +222,9 @@ mod tests {
         assert_eq!(rows[0].section, "Idle"); assert!(sounds.is_empty());
     }
     #[test] fn pin_and_clock_survive_restart_and_schemas_are_strict() {
-        let mut a = Agents::default(); a.observe(input("busy", false, false), 20);
+        let mut a = Agents::default();
+        a.observe(input("idle", false, false), 10);
+        a.observe(input("busy", false, false), 20);
         a.pin("server/epoch/1".into(), true);
         let mut b = Agents::default(); b.restore(&a.save()).unwrap();
         let (rows, _) = b.observe(input("busy", false, false), 99);
@@ -219,5 +237,23 @@ mod tests {
         items[0].title = " ".into();
         let (rows, _) = a.observe(items, 1);
         assert_eq!(rows[0].title, "Pi");
+    }
+    #[test] fn server_transition_time_wins_over_discovery_reconnect_and_saved_client_time() {
+        let mut a = Agents::default();
+        let mut items = input("idle", false, false);
+        let stopped = 1_800_000_000;
+        let first_seen = stopped + 10 * 3600;
+        assert_eq!(a.observe(items.clone(), first_seen).0[0].at, 0, "Unknown age must not pretend to be a fresh finish");
+        a.restore(&format!(r#"{{"version":1,"pins":[],"changed":{{"server/epoch/1":{{"state":"idle","at":{first_seen}}}}}}}"#)).unwrap();
+        items[0].status_history = vec![StatusChange { status: "idle".into(), at: "2027-01-15T08:00:00.000Z".into() }];
+        let rows = a.observe(items.clone(), first_seen).0;
+        assert_eq!(rows[0].at, stopped);
+        a.observe(vec![], first_seen + 60);
+        assert_eq!(a.observe(items.clone(), first_seen + 120).0[0].at, stopped);
+        // A whole busy/idle cycle while disconnected must advance the clock,
+        // even though the displayed status is idle before and after the gap.
+        items[0].status_history[0].at = "2027-01-15T08:05:00.000Z".into();
+        items[0].looking = true;
+        assert_eq!(a.observe(items, first_seen + 180).0[0].at, stopped + 300);
     }
 }

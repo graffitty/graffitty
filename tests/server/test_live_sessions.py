@@ -1,5 +1,6 @@
 """Real shared-server session commands, help routing, and PTY lifecycle."""
 import json
+from datetime import datetime
 import os
 from pathlib import Path
 import socket
@@ -123,6 +124,11 @@ class LiveSessionTests(unittest.TestCase):
                     [agent] = sessions["work"]["agents"]
                     self.assertEqual(agent["pane"], pane["id"])
                     self.assertEqual(agent["program"], {"state":"working", "app":"codex", "title":"", "msg":"Refactor"})
+                    [transition] = agent["status_history"]
+                    self.assertEqual(transition["status"], "busy")
+                    self.assertLess(abs(time.time() - datetime.fromisoformat(transition["at"]).timestamp()), 10)
+                    again = next(s for s in json.loads(run("session", "list", "--json")) if s["name"] == "work")["agents"][0]
+                    self.assertEqual(again["status_history"], [transition], "Catalog reads do not restart the agent's clock")
                     self.assertEqual(sessions[None]["agents"], [])
                     # attach-session reaches the real existence check, then
                     # inspect the GUI launcher arguments without opening a window.

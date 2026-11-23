@@ -6,13 +6,13 @@ extends MultiMeshInstance3D
 const ShatterShader := preload("res://scenes/cell_shatter.gdshader")
 const TerminalEffects := preload("res://scenes/TerminalEffects.gd")
 
+## Backings finish before the glyphs. Their local phase reaches one here.
+const BACKING_FLIGHT_FRACTION := 0.30
+var departing_lens := Vector3.ZERO # focus distance, base radius, relative depth range
+var aperture_end_phase := 1.0
+var departing_radius := 0.0
+
 var _cells := 0
-# The grid starts inside the control by its padding, so the rect's own origin
-# is not cell (0, 0).
-#
-# Missing this puts every piece a few pixels off and the assembled screen no
-# longer matches the terminal it was cut from.
-var _padding := 4.0
 var _spread := 7.0
 var _captures: Array[SubViewport] = []
 var _raster_targets: Array[WeakRef] = []
@@ -144,11 +144,6 @@ static func capture(viewport: SubViewport, mask: int, parent: Node = null) -> Su
 	return result
 
 
-func _remember_padding(term: Node) -> void:
-	if term.get("cell_padding") != null:
-		_padding = float(term.get("cell_padding"))
-
-
 func build_cells(
 	term: Node,
 	viewport: SubViewport,
@@ -167,12 +162,15 @@ func build_cells(
 	## Vector4i stores (column, row, column span, row span); Vector3i is one row.
 	## chunk_columns coalesces adjacent cells during the same conversion pass.
 	##
-	## `Terminal.cell_glyphs()` already knows where the ink is and what each cell
-	## holds, so a layer of emoji, or of 한글, or of everything bold, needs no
-	## pixel readback.
+	## The snapshot supplies the grid and its occupied rectangles. A glyph
+	## overhanging a VT cell has already claimed the adjacent source pixels.
+	if cells.is_empty(): return 0
+	var snapshot := preload("res://scenes/RetainedViewport.gd").terminal_state(term)
+	if snapshot == null: return 0
 	var grid: Vector2i = term.call("get_grid_size")
-	var cell: Vector2 = term.call("get_cell_size")
-	if grid.x <= 0 or grid.y <= 0 or cell.x <= 0.0 or cell.y <= 0.0 or cells.is_empty():
+	var capture_grid: Rect2 = snapshot.flight_grid()
+	var cell := capture_grid.size
+	if grid.x <= 0 or grid.y <= 0 or cell.x <= 0.0 or cell.y <= 0.0:
 		return 0
 	if fragment:
 		var positions := PackedFloat32Array()
@@ -192,7 +190,6 @@ func build_cells(
 		_material().set_shader_parameter("dust_tex_size", layout)
 		return regions.size()
 
-	_remember_padding(term)
 	var runs := cell_runs(cells, chunk_columns)
 	var inked: Array[Vector2i] = runs.positions
 	var widths: PackedInt32Array = runs.widths
@@ -204,7 +201,7 @@ func build_cells(
 		uv_dv,
 		inked,
 		grid,
-		cell,
+		capture_grid,
 		motion,
 		delay_range,
 		widths,
@@ -222,7 +219,7 @@ static func cell_runs(cells: Array, columns: int) -> Dictionary:
 	for cell in cells:
 		var width: int = maxi(cell.z, 1) if cell is Vector3i or cell is Vector4i else 1
 		var height: int = maxi(cell.w, 1) if cell is Vector4i else 1
-		if not cell is Vector4i and columns > 0 and not positions.is_empty():
+		if height == 1 and columns > 0 and not positions.is_empty() and heights[-1] == 1:
 			var last := positions[-1]
 			if last.y == cell.y and last.x + widths[-1] == cell.x and widths[-1] < columns:
 				widths[-1] += width
@@ -269,7 +266,7 @@ func _emit(
 	uv_dv: Vector3,
 	inked: Array[Vector2i],
 	grid: Vector2i,
-	cell: Vector2,
+	capture_grid: Rect2,
 	motion: Vector2,
 	delay_range: Vector2,
 	widths := PackedInt32Array(),
@@ -279,8 +276,9 @@ func _emit(
 	if _cells == 0:
 		return 0
 	var texture_size := Vector2(TerminalEffects.layout_size(viewport))
+	var cell := capture_grid.size
 	var cell_uv := cell / texture_size
-	var grid_origin := rect.position + Vector2(_padding, _padding)
+	var grid_origin := rect.position + capture_grid.position
 
 	var quad := QuadMesh.new()
 	quad.size = Vector2.ONE
@@ -506,6 +504,11 @@ func set_fly(target: Vector3, t: float) -> void:
 	var m := _material()
 	m.set_shader_parameter("fly_target", target)
 	m.set_shader_parameter("fly", maxf(t, 0.0))
+	if departing_lens.y > 0.0:
+		departing_radius = departing_lens.y * (1.0 - smoothstep(0.0, aperture_end_phase, t))
+		# The spatial shader uses the same lens when screen-space DoF is unavailable.
+		m.set_shader_parameter("focus_depth", departing_lens.x)
+		m.set_shader_parameter("blur_radius", departing_radius / departing_lens.z)
 	if get_meta("glyph_layer", false):
 		# Flying text clears every pane backing (priorities <= 120). Restore
 		# the original canvas stack at the exact assembled handoff.

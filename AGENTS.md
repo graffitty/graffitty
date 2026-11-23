@@ -133,6 +133,24 @@ Don't:
 
 - Every UI string needs all language translations.
 
+## Write for ADHD readers
+
+PR descriptions, docs, docstrings, code comments, reports and generated pages lead with the result or next action, keep sections short, and put details behind links or folds ([guide](https://github.com/ayghri/i-have-adhd/blob/main/skills/i-have-adhd/SKILL.md)).
+
+## Changelog
+
+`docs/CHANGELOG.md` follows the [kiyoon/changelog-action](https://github.com/kiyoon/changelog-action) format.
+
+Do:
+
+- Title PRs as Conventional Commits: `fix: …`, `feat: …`, `fix(scope): …`.
+- Add the PR's own entry in the same PR: its title under the release's `## [vX.Y.Z] - YYYY-MM-DD` section and matching type heading (`### :sparkles: New Features`, `### :bug: Bug Fixes`, …), linked to the PR.
+- Entry form: `- **scope**: subject ([#N](https://github.com/graffitty/graffitty/pull/N)).` (omit `**scope**:` when the title has none).
+
+Don't:
+
+- Edit the header or rewrite past releases' entries.
+
 ## No personal info in the repo
 
 OK:

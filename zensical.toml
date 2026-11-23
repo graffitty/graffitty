@@ -16,6 +16,7 @@ nav = [
   { "Start here" = [
     { "Overview" = "index.md" },
     { "Install" = "start-here/install.md" },
+    { "Remote access" = "remote-access/index.md" },
     { "First steps" = "start-here/getting-started.md" },
     { "Keyboard shortcuts" = "start-here/shortcuts.md" },
   ] },
@@ -60,7 +61,6 @@ nav = [
     { "Chat message formatting" = "agents/chat-message-format.md" },
     { "Desktop notifications" = "agents/system-notification.md" },
   ] },
-  { "Remote access" = "remote-access/index.md" },
   { "Developers" = [
     { "Overview" = "developers/index.md" },
     { "Build and run" = [
@@ -112,6 +112,7 @@ nav = [
       { "Korean input" = "developers/internals/korean-input.md" },
     ] },
   ] },
+  { "Changelog" = "CHANGELOG.md" },
 ]
 
 [project.theme]

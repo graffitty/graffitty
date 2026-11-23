@@ -1,4 +1,4 @@
-"""Build the automatically selected SSH bundle on the destination OS/CPU."""
+"""Build a custom SSH bundle for gft remote connect --server-binary."""
 
 import os
 import platform

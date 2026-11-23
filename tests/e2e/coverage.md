@@ -734,6 +734,29 @@ the session server reported `the terminal holder did not start within 5 s`.
 This is not an E2E pass. Physical-device acceptance for the live Opus transport
 is not yet recorded.
 
+## Live transcript scrolling (UI-06S, GE-12)
+
+2026-11-22: the preview follows the actual wrapped-text scroll range after
+layout. Wheel, touch, trackpad and scrollbar input pause following when the user
+leaves the end; returning to the end resumes after the gesture settles. The
+microphone's pointer capture permits a second finger on the preview, and only
+the owning finger can stop the microphone. The preview uses the shared Rust
+scroller for momentum, both-edge rubber band and the shortened scrollbar thumb.
+
+Passed on macOS: the native dev build, changed-script parser checks, all 16
+dictation-filter unit tests, `floating_capture_smoke.gd`, and
+`selectable_text_smoke.gd` (wrapped and explicit newlines, final corrections,
+resize, scroll/update races, wheel/pan/finger/thumb, elastic release and draft
+editing). `uv run --no-project tests/android/dictation_e2e.py --gpu` passed with
+Metal, an isolated server, synthetic microphone audio and a local provider. Its
+long transcripts traverse the real provider/server/client path while simulated
+fingers hold the microphone and review text; release/cancel and terminal/browser
+insertion also pass. The rendered preview was inspected.
+
+These are desktop checks, not physical Android/iOS microphone or multitouch
+acceptance. Phone/foldable/trackpad feel remains unverified. No production app
+installation or user-server restart was performed.
+
 ## Agent list and sound — Android device regression
 
 `android-agent-attention` is an automated case in the same runtime harness:
@@ -976,6 +999,42 @@ Agents list glides, a touch brakes it, it rests, a later tap focuses once),
 after a flick), `tab_list_touch_smoke.gd`, `embedded_mods_smoke.gd` and
 `list_docking_smoke.gd`. These are desktop headless input checks. The feel on a
 phone or foldable, and GE-08 with a gliding sidebar, are not yet device-tested.
+
+### Background reconnect and agent elapsed time (UI-08)
+
+Automatic attachment and restoration of another server must not select it or
+emit a presentation switch. Explicit session selection still navigates normally.
+Agent rows use the server's latest status-history timestamp, including catalog
+rows for unshown sessions; initial discovery without a known time stays blank.
+
+Passed on macOS (2026-11-23, working tree): Rust `agents::tests` (8 tests),
+Godot `federated_membership_test.gd` (3 tests), `agents_test.gd` (8 tests),
+and the real-server
+`test_live_session_switch.py::SessionSwitchTests.test_switching_in_desktop_and_android_presentations`.
+The latter closes and reconnects a background server's real socket and verifies
+the foreground tab, pane focus, pan/zoom, and absence of a presentation switch,
+then exercises explicit session changes. Both desktop and simulated Android
+presentations passed. `test_live_sessions.py::LiveSessionTests.test_sessions_are_independent_and_commands_share_help_group`
+passed with a real OSC agent and server-recorded timestamps in the session catalog.
+These are headless transport/UI checks, not a physical-device E2E pass.
+
+Follow-up: Codex without lifecycle hooks could become unknown after a server
+restart during a long turn: its start had left the 128 KiB text preview. Discovery
+now scans complete lifecycle records backwards with bounded memory and a worker
+time limit, carrying the provider timestamp into status history. CLI discovery
+regressions (6 tests, including a multi-megabyte record and an incomplete tail)
+and workspace graph tests (54) passed; hook status remains authoritative.
+A live local Codex process returned unknown with the previous worker and busy
+with the corrected worker. After the supported server replacement/restart, the
+same agent PID was still busy with its original lifecycle timestamp recovered.
+
+Deployment verification on macOS and an Android foldable: signed packages built,
+Android installed with a full non-incremental replacement, installed APK hash
+matched, and startup logs had no script/load errors. The macOS server restarted
+through the supported update command; both original terminal PIDs survived and
+a temporary new session opened successfully. This is install/startup verification,
+not a physical multi-touch or reconnect E2E pass.
+
 
 ### Returning to the Android app (reconnect on resume, startup cover)
 

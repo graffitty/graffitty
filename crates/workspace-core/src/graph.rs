@@ -129,6 +129,11 @@ fn lifecycle_identity<'a>(params: &'a Value, previous: &'a Value) -> Result<(&'s
     }
 }
 fn record_status(node: &mut Value, limit: usize) {
+    record_status_at(node, limit, None);
+}
+fn record_status_at(node: &mut Value, limit: usize, observed_at: Option<&str>) {
+    let observed_at = observed_at.and_then(|at| chrono::DateTime::parse_from_rfc3339(at).ok())
+        .map(|at| at.to_rfc3339_opts(chrono::SecondsFormat::Millis, false));
     let provider = node["provider"].clone();
     let status = node["status"].clone();
     if node.get("status_history").is_none() {
@@ -136,9 +141,10 @@ fn record_status(node: &mut Value, limit: usize) {
     }
     let history = node["status_history"].as_array_mut().unwrap();
     if history.last().is_some_and(|entry| entry["provider"] == provider && entry["status"] == status) {
+        if let Some(at) = observed_at { history.last_mut().unwrap()["at"] = json!(at); }
         return;
     }
-    let mut entry = json!({"at":chrono::Utc::now().to_rfc3339_opts(chrono::SecondsFormat::Millis, false),"status":status});
+    let mut entry = json!({"at":observed_at.unwrap_or_else(|| chrono::Utc::now().to_rfc3339_opts(chrono::SecondsFormat::Millis, false)),"status":status});
     if !provider.is_null() { entry["provider"] = provider; }
     history.push(entry);
     if history.len() > limit { history.remove(0); }
@@ -348,8 +354,12 @@ impl Graph {
                 node.as_object_mut().unwrap().remove("status_source");
             }
         }
+        // A provider's recorded transition is older than discovery when a
+        // client/server reconnects. Never apply it over authoritative hooks.
+        let observed_at = found.get("status").and_then(|_| found.get("status_at")).and_then(Value::as_str).map(str::to_owned);
+        found.remove("status_at");
         node.as_object_mut().unwrap().extend(found);
-        if ["codex", "claude", "opencode", "pi"].contains(&string(node, "provider")) { record_status(node, self.settings.status_history); }
+        if ["codex", "claude", "opencode", "pi"].contains(&string(node, "provider")) { record_status_at(node, self.settings.status_history, observed_at.as_deref()); }
         let waiting = node["status"] == "waiting";
         let turn = node["observed_turn"].clone();
         if !was_waiting && waiting {

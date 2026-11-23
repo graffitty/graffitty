@@ -138,6 +138,12 @@ fn codex_files(paths: &[PathBuf]) -> Value {
         if let Ok(t) = transcript(&path, None) {
             result["status"] = t["status"].clone();
         }
+        // A long turn can put its start outside the bounded text preview.
+        // Reconstruct lifecycle facts independently, including after restart.
+        if let Ok(Some((status, at))) = codex_lifecycle(&path) {
+            result["status"] = json!(status);
+            if let Some(at) = at { result["status_at"] = json!(at); }
+        }
     }
     result
 }
@@ -256,6 +262,51 @@ fn completed_checkpoint(tail: &Value) -> Option<u64> {
         // an older transcript cannot establish that there were no completions.
         (tail["status"] == "unknown" && tail["offset"] == 0).then_some(0)
     })
+}
+
+fn codex_event_status(record: &Value) -> Option<&'static str> {
+    if record["type"] != "event_msg" { return None; }
+    match record["payload"]["type"].as_str()? {
+        "task_started" | "turn_started" | "user_message" => Some("busy"),
+        "task_complete" | "turn_complete" | "turn_aborted" => Some("idle"),
+        _ => None,
+    }
+}
+
+/// Latest complete lifecycle record, independent of how much tool output a
+/// turn wrote. Scan backwards in bounded blocks; skip oversized content records
+/// and incomplete trailing JSON. This runs only in the off-thread worker.
+fn codex_lifecycle(path: &Path) -> Result<Option<(&'static str, Option<String>)>> {
+    let mut file = fs::File::open(path)?;
+    let mut end = file.metadata()?.len();
+    let mut line_end = None;
+    let deadline = std::time::Instant::now() + Duration::from_secs(2);
+    let mut read_record = |start: u64, end: u64| -> Result<Option<(&'static str, Option<String>)>> {
+        if end - start > 1024 * 1024 { return Ok(None); }
+        file.seek(SeekFrom::Start(start))?;
+        let mut line = vec![0; (end - start) as usize];
+        file.read_exact(&mut line)?;
+        let Ok(record) = serde_json::from_slice::<Value>(&line) else { return Ok(None) };
+        Ok(codex_event_status(&record).map(|state| (state, record["timestamp"].as_str().map(str::to_owned))))
+    };
+    // A second handle keeps block reads independent from individual line reads.
+    let mut blocks = fs::File::open(path)?;
+    while end > 0 {
+        if std::time::Instant::now() >= deadline { return Err("Codex lifecycle scan timed out".into()); }
+        let start = end.saturating_sub(128 * 1024);
+        blocks.seek(SeekFrom::Start(start))?;
+        let mut block = vec![0; (end - start) as usize];
+        blocks.read_exact(&mut block)?;
+        for (offset, byte) in block.iter().enumerate().rev() {
+            if *byte != b'\n' { continue; }
+            let position = start + offset as u64;
+            if let Some(previous) = line_end
+                && let Some(found) = read_record(position + 1, previous)? { return Ok(Some(found)); }
+            line_end = Some(position);
+        }
+        end = start;
+    }
+    match line_end { Some(end) => read_record(0, end), None => Ok(None) }
 }
 
 /// Bounded raw JSONL plus normalized assistant text. Never parse a partial last record.
@@ -523,6 +574,21 @@ mod claude_send_tests {
 #[cfg(test)]
 mod codex_discovery_tests {
     use super::*;
+    #[test]
+    fn long_turn_recovers_status_and_original_time_outside_the_preview_tail() {
+        let directory = tempfile::tempdir().unwrap();
+        let path = directory.path().join("rollout.jsonl");
+        let started = json!({"timestamp":"2026-11-22T10:00:00Z", "type":"event_msg", "payload":{"type":"task_started"}});
+        let output = json!({"type":"response_item", "payload":{"type":"function_call_output", "output":"x".repeat(2 * 1024 * 1024)}});
+        fs::write(&path, format!("{started}\n{output}\n{{\"type\":\"event_msg\",\"payload\":{{\"type\":\"token_count\"}}}}\n")).unwrap();
+        assert_eq!(transcript(&path, None).unwrap()["status"], "unknown", "The text preview contains no lifecycle event");
+        assert_eq!(codex_lifecycle(&path).unwrap(), Some(("busy", Some("2026-11-22T10:00:00Z".into()))));
+        let stopped = json!({"timestamp":"2026-11-22T19:00:00+09:00", "type":"event_msg", "payload":{"type":"task_complete"}});
+        let mut file = fs::OpenOptions::new().append(true).open(&path).unwrap();
+        write!(file, "{stopped}\n{output}\n{{\"type\":\"event_msg\",\"payload\":{{\"type\":\"task_started\"}}}}").unwrap();
+        assert_eq!(codex_lifecycle(&path).unwrap(), Some(("idle", Some("2026-11-22T19:00:00+09:00".into()))), "An incomplete trailing record cannot start another turn");
+    }
+
     #[test]
     fn completed_record_checkpoint_ignores_later_metadata_and_partial_lines() {
         let path = std::env::temp_dir().join(format!("graffitty-completion-{}.jsonl", uuid::Uuid::new_v4()));

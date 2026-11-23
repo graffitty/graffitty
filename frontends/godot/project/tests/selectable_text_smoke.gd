@@ -26,6 +26,7 @@ func mouse(at: Vector2, button := MOUSE_BUTTON_LEFT, pressed := true, double := 
 	event.global_position = at
 	event.button_mask = MOUSE_BUTTON_MASK_LEFT if pressed and button == MOUSE_BUTTON_LEFT else 0
 	root.push_input(event, true)
+	if pressed and button in [MOUSE_BUTTON_WHEEL_UP, MOUSE_BUTTON_WHEEL_DOWN]: mouse(at, button, false)
 
 
 func move(at: Vector2, held := true) -> void:
@@ -81,8 +82,100 @@ func run() -> void:
 	await check_text_selection()
 	await check_text_rubber_band()
 	await check_list_touch()
+	await check_dictation_preview()
 	print("SELECTABLE_TEXT_PASS" if failures.is_empty() else "SELECTABLE_TEXT_FAIL")
 	quit(0 if failures.is_empty() else 1)
+
+
+func check_dictation_preview() -> void:
+	var preview := preload("res://scenes/input/DictationPreview.gd").new()
+	preview.position = Vector2(20, 20)
+	preview.size = Vector2(420, 110)
+	preview.view.wrap_mode = TextEdit.LINE_WRAPPING_BOUNDARY
+	preview.view.editable = false
+	root.add_child(preview)
+	var words := "말하는 동안 이전 내용과 최신 내용을 확인합니다. ".repeat(100)
+	preview.set_transcript(words)
+	await frames(4)
+	var bar := preview.view.get_v_scroll_bar()
+	check(preview.view.get_line_count() == 1 and preview.view.get_total_visible_line_count() > 20, "Dictation fixture is one long, soft-wrapped paragraph")
+	check(bar.visible and preview._at_end(), "Wrapped dictation follows the actual bottom and shows a scrollbar")
+	var inside := preview.get_global_rect().get_center()
+	for i in 3: mouse(inside, MOUSE_BUTTON_WHEEL_UP)
+	var reviewing := preview.view.scroll_vertical
+	check(not preview.follow_end and reviewing < preview._end(), "Wheel scrolling up pauses dictation following")
+	preview.set_transcript(words + "더 말합니다. ".repeat(50))
+	await frames(4)
+	check(is_equal_approx(preview.view.scroll_vertical, reviewing), "New words preserve the reviewed scroll position after layout")
+	for i in 100: mouse(inside, MOUSE_BUTTON_WHEEL_DOWN)
+	check(preview.follow_end and preview._at_end(), "Reaching the bottom by wheel resumes following")
+	preview.set_transcript(words + words)
+	await frames(4)
+	check(preview._at_end(), "Next transcript follows after returning to the bottom")
+	preview.size.x = 270
+	await frames(4)
+	check(preview._at_end(), "Narrower layout keeps the latest wrapped words visible")
+	# A touch arriving between text assignment and deferred layout wins.
+	preview.set_transcript(words + words + words)
+	touch(inside, true)
+	drag(inside, inside + Vector2(0, 60))
+	reviewing = preview.view.scroll_vertical
+	await frames(4)
+	check(not preview.follow_end and is_equal_approx(preview.view.scroll_vertical, reviewing), "A finger drag cancels pending auto-follow before layout settles")
+	preview.set_transcript(words.repeat(4))
+	await frames(4)
+	check(is_equal_approx(preview.view.scroll_vertical, reviewing), "Streaming while a finger stays down never moves its reading position")
+	# No release velocity: verify a deliberately stationary lift.
+	await create_timer(.12).timeout
+	touch(inside + Vector2(0, 60), false)
+	await frames(3)
+	check(not preview.elastic.is_touching(), "Only the scrolling finger's release ends its gesture")
+	for i in 400: mouse(inside, MOUSE_BUTTON_WHEEL_UP)
+	pan(inside, 0, "began")
+	pan(inside, -100, "changed")
+	check(preview.elastic.get_stretch() < 0.0 and preview.view.position.y > 0.0, "Dictation pulls past the top with the shared rubber band")
+	check(preview._bar_skin != null and preview._bar_skin.visible, "Dictation scrollbar thumb reflects the elastic pull")
+	pan(inside, 0, "ended")
+	check(await settle(func(): return not preview.elastic.is_active()), "Dictation top pull springs back and rests")
+	for i in 400: mouse(inside, MOUSE_BUTTON_WHEEL_DOWN)
+	pan(inside, 0, "began")
+	pan(inside, 100, "changed")
+	check(preview.elastic.get_stretch() > 0.0, "Dictation also stretches past the bottom")
+	preview.set_transcript(words.repeat(5))
+	await frames(3)
+	check(not preview._at_end(), "New words do not jump to the bottom during an active pan")
+	pan(inside, 0, "ended")
+	check(await settle(func(): return not preview.elastic.is_active()), "Dictation bottom pull springs back and rests")
+	await frames(3)
+	check(preview._at_end(), "Following resumes after a bottom pull finishes: %s %s/%s" % [preview.follow_end, preview.view.scroll_vertical, preview._end()])
+	# Native thumb dragging must pause following, including when words arrive.
+	var thumb_at := bar.get_global_rect().end - Vector2(bar.size.x / 2, maxf(2.0, bar.get_theme_stylebox("grabber").get_minimum_size().y / 2))
+	move(thumb_at, false)
+	mouse(thumb_at)
+	move(thumb_at - Vector2(0, 35))
+	await frames()
+	reviewing = preview.view.scroll_vertical
+	check(not preview.follow_end and reviewing < preview._end(), "Dragging the scrollbar pauses following")
+	preview.set_transcript(words.repeat(6))
+	await frames(3)
+	check(is_equal_approx(preview.view.scroll_vertical, reviewing), "Transcript updates preserve an active scrollbar drag")
+	mouse(thumb_at - Vector2(0, 35), MOUSE_BUTTON_LEFT, false)
+	preview.reset()
+	preview.set_transcript(words)
+	await frames(3)
+	check(preview.follow_end and preview._at_end(), "A fresh recording resets follow state")
+	preview.set_transcript(words + "\n잠정 결과\n")
+	preview.set_transcript(words + "\n수정된 마지막 문장")
+	await frames(3)
+	check(preview._at_end() and preview.view.get_line_count() == 2, "Rapid final corrections with explicit newlines still follow the end")
+	preview.view.editable = true
+	preview.view.set_caret_line(0)
+	preview.view.set_caret_column(0)
+	preview.view.insert_text_at_caret("Edited draft ")
+	await frames(3)
+	check(preview.view.scroll_vertical == 0.0, "Editing a preserved draft keeps normal caret scrolling")
+	preview.queue_free()
+	await frames()
 
 
 func check_text_selection() -> void:

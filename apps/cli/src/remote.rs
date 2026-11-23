@@ -1,5 +1,8 @@
 //! OpenSSH owns authentication and encryption. The server owns PTYs independently
 //! of these tunnels and of the lifetime of the native frontend.
+mod deploy;
+mod release;
+
 use crate::options::{RemoteCommand, RemoteConnect};
 use serde_json::{Value, json};
 use std::{
@@ -63,107 +66,25 @@ fn validate_host(host: &str) -> Result<(), Error> {
 }
 fn prepare(host: &str, binary: Option<&Path>) -> Result<Value, Error> {
     validate_host(host)?;
-    let platform = output(host, "uname -s; uname -m");
-    if platform.as_ref().is_err() {
-        return prepare_windows(host, binary);
-    }
-    let platform = platform?;
-    let mut words = platform.lines();
-    let os = words.next().unwrap_or("");
-    let arch = words.next().unwrap_or("");
-    if !["Linux", "Darwin"].contains(&os) {
-        return prepare_windows(host, binary);
-    }
-    let local_os = if cfg!(target_os = "macos") {
-        "Darwin"
-    } else if cfg!(target_os = "linux") {
-        "Linux"
-    } else {
-        "Windows"
+    let platform = deploy::Platform::detect(host)?;
+    let result = match deploy::resolve(host, &platform, binary)? {
+        deploy::Resolved::Running(descriptor) => descriptor,
+        deploy::Resolved::Executable(path) => output(host, &platform.start_command(&path))?,
     };
-    let local_arch = if cfg!(target_arch = "aarch64") {
-        ["arm64", "aarch64"].contains(&arch)
-    } else {
-        arch == std::env::consts::ARCH
-    };
-    let root = Path::new(env!("CARGO_MANIFEST_DIR")).join("../..");
-    let target_arch = if ["arm64", "aarch64"].contains(&arch) {
-        "aarch64"
-    } else {
-        arch
-    };
-    let target_os = if os == "Darwin" { "macos" } else { "linux" };
-    let bundle = root
-        .join("dist/remote")
-        .join(format!("{target_os}-{target_arch}"));
-    let local_executable = std::env::current_exe()?;
-    let default = if bundle.join("gft").is_file() {
-        bundle.join("gft")
-    } else {
-        local_executable
-    };
-    let existing = output(
-        host,
-        "test -x \"$HOME/.local/lib/graffitty/gft\" && \"$HOME/.local/lib/graffitty/gft\" server --version >/dev/null 2>&1",
-    )
-    .is_ok();
-    let artifact = binary.or_else(|| {
-        if !existing
-            && (default.starts_with(&bundle) || (os == local_os && local_arch))
-            && default.is_file()
-        {
-            Some(default.as_path())
-        } else {
-            None
-        }
-    });
-    if let Some(artifact) = artifact {
-        eprintln!("Installing server on {host} ({os}/{arch})…");
-        install(host, artifact, "gft")?;
-        let filetree = artifact.with_file_name("filetree-runtime.tar.gz");
-        if filetree.is_file() {
-            install_filetree(host, &filetree)?;
-        }
-        if os == "Darwin" {
-            let chromium = artifact.with_file_name("chromium-runtime.tar.gz");
-            if chromium.is_file() {
-                install_chromium(host, &chromium)?;
-            }
-        }
-    } else if !existing {
-        return Err(format!("No server installed on {host} ({os}/{arch}). Build apps/cli for that target, then pass --server-binary PATH").into());
-    }
-    // The binary's lock checks liveness without trusting a recycled PID. Reusing
-    // a daemon never restarts shells, including after the executable is updated.
-    let script = r#"set -eu
-umask 077
-server="$HOME/.local/lib/graffitty/gft"
-state="$HOME/.local/state/graffitty"
-mkdir -p "$state"
-if "$server" server --connection "$state/server.json" --status 2>/dev/null; then exit 0; fi
-nohup "$server" server --listen 127.0.0.1:0 --connection "$state/server.json" >"$state/server.log" 2>&1 </dev/null &
-i=0
-while [ "$i" -lt 100 ]; do
-    if "$server" server --connection "$state/server.json" --status 2>/dev/null; then exit 0; fi
-    i=$((i+1))
-    sleep 0.1
-done
-cat "$state/server.log" >&2
-exit 1
-"#;
-    let descriptor: Value = serde_json::from_str(&output(host, script)?)?;
+    let descriptor: Value = serde_json::from_str(&result)?;
     if descriptor["protocol"] != graffitty_protocol::VERSION || descriptor["token"].as_str().is_none() {
         return Err("Unsupported server descriptor".into());
     }
     Ok(descriptor)
 }
+
 // Versioned chromium bundles preserve any host already serving a live session.
 fn install_chromium(host: &str, archive: &Path) -> Result<(), Error> {
     let nonce = uuid::Uuid::new_v4().simple().to_string();
     let script = format!(
         r#"set -eu
 umask 077
-root="$HOME/.local/lib/graffitty"
+root="${{XDG_DATA_HOME:-$HOME/.local/share}}/graffitty/remote-build"
 destination="$root/chromium-runtime-{nonce}"
 mkdir -p "$destination"
 tar -xzf - -C "$destination"
@@ -188,7 +109,7 @@ fn install_filetree(host: &str, archive: &Path) -> Result<(), Error> {
     let script = format!(
         r#"set -eu
 umask 077
-root="$HOME/.local/lib/graffitty"
+root="${{XDG_DATA_HOME:-$HOME/.local/share}}/graffitty/remote-build"
 destination="$root/filetree-runtime-{nonce}"
 previous=$(cut -d/ -f1 "$root/filetree-runtime-path.txt" 2>/dev/null || true)
 mkdir -p "$destination"
@@ -213,73 +134,37 @@ done
 }
 fn powershell(script: &str) -> String {
     use base64::Engine;
+    let script = format!("[Console]::OutputEncoding = New-Object Text.UTF8Encoding($false)\n{script}");
     let bytes: Vec<u8> = script.encode_utf16().flat_map(u16::to_le_bytes).collect();
     format!(
-        "powershell.exe -NoLogo -NoProfile -NonInteractive -EncodedCommand {}",
+        "powershell.exe -NoLogo -NoProfile -NonInteractive -OutputFormat Text -EncodedCommand {}",
         base64::engine::general_purpose::STANDARD.encode(bytes)
     )
 }
-fn prepare_windows(host: &str, binary: Option<&Path>) -> Result<Value, Error> {
-    let arch = output(
-        host,
-        &powershell("[Console]::WriteLine($env:PROCESSOR_ARCHITECTURE)"),
-    )?;
-    let arch = match arch.trim() {
-        "AMD64" => "x86_64",
-        "ARM64" => "aarch64",
-        other => return Err(format!("Unsupported Windows CPU: {other}").into()),
-    };
-    let bundle = Path::new(env!("CARGO_MANIFEST_DIR"))
-        .join("../../dist/remote")
-        .join(format!("windows-{arch}"));
-    let default = bundle.join("gft.exe");
-    let existing=output(host,&powershell("$p=Join-Path $env:LOCALAPPDATA 'graffitty/server-path.txt'; if (!(Test-Path $p)) {exit 1}; $bin=[IO.File]::ReadAllText($p).Trim(); & (Join-Path $bin 'gft.exe') server --version | Out-Null; if ($LASTEXITCODE -ne 0) {exit 1}; [Console]::WriteLine('installed')")).is_ok();
-    let artifact = binary.or_else(|| {
-        if !existing && default.is_file() {
-            Some(default.as_path())
-        } else {
-            None
-        }
-    });
-    if let Some(artifact) = artifact {
-        let nonce = uuid::Uuid::new_v4().simple().to_string();
-        upload_windows(host, artifact, &format!(".graffitty-upload-{nonce}.exe"))?;
-        let script = format!(
-            r#"$ErrorActionPreference='Stop'
+fn install_windows_binary(host: &str, artifact: &Path) -> Result<String, Error> {
+    let nonce = uuid::Uuid::new_v4().simple().to_string();
+    upload_windows(host, artifact, &format!(".graffitty-upload-{nonce}.exe"))?;
+    let script = format!(
+        r#"$ErrorActionPreference='Stop'
 $upload=Join-Path $HOME '.graffitty-upload-{nonce}.exe'
 try {{
     $directory=Join-Path $env:LOCALAPPDATA 'graffitty/bin/{nonce}'
     [IO.Directory]::CreateDirectory($directory) | Out-Null
     $file=Join-Path $directory 'gft.exe'
     [IO.File]::Move($upload, $file)
-    & $file server --version | Out-Null
+    & $file --version | Out-Null
     if ($LASTEXITCODE -ne 0) {{ throw 'Executable does not match the remote Windows host' }}
+    [Console]::WriteLine($file)
 }} finally {{ if (Test-Path -LiteralPath $upload) {{ Remove-Item -LiteralPath $upload -Force }} }}
 "#
-        );
-        output(host, &powershell(&script))
-            .map_err(|error| format!("Windows install failed: {}: {error}", artifact.display()))?;
-        output(
-            host,
-            &powershell(&format!(
-                r#"$root=Join-Path $env:LOCALAPPDATA 'graffitty'; [IO.File]::WriteAllText((Join-Path $root 'server-path.txt'),(Join-Path $root 'bin/{nonce}'),(New-Object Text.UTF8Encoding($false)))"#
-            )),
-        )?;
-        let filetree = artifact.with_file_name("filetree-runtime.zip");
-        if filetree.is_file() {
-            install_windows_filetree(host, &filetree)?;
-        }
-    } else if !existing {
-        return Err(format!("No Windows/{arch} server bundle. Put gft.exe in {} or pass --server-binary",bundle.display()).into());
+    );
+    let path = output(host, &powershell(&script))
+        .map_err(|error| format!("Windows install failed: {}: {error}", artifact.display()))?;
+    let filetree = artifact.with_file_name("filetree-runtime.zip");
+    if filetree.is_file() {
+        install_windows_filetree(host, &filetree)?;
     }
-    let descriptor: Value = serde_json::from_str(&output(
-        host,
-        &powershell(include_str!("remote/windows-start.ps1")),
-    )?)?;
-    if descriptor["protocol"] != graffitty_protocol::VERSION || descriptor["token"].as_str().is_none() {
-        return Err("Unsupported Windows server descriptor".into());
-    }
-    Ok(descriptor)
+    Ok(path)
 }
 
 // The Windows form of install_filetree. The server finds the pointer in
@@ -316,32 +201,33 @@ Get-ChildItem -LiteralPath $root -Directory -Filter 'filetree-runtime-*' | Where
     Ok(())
 }
 
-fn install(host: &str, artifact: &Path, name: &str) -> Result<(), Error> {
-    let nonce = uuid::Uuid::new_v4().simple().to_string();
-    let script = format!(
-        r#"set -eu
+fn install_unix_binary(host: &str, artifact: &Path, macos: bool) -> Result<String, Error> {
+    let script = r#"set -eu
 umask 077
-mkdir -p "$HOME/.local/lib/graffitty"
-tmp="$HOME/.local/lib/graffitty/.{name}-{nonce}"
-trap 'rm -f "$tmp"' EXIT HUP INT TERM
+root="${XDG_DATA_HOME:-$HOME/.local/share}/graffitty/remote-build"
+mkdir -p "$root"
+tmp=$(mktemp "$root/.gft-XXXXXX")
+trap 'rm -f "$tmp"' EXIT
 cat > "$tmp"
 chmod 700 "$tmp"
-"$tmp" server --version >/dev/null
-mv -f "$tmp" "$HOME/.local/lib/graffitty/{name}"
-"#
-    );
-    let mut child = ssh(host)
-        .arg(script)
-        .stdin(Stdio::from(File::open(artifact)?))
-        .spawn()?;
-    if !child.wait()?.success() {
-        return Err(format!(
-            "Upload failed: {} must match the remote OS/CPU",
-            artifact.display()
-        )
-        .into());
+"$tmp" --version >/dev/null
+mv -f "$tmp" "$root/gft"
+printf '%s\n' "$root/gft"
+"#;
+    let result = ssh(host).arg(script).stdin(File::open(artifact)?).output()?;
+    if !result.status.success() {
+        return Err(format!("Upload of {} failed (check the remote OS/CPU): {}",
+            artifact.display(), String::from_utf8_lossy(&result.stderr).trim()).into());
     }
-    Ok(())
+    let filetree = artifact.with_file_name("filetree-runtime.tar.gz");
+    if filetree.is_file() {
+        install_filetree(host, &filetree)?;
+    }
+    let chromium = artifact.with_file_name("chromium-runtime.tar.gz");
+    if macos && chromium.is_file() {
+        install_chromium(host, &chromium)?;
+    }
+    Ok(String::from_utf8(result.stdout)?.trim_end().into())
 }
 struct Tunnel {
     host: String,

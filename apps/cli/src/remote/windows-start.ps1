@@ -1,11 +1,11 @@
 $ErrorActionPreference = 'Stop'
 $root = Join-Path $env:LOCALAPPDATA 'graffitty'
-$bin = [IO.File]::ReadAllText((Join-Path $root 'server-path.txt')).Trim()
-$server = Join-Path $bin 'gft.exe'
 $state = Join-Path $root 'state'
 [IO.Directory]::CreateDirectory($state) | Out-Null
 $descriptor = Join-Path $state 'server.json'
 function Get-ServerStatus {
+    # A status probe also takes the startup lock when the server is absent.
+    if (![IO.File]::Exists($descriptor)) { return $null }
     $info = New-Object Diagnostics.ProcessStartInfo
     $info.FileName = $server
     $info.Arguments = 'server --connection "' + $descriptor + '" --status'

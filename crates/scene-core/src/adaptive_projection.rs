@@ -2,12 +2,14 @@
 //! interpolated at the sheet's focus depth, not independently of the dolly:
 //! interpolating lens width and eye depth separately can overshoot their product.
 use crate::{camera_motion::Frame, pose::Pose, typing_camera::decay_step};
-use glam::Vec3;
+use glam::{Quat, Vec3};
 
-fn depth(frame: Frame, focus: Vec3) -> f32 {
-    (focus - frame.transform.translation)
-        .dot(frame.transform.rotation * -Vec3::Z)
-        .max(0.00001)
+fn local_focus(frame: Frame, focus: Vec3) -> Vec3 {
+    frame.transform.rotation.inverse() * (focus - frame.transform.translation)
+}
+
+fn depth(local_focus: Vec3) -> f32 {
+    (-local_focus.z).max(0.00001)
 }
 
 #[derive(Default)]
@@ -19,13 +21,17 @@ pub struct AdaptiveProjection {
 
 #[derive(Clone, Copy)]
 struct Correction {
-    pose: Pose,
+    // Camera-space shift of the focus, in units of reference focus depth.
+    // A held overview dolly must get smaller as manual navigation moves closer.
+    focus_shift: Vec3,
+    rotation: Quat,
     rect: [f32; 4],
 }
 impl Default for Correction {
     fn default() -> Self {
         Self {
-            pose: Pose::IDENTITY,
+            focus_shift: Vec3::ZERO,
+            rotation: Quat::IDENTITY,
             rect: [0.0, 0.0, 1.0, 1.0],
         }
     }
@@ -42,13 +48,13 @@ impl AdaptiveProjection {
     }
 
     pub fn target(&mut self, base: Frame, fitted: Frame, focus: Vec3) {
-        let ratio = depth(fitted, focus) / depth(base, focus);
-        let inverse = base.transform.rotation.inverse();
+        let reference_focus = local_focus(base, focus);
+        let target_focus = local_focus(fitted, focus);
+        let reference_depth = depth(reference_focus);
+        let ratio = depth(target_focus) / reference_depth;
         self.target = Correction {
-            pose: Pose {
-                translation: inverse * (fitted.transform.translation - base.transform.translation),
-                rotation: inverse * fitted.transform.rotation,
-            },
+            focus_shift: (target_focus - reference_focus) / reference_depth,
+            rotation: base.transform.rotation.inverse() * fitted.transform.rotation,
             rect: [
                 (fitted.rect[0] * ratio - base.rect[0]) / base.rect[2],
                 (fitted.rect[1] * ratio - base.rect[1]) / base.rect[3],
@@ -67,16 +73,9 @@ impl AdaptiveProjection {
             dt.clamp(0.0, 0.25),
             if expanding { zoom_out } else { zoom_in },
         );
-        self.current.pose.translation = self
-            .current
-            .pose
-            .translation
-            .lerp(self.target.pose.translation, weight);
-        self.current.pose.rotation = self
-            .current
-            .pose
-            .rotation
-            .slerp(self.target.pose.rotation, weight)
+        self.current.focus_shift = self.current.focus_shift.lerp(self.target.focus_shift, weight);
+        self.current.rotation = self.current.rotation
+            .slerp(self.target.rotation, weight)
             .normalize();
         for (current, target) in self.current.rect.iter_mut().zip(self.target.rect) {
             *current += (target - *current) * weight;
@@ -84,9 +83,9 @@ impl AdaptiveProjection {
         // Finish below visual precision. An asymptotic pose keeps changing
         // depth-plane uniforms after the eye can no longer see any motion,
         // preventing render-on-demand clients from returning to sleep.
-        if self.current.pose.translation.distance(self.target.pose.translation)
-            <= 0.000001 * self.target.pose.translation.length().max(1.0)
-            && self.current.pose.rotation.angle_between(self.target.pose.rotation).abs() <= 0.000001
+        if self.current.focus_shift.distance(self.target.focus_shift)
+            <= 0.000001 * self.target.focus_shift.length().max(1.0)
+            && self.current.rotation.angle_between(self.target.rotation).abs() <= 0.000001
             && self.current.rect.iter().zip(self.target.rect)
                 .all(|(current, target)| (current - target).abs() <= 0.000001 * target.abs().max(1.0))
         {
@@ -95,11 +94,16 @@ impl AdaptiveProjection {
     }
     pub fn apply(&self, base: Frame, focus: Vec3) -> Frame {
         let c = self.current;
+        let reference_focus = local_focus(base, focus);
+        let reference_depth = depth(reference_focus);
+        let corrected_focus = reference_focus + c.focus_shift * reference_depth;
+        // Recover the eye that sees the focus at these camera-space coordinates.
+        // Express the move relative to the base eye so identity is an exact no-op.
         let mut result = Frame {
             transform: Pose {
                 translation: base.transform.translation
-                    + base.transform.rotation * c.pose.translation,
-                rotation: base.transform.rotation * c.pose.rotation,
+                    + base.transform.rotation * (reference_focus - c.rotation * corrected_focus),
+                rotation: base.transform.rotation * c.rotation,
             },
             rect: [
                 base.rect[0] + c.rect[0] * base.rect[2],
@@ -108,7 +112,7 @@ impl AdaptiveProjection {
                 base.rect[3] * c.rect[3],
             ],
         };
-        let ratio = depth(base, focus) / depth(result, focus);
+        let ratio = reference_depth / depth(corrected_focus);
         for coordinate in &mut result.rect {
             *coordinate *= ratio;
         }
@@ -185,6 +189,31 @@ mod tests {
     }
 
     #[test]
+    fn held_overview_fit_preserves_relative_depth_when_zooming_toward_the_sheet() {
+        let focus = Vec3::ZERO;
+        let overview = Frame {
+            transform: Pose::from_xyz(0.0, 0.0, 600.0),
+            rect: [-0.25, -0.15, 0.5, 0.3],
+        };
+        let fitted = Frame {
+            transform: Pose::from_xyz(4.0, 0.0, 30.0).with_rotation(Quat::from_rotation_y(0.1)),
+            ..overview
+        };
+        let mut filter = AdaptiveProjection::default();
+        filter.target(overview, fitted, focus);
+        for _ in 0..120 { filter.advance(1.0 / 60.0, 0.1, 0.1); }
+        filter.interrupt();
+
+        let closer = Frame { transform: Pose::from_xyz(8.0, 0.0, 60.0), ..overview };
+        let shown = filter.apply(closer, focus);
+        let shown_depth = -local_focus(shown, focus).z;
+        assert!((shown_depth - depth(local_focus(fitted, focus)) * 0.1).abs() < 0.0001);
+        for (held, original) in shown.rect.into_iter().zip(fitted.rect) {
+            assert!((held - original).abs() < 0.0001);
+        }
+    }
+
+    #[test]
     fn dolly_and_lens_fit_have_one_monotonic_screen_scale() {
         let base = Frame {
             transform: Pose::from_xyz(0.0, 0.0, 4.0),
@@ -198,13 +227,13 @@ mod tests {
         let mut filter = AdaptiveProjection::default();
         let mut previous = 4.0;
         for target in [fitted, base] {
-            let endpoint = depth(target, focus) * target.rect[2];
+            let endpoint = depth(local_focus(target, focus)) * target.rect[2];
             let direction = (endpoint - previous).signum();
             for _ in 0..900 {
                 filter.target(base, target, focus);
                 filter.advance(1.0 / 60.0, 0.6, 0.3);
                 let shown = filter.apply(base, focus);
-                let size = depth(shown, focus) * shown.rect[2];
+                let size = depth(local_focus(shown, focus)) * shown.rect[2];
                 assert!((size - previous) * direction >= -0.00001,
                     "screen scale reversed: {previous} -> {size}, goal {endpoint}");
                 previous = size;

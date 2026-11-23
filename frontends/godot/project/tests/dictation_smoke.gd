@@ -46,6 +46,72 @@ func settled(dictation: Node) -> void:
 	while dictation.processing and Time.get_ticks_msec() < deadline: await process_frame
 	await hold(.15)
 
+func finger(index: int, at: Vector2, pressed: bool) -> void:
+	var event := InputEventScreenTouch.new()
+	event.index = index
+	event.position = at
+	event.pressed = pressed
+	root.push_input(event, true)
+
+func finger_drag(index: int, from: Vector2, to: Vector2) -> void:
+	var event := InputEventScreenDrag.new()
+	event.index = index
+	event.position = to
+	event.relative = to - from
+	root.push_input(event, true)
+
+func live_preview(dictation: Node, text: String) -> void:
+	# Change the mock provider's next response, then send real audio through
+	# the live transport. Polling must keep returning the same long transcript.
+	var request := HTTPRequest.new()
+	root.add_child(request)
+	var error := request.request(OS.get_environment("GRAFFITTY_DICTATION_TEST_PROVIDER_CONTROL"), PackedStringArray(), HTTPClient.METHOD_POST, text)
+	check(error == OK, "Provider fixture accepts the preview update request")
+	if error != OK:
+		request.queue_free()
+		return
+	var response: Array = await request.request_completed
+	check(response[1] == 204, "Provider fixture updates its live transcript")
+	request.queue_free()
+	audio(dictation)
+	var deadline := Time.get_ticks_msec() + 5000
+	var expected := text.strip_edges()
+	while dictation.preview.text != expected and Time.get_ticks_msec() < deadline: await process_frame
+	check(dictation.preview.text == expected, "Long transcript arrives through the provider/server/client transport")
+	await hold(.2)
+
+func preview_scrolling(dictation: Node, floating: Node) -> void:
+	var text := "음성 입력을 계속하면서 이전 문장도 읽을 수 있습니다. ".repeat(120)
+	await live_preview(dictation, text)
+	var scroll: Control = dictation.preview_scroll
+	var bar: ScrollBar = dictation.preview.get_v_scroll_bar()
+	check(bar.visible and scroll._at_end(), "Long unbroken dictation follows the last wrapped line: %d chars, %s/%s, %s" % [dictation.preview.text.length(), dictation.preview.scroll_vertical, scroll._end(), scroll.size])
+	var mic: Vector2 = dictation.button.get_global_rect().get_center()
+	finger(0, mic, true)
+	check(floating._gesture.get("pointer", -1) == 0 and dictation.capture.recording, "First finger holds the microphone")
+	var at: Vector2 = scroll.get_global_rect().get_center()
+	finger(1, at, true)
+	finger_drag(1, at, at + Vector2(0, 55))
+	var offset: float = dictation.preview.scroll_vertical
+	check(not scroll.follow_end and offset < scroll._end(), "A second finger can scroll the preview through microphone capture: finger=%s, %s/%s" % [scroll._finger, offset, scroll._end()])
+	check(floating._gesture.get("pointer", -1) == 0 and dictation.capture.recording, "Preview scrolling leaves the microphone's finger and recording intact")
+	await live_preview(dictation, text + text)
+	check(is_equal_approx(dictation.preview.scroll_vertical, offset), "Incoming words keep the second finger's reading position")
+	await hold(.12)
+	finger(1, at + Vector2(0, 55), false)
+	await hold(.1)
+	check(dictation.capture.recording and floating._gesture.get("pointer", -1) == 0, "Lifting the scrolling finger never stops or sends the recording")
+	# Scroll back to the end with another touch while the mic stays held.
+	finger(1, at, true)
+	finger_drag(1, at, at - Vector2(0, 20000))
+	await hold(.12)
+	finger(1, at - Vector2(0, 20000), false)
+	await hold(1.0)
+	check(scroll.follow_end and scroll._at_end(), "Returning to the end resumes following during microphone hold")
+	await live_preview(dictation, text.repeat(3))
+	check(scroll._at_end(), "Later live words follow after the second finger returns to the end")
+	check(not host.dictation_preview or dictation.owns_keyboard(), "Preview keyboard ownership stays consistent after touch scrolling")
+
 func play() -> void:
 	await direct_openai()
 	# The remaining scenarios use the private server and its mock provider.
@@ -77,11 +143,11 @@ func play() -> void:
 	check(dictation.slide_hint.text == "< Faire glisser pour annuler", "French gesture hint is concise")
 	check(dictation.preview.text == "Interim words", "Dictated content is never translated")
 	localization.set_language(original_language, false)
+	await preview_scrolling(dictation, floating)
 	if DisplayServer.get_name() != "headless":
 		await hold(.2)
 		root.get_texture().get_image().save_png(OS.get_environment("GRAFFITTY_DICTATION_TEST_OUTPUT") + ".png")
 	var origin: Vector2 = dictation.button.position
-	floating._begin("microphone", origin + Vector2(26, 26), 0)
 	floating._move(origin + Vector2(26, 26) - Vector2(100, 0))
 	deadline = Time.get_ticks_msec() + 1000
 	while dictation.button.position != origin and Time.get_ticks_msec() < deadline: await process_frame

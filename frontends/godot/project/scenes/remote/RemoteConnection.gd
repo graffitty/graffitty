@@ -67,6 +67,8 @@ var available_sessions: Array = []
 var sessions_known := false
 var stops_when_empty := false
 var _selecting_session := -1
+## This attachment came from automatic restoration, not a navigation command.
+var session_restored := false
 var namespace_ids := false
 var _mapped_topology_parts := {}
 var _core: RefCounted = ClassDB.instantiate("RemoteClientCore")
@@ -587,6 +589,7 @@ func _receive(message: Dictionary) -> void:
 			_restore_session()
 		"session_switched":
 			# Save the outgoing view while its workspace and owner IDs still match.
+			session_restored = _selecting_session >= 0
 			session_switching.emit()
 			terminal_themes.clear()
 			if not workspace.is_empty() and workspace != str(message.workspace): last_session = workspace
@@ -906,6 +909,7 @@ func _complete_session_close(peer: RefCounted) -> void:
 	elif url == "shared://local" or url.begins_with("ipc://"):
 		disconnect_remote()
 	else:
+		session_restored = false
 		session_switching.emit()
 		workspace = ""
 		_shown_session = ""

@@ -1,57 +1,47 @@
-extends SceneTree
-var failures: Array[String] = []
-
-
-func check(ok: bool, message: String) -> void:
-	print('[zoom-raster] ', 'PASS ' if ok else 'FAIL ', message)
-	if not ok:
-		failures.append(message)
-
-
-func _initialize() -> void:
-	run.call_deferred()
-
+extends "res://tests/session_effects_smoke.gd"
+## Run with tests/godot/test_session_effects.py --case raster.
 
 func run() -> void:
-	OS.set_environment(
-		'XDG_CONFIG_HOME',
-		OS.get_cache_dir().path_join('graffitty-raster-%d' % OS.get_process_id()),
-	)
-	var host: Node = load('res://scenes/TerminalHost.gd').new()
-	root.add_child(host)
-	await create_timer(.6).timeout
-	root.size = Vector2i(1200, 800)
+	if OS.get_environment("GRAFFITTY_EFFECT_FIXTURE") != "1":
+		printerr("Requires an isolated session-effects fixture")
+		quit(2)
+		return
+	root.size = Vector2i(1600, 1000)
+	client = preload("res://scenes/SharedWorkspace.gd").new()
+	client.launch_args = PackedStringArray(["--workspace=alpha", "--attach-session", "--plugin=flat-3d"])
+	root.add_child(client)
+	if not await until(func(): return client.host != null and client.host.active_terminal() != null):
+		check(false, "Fixture attaches")
+		quit(1)
+		return
+	var host: Node = client.host
 	var world: Node = host.world
 	var view: Control = host.workspace_view
-	host.application.set_process(false)
 	world.set_process(false)
-	view.set_window_rect(host.pane_focus, Rect2(80, 100, 1020, 600))
-	await process_frame
 	var pair: Dictionary = host.sessions[host.active_session_id]
-	pair.term.send_text(
-		"printf '\\033[2J\\033[12;1HZoom quality: ABC xyz 0123456789\\033[13;20H'; sleep 30\n"
-	)
-	for i in 50:
-		await create_timer(.1).timeout
-		if pair.term.get_cursor_cell() == Vector2i(19, 12):
-			break
-	check(pair.term.get_cursor_cell() == Vector2i(19, 12), "Shell fixture is ready")
+	var shell_command := "printf '\\033[2J\\033[12;1HZoom quality: ABC xyz 0123456789\\033[13;20H'; read -r done"
+	if OS.get_name() == "Windows":
+		shell_command = "[Console]::Write(\"`e[2J`e[12;1HZoom quality: ABC xyz 0123456789`e[13;20H\"); [Console]::ReadLine()"
+	client.connection.send_input(host.active_session_id, (shell_command + "\r").to_utf8_buffer())
+	check(await until(func(): return pair.term.get_cursor_cell() == Vector2i(19, 12)), "Shell fixture is ready")
 	var grid: Vector2i = pair.term.get_grid_size()
 	var font: int = pair.term.get_live_font_size()
 	world.fx_last_key = -1e8
-	world.fx_cfg.scene.camera.dof_blur_amount = 0.0
-	world.fx_cfg.states['idle']['camera.tilt_limit_deg'] = 0.0
-	world.fx_cfg.states['idle']['sheet.curvature_deg'] = 0.0
-	world.fx_cfg.states['idle']['sheet.ripple'] = 0.0
+	world.fx_cfg.set_option("scene.camera", "zoom_mode", "typing")
+	world.fx_cfg.set_option("scene.camera", "dof_blur_amount", 0.0)
+	world.fx_cfg.set_option("state.idle", "camera.tilt_limit_deg", 0.0)
+	world.fx_cfg.set_option("state.idle", "sheet.curvature_deg", 0.0)
+	world.fx_cfg.set_option("state.idle", "sheet.ripple", 0.0)
 	var received := { 'point': Vector2.INF }
 	pair.term.gui_input.connect(
 		func(event):
 			if event is InputEventMouseButton:
 				received.point = event.position,
 	)
-	var base_density := 0.0
+	var backing: float = view.get_viewport().get_final_transform().get_scale().x
+	var base_density := ceilf(maxf(backing, 1.0) * 2.0) / 2.0
 	for zoom in [1.0, 2.0, 4.0, 6.0, 1.0]:
-		world.fx_cfg.states['idle']['camera.zoom'] = zoom
+		world.fx_cfg.set_option("state.idle", "camera.zoom", zoom)
 		for i in 180:
 			world._fx_step(1.0 / 60)
 		world._update_ink_view()
@@ -59,7 +49,14 @@ func run() -> void:
 			await process_frame
 		var density: float = view.canvas_scale()
 		if zoom == 1.0:
-			base_density = density
+			var pane: Control = view.panes[host.pane_focus]
+			var canvas_pixels := Vector2i(view.raster_region.size * base_density)
+			var pane_pixels := Vector2i(pane._layout_region.size * base_density)
+			check(view.canvas.size == canvas_pixels and pair.vp.size == pane_pixels,
+				"Rest at %.2f backing: canvas %s × %.1f = %s, pane %s × %.1f = %s" % [
+					backing, view.raster_region.size, base_density, view.canvas.size,
+					pane._layout_region.size, base_density, pair.vp.size])
+			check(view.canvas.use_hdr_2d and pair.vp.use_hdr_2d, "Both live textures use linear HDR")
 		else:
 			check(
 				density > base_density * zoom * .65,
@@ -70,7 +67,7 @@ func run() -> void:
 			'%.0fx zoom preserves terminal grid and font metrics' % zoom,
 		)
 		check(
-			view.canvas.size.x * view.canvas.size.y <= 20_020_000,
+			view.canvas.size.x * view.canvas.size.y <= 20_000_000,
 			'Canvas stays within its raster budget',
 		)
 		# Exercise both canvas and terminal crop transforms through real GUI input.
@@ -80,12 +77,11 @@ func run() -> void:
 		motion.button_index = MOUSE_BUTTON_LEFT
 		motion.pressed = true
 		motion.position = view.pointer.get_global_transform_with_canvas().affine_inverse() * screen
+		received.point = Vector2.INF
 		view._forward_pointer(motion)
 		motion.pressed = false
 		view._forward_pointer(motion)
-		var wanted: Vector2 = sheet_cursor - view.terminal_origin(host.pane_focus) - pair \
-				.term \
-				.position
+		var wanted: Vector2 = sheet_cursor - view.terminal_origin(host.pane_focus) - pair.term.position
 		check(
 			received.point.distance_to(wanted) < 2.0,
 			'%.0fx zoom preserves terminal pointer coordinates: actual %s wanted %s screen %s'
@@ -93,6 +89,11 @@ func run() -> void:
 		)
 		if DisplayServer.get_name() != 'headless':
 			RenderingServer.force_draw()
-			root.get_texture().get_image().save_png('/tmp/graffitty-raster-%dx.png' % int(zoom))
+			var evidence := OS.get_environment("GRAFFITTY_TEST_EVIDENCE")
+			root.get_texture().get_image().save_png(evidence.path_join("raster-%dx.png" % int(zoom)))
+	print(preload("res://graffitty/render_stats.gd").report(self))
+	client.queue_free()
+	await process_frame
+	await process_frame
 	print('ZOOM_RASTER_PASS' if failures.is_empty() else 'ZOOM_RASTER_FAIL: ' + str(failures))
 	quit(0 if failures.is_empty() else 1)
