@@ -428,11 +428,12 @@ impl Graph {
             // A gft node is not a native-provider process. Ignore shell scans,
             // but allow a subsequently launched real provider to replace it.
             if !["codex", "claude", "opencode", "pi"].contains(&string(state, "provider"))
-                || state["pid"].as_i64().is_none_or(|pid| Some(pid) == node["pid"].as_i64()) {
+                || state["status"] == "offline"
+                || state["pid"].as_i64().is_none_or(|pid| Some(pid) == node["pid"].as_i64() && !replaced) {
                 return discovered;
             }
-            self.clear_queue(&key);
         }
+        if inbox || replaced { self.clear_queue(&key); }
         let node = self.nodes.get_mut(&key).unwrap();
         if inbox {
             self.timed_out_status.remove(&key);
@@ -442,6 +443,13 @@ impl Graph {
         }
         let Some(found) = state.as_object() else { return discovered; };
         let mut found = found.clone();
+        // Exits and incomplete samples cannot identify a successor. Keep the
+        // last verified identity to compare with the next live observation.
+        for field in ["provider", "pid", "started", "session_id"] {
+            if state["status"] == "offline" || state[field].is_null() || state[field] == "" {
+                found.remove(field);
+            }
+        }
         let outcomes = found.remove("turn_outcomes").unwrap_or(Value::Null);
         let turn = &state["observed_turn"];
         let prompt_turn = node["codex_prompt_turn"].as_str();
@@ -458,6 +466,8 @@ impl Graph {
             node.as_object_mut().unwrap().remove("transcript_path");
         }
         if replaced {
+            if !found.contains_key("session_id") { node.as_object_mut().unwrap().remove("session_id"); }
+            if state["pid"] != node["pid"] && !found.contains_key("started") { node.as_object_mut().unwrap().remove("started"); }
             self.codex_turn_runs.remove(&key);
             node.as_object_mut().unwrap().remove("rollout_scan");
             node.as_object_mut().unwrap().remove("observed_turn");
@@ -1020,23 +1030,25 @@ impl Graph {
                     crate::checkpoint::node_restore(restore)?;
                 }
                 let node = &self.nodes[&key];
-                if p["event"] == "SessionStart"
-                    && (node["pid"] != p["pid"] || node["session_id"] != p["session_id"])
-                    && !(kind == "custom"
-                        && is_custom_node(node)
-                        && p["resume_inbox"] == true)
-                {
-                    self.clear_queue(&key);
-                }
+                let starting = p["event"] == "SessionStart";
+                // OpenCode registers its home screen as a native, sessionless
+                // node. Selecting or closing a conversation changes its inbox
+                // even when the frontend process stays alive.
+                let home_transition = starting && provider.as_deref() == Some("opencode") && node["provider"] == "opencode"
+                    && ((p["transport"] == "native" && p["session_id"].is_null() && node["session_id"].is_string())
+                        || (node["transport"] == "native" && node["session_id"].is_null() && p["session_id"].is_string()));
+                let kind_changed = node["provider"] != "shell" && is_custom_node(node) != (kind == "custom");
+                let replaced = home_transition || kind_changed || attention::identity_replaced(node, p);
+                let reconnect = starting && !replaced && ["pid", "session_id"].iter()
+                    .any(|field| !p[*field].is_null() && p[*field] == node[*field]);
+                let resume_inbox = starting && kind == "custom" && is_custom_node(node) && p["resume_inbox"] == true;
+                if (replaced || starting && !reconnect) && !resume_inbox { self.clear_queue(&key); }
                 let node = self.nodes.get_mut(&key).unwrap();
                 let previous = node.clone();
-                let replaced = attention::identity_replaced(node, p);
                 if replaced || p["event"] == "SessionEnd" {
                     node.as_object_mut().unwrap().remove("transcript_path");
                 }
-                let starting = p["event"] == "SessionStart";
-                let reconnect = starting && !replaced && ["pid", "session_id"].iter()
-                    .any(|field| !p[*field].is_null() && p[*field] == node[*field]);
+                if replaced && p["session_id"].is_null() { node.as_object_mut().unwrap().remove("session_id"); }
                 if replaced || (starting && !reconnect) || p["event"] == "SessionEnd" { self.codex_turn_runs.remove(&key); }
                 let was_waiting = node["status"] == "waiting";
                 if p["event"] == "SessionStart" {

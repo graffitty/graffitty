@@ -395,6 +395,69 @@ mod tests {
     }
 
     #[test]
+    fn native_receiver_identity_scopes_both_inflight_and_queued_completions() {
+        for (sample, keep) in [
+            ("same", true), ("partial", true), ("offline_same", true), ("offline_replaced", false),
+            ("pid", false), ("birth", false), ("conversation", false), ("provider", false),
+            ("hook_birth", false), ("hook_conversation", false), ("hook_reconnect", true), ("claude_null_pid", true),
+        ] {
+            for finish_first in [true, false] {
+                let (mut jobs, mut graphs, before) = fixture();
+                let graph = graphs.get_mut("main").unwrap();
+                let hookless = !sample.starts_with("hook_") && sample != "claude_null_pid";
+                let provider = if sample == "claude_null_pid" { "claude" } else { "codex" };
+                let original = json!({"provider":provider,"pid":102,"started":"birth-1","session_id":"session-2","status":"idle"});
+                if hookless {
+                    graph.remove(2);
+                    graph.add(2, "Hookless receiver".into());
+                } else {
+                    graph.dispatch(2,"agent.event",&json!({"provider":provider,"event":"SessionStart","pid":102,"session_id":"session-2"})).unwrap();
+                }
+                graph.observe_agent(2, &original);
+                graph.dispatch(1,"graph.connect",&json!({"from":"t1","to":"t2","turn_completed":true})).unwrap();
+                assert_eq!(graph.nodes["t2"]["transport"].as_str(), if hookless { None } else { Some("native") });
+                jobs.observe("main", 1, &before, graph);
+                let key = jobs.requests().pop().unwrap().0;
+                jobs.launched(&key);
+                let answer = json!({"last_message":"Answer A","completion_checkpoint":500,"size":500});
+                if finish_first { jobs.finish(&key, &answer, &mut graphs); }
+                let graph = graphs.get_mut("main").unwrap();
+                if sample.starts_with("offline_") {
+                    graph.observe_agent(2, &json!({"status":"offline","provider":"shell","pid":1}));
+                }
+                let mut next = original.clone();
+                match sample {
+                    "partial" => next["session_id"] = Value::Null,
+                    "birth" | "hook_birth" => next["started"] = json!("birth-2"),
+                    "conversation" | "hook_conversation" => next["session_id"] = json!("receiver-new"),
+                    "offline_replaced" | "pid" => {
+                        next["pid"] = json!(99);
+                        next["session_id"] = json!("receiver-new");
+                    }
+                    "provider" => next["provider"] = json!("claude"),
+                    _ => {}
+                }
+                if sample == "claude_null_pid" {
+                    graph.dispatch(2,"agent.event",&json!({"provider":"claude","event":"SessionStart","pid":null,"session_id":"session-2"})).unwrap();
+                    assert_eq!(graph.nodes["t2"]["pid"], 102);
+                } else if sample == "hook_reconnect" {
+                    graph.dispatch(2,"agent.event",&json!({"provider":"codex","event":"SessionStart","pid":102})).unwrap();
+                } else if sample.starts_with("hook_") {
+                    next["event"] = json!(if sample == "hook_birth" { "SessionStart" } else { "Ready" });
+                    graph.dispatch(2,"agent.event",&next).unwrap();
+                } else {
+                    graph.observe_agent(2, &next);
+                }
+                jobs.advance(&mut graphs);
+                if !finish_first { jobs.finish(&key, &answer, &mut graphs); }
+                let received = graphs.get_mut("main").unwrap().dispatch(2,"graph.take",&json!({})).unwrap();
+                assert_eq!(received["events"].as_array().unwrap().len(), usize::from(keep), "{sample} / {finish_first}");
+                if keep { assert_eq!(received["events"][0]["text"], "Answer A"); }
+            }
+        }
+    }
+
+    #[test]
     fn delayed_worker_must_return_the_requested_completion() {
         for result in [
             json!({"last_message":"B draft","size":900,"turn_id":"B","completion_checkpoint":500}),

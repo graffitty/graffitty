@@ -876,6 +876,26 @@ fn native_and_inbox_prompts_preserve_the_same_complete_visible_event() {
 }
 
 #[test]
+fn opencode_return_to_home_clears_the_closed_conversation_and_receipt() {
+    let mut graph = Graph::default();
+    graph.add(1, "OpenCode".into());
+    let selected = json!({"kind":"agent","provider":"opencode","event":"SessionStart","transport":"inbox",
+        "integrated":true,"pid":123,"session_id":"conversation","transcript_path":"selected.jsonl"});
+    graph.dispatch(1, "agent.event", &selected).unwrap();
+    for event in ["UserPromptSubmit","Stop","SessionEnd"] {
+        graph.dispatch(1, "agent.event", &json!({"provider":"opencode","event":event,"session_id":"conversation"})).unwrap();
+    }
+    assert_eq!(graph.nodes["t1"]["attention"]["kind"], "completed");
+    let receipt = graph.nodes["t1"]["attention"]["event"].clone();
+    let home = json!({"kind":"agent","provider":"opencode","event":"SessionStart","transport":"native","integrated":true,"pid":123});
+    graph.dispatch(1, "agent.event", &home).unwrap();
+    assert_eq!(graph.nodes["t1"]["status"], "idle");
+    for field in ["session_id", "transcript_path", "attention"] { assert!(graph.nodes["t1"][field].is_null(), "{field}"); }
+    graph.dispatch(1, "agent.seen", &json!({"event":receipt})).unwrap();
+    assert!(graph.nodes["t1"]["attention"].is_null());
+}
+
+#[test]
 fn opencode_home_screen_reports_idle_until_its_process_exits() {
     let mut graph = Graph::default();
     graph.add(1, "OpenCode".into());
