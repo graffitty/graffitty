@@ -801,13 +801,16 @@ func create_terminal_window(beside := "", axis := "h", before := false) -> void:
 
 
 ## `destination` is a position in the tab strip, which holds one session's tabs.
-func move_session(id: int, destination: int) -> void:
+func move_session(id: int, destination: int, instant := false) -> void:
 	var strip := session_tabs()
 	if not strip.is_empty() and strip.size() != workspace_layout.tabs.size():
 		destination = workspace_layout.tabs.find(strip[clampi(destination, 0, strip.size() - 1)])
 	workspace_layout.reorder(id, destination)
 	if world != null and world.has_method("follow_tab_order"):
+		var previous_instant := instant_workspace_switch
+		instant_workspace_switch = previous_instant or instant
 		world.follow_tab_order()
+		instant_workspace_switch = previous_instant
 	ui_changed.emit()
 
 

@@ -35,6 +35,7 @@ var host_bound := false
 var pending_focus := -1
 ## The tab active when pending_focus was requested; -1 always applies it.
 var pending_focus_from := -1
+var docking_panes: Dictionary = {} # Pane key -> source tab for local tab-strip drops.
 ## The peer whose destination topology we await. Subscriptions can change
 ## federation.selected while the outgoing workspace is still on screen.
 var switching_peer: Node
@@ -879,8 +880,19 @@ func _install_layout(state: Dictionary, preserve: bool, switch_tab := -1) -> voi
 		if transport != null:
 			var remembered: int = view_state.active_tab(transport)
 			if not host.workspace_layout.tab(remembered).is_empty(): host.workspace_layout.active = remembered
+	var docked_pane := ""
+	if preserve and switch_tab < 0:
+		for key: String in docking_panes:
+			var destination: int = host.workspace_layout.containing(key)
+			if destination >= 0 and destination != docking_panes[key] and not previous.has(destination):
+				docked_pane = key
+				host.workspace_layout.active = destination
+				host.workspace_layout.tab(destination).focused = key
+				break
 	host.layout_transaction = false
-	if preserve:
+	if not docked_pane.is_empty():
+		host.select_workspace(host.workspace_layout.active, true)
+	elif preserve:
 		var wanted: String = str(host.workspace_layout.tab(host.workspace_layout.active).get("focused", ""))
 		if host.pane_focus != wanted:
 			host.select_workspace(host.workspace_layout.active, true)

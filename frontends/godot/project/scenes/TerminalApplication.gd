@@ -1758,8 +1758,13 @@ func _finish_detach(source: Node, id: int, key: String, is_tab: bool, position: 
 
 
 func _dock_pane(source: Node, target: Node, key: String, index: int, rectangles: Dictionary = {}) -> void:
-	if await move_pane(source, target, key, -1, "", "right", true, rectangles):
-		target.move_session(target.workspace_layout.active, index)
+	var client: Node = target.get_parent()
+	# The topology broadcast can arrive before the regroup acknowledgement.
+	# Select the new tab in the same layout pass that removes the pane.
+	client.docking_panes[key] = source.workspace_layout.containing(key)
+	var moved := await move_pane(source, target, key, -1, "", "right", true, rectangles)
+	if is_instance_valid(client): client.docking_panes.erase(key)
+	if moved and is_instance_valid(target): target.move_session(target.workspace_layout.active, index, true)
 
 
 func _merge_pane(source: Node, target: Node, key: String, zone: Dictionary) -> void:

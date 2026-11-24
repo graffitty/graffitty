@@ -43,9 +43,19 @@ func play() -> void:
 	await wait(0.8)
 	await point_at(bar_end(), 0.8)
 	await wait(0.4)
+	var source_tab: int = host.workspace_layout.containing(key)
+	var observed := {"tab_effect": false, "resized_source": false}
+	var sample := func():
+		if host.world.tab_fx_t >= 0: observed.tab_effect = true
+		if host.workspace_layout.active == source_tab and not host.workspace_view.pane_rects.has(key):
+			observed.resized_source = true
+	process_frame.connect(sample)
 	await release()
 	await wait(0.8)
 	await owner_at_rest()
+	process_frame.disconnect(sample)
+	check(not observed.tab_effect, "Pane docking skips the tab-switch effect")
+	check(not observed.resized_source, "The source stays intact until the new tab appears")
 
 	check(
 		titles() == ["ALPHA", "CHARLIE", "BRAVO"] and selected_title() == "BRAVO",

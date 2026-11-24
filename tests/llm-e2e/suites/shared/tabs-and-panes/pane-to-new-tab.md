@@ -27,7 +27,9 @@
 5. Move left over the gap between ALPHA and CHARLIE. Expected: the placeholder
    moves there and CHARLIE slides right. It never jumps back and forth while
    the pointer is still.
-6. Return to the empty space right of the last tab and release.
+6. Return to the empty space right of the last tab and release. The split stays
+   visible until BRAVO opens directly in its new tab. Inspect the replay for
+   intermediate frames showing ALPHA alone or playing the tab-switch animation.
 
 ## Verify the new tab
 
