@@ -204,7 +204,7 @@ pub fn map_value(value: &serde_json::Value, field: Field, id: &mut dyn FnMut(i64
         Value::Array(items) => Value::Array(items.iter().map(|value| map_value(value,field,id)).collect()),
         Value::Object(object) => Value::Object(object.iter().map(|(key,value)| {
             let mapped = match field {Field::Queues=>Field::Node,Field::ByEdge=>Field::Edge,_=>Field::Literal}.map_with(key,id);
-            let value = if matches!(key.as_str(),"payload" | "content" | "renderings") {value.clone()}
+            let value = if matches!(key.as_str(),"payload" | "content" | "renderings" | "manifest" | "inputs" | "outputs") {value.clone()}
                 else {map_value(value,Field::from_key(key),id)};
             (mapped,value)
         }).collect()),
@@ -273,6 +273,20 @@ mod tests {
         assert_eq!(Field::Tab.map("@8.1", |_| 80), "@80.1");
         assert_eq!(Field::Node.map("%oops", |_| 999), "%oops");
     }
+    #[test]
+    fn custom_port_names_survive_federation() {
+        let ports = serde_json::json!([{"id":"t1"},{"id":"c1"}]);
+        let graph = serde_json::json!({
+            "nodes":[{"node":"t1","manifest":{"outputs":ports},"inputs":ports}],
+            "edges":[{"from":"t1","from_port":"c1","to":"t2","to_port":"t1"}],
+        });
+        let mapped = map_value(&graph, Field::Literal, &mut |id| id + 8);
+        assert_eq!(mapped["nodes"][0]["node"], "t9");
+        assert_eq!(mapped["nodes"][0]["manifest"], graph["nodes"][0]["manifest"]);
+        assert_eq!(mapped["nodes"][0]["inputs"], ports);
+        assert_eq!(mapped["edges"][0], serde_json::json!({"from":"t9","from_port":"c1","to":"t10","to_port":"t1"}));
+    }
+
     #[test]
     fn final_packets_drain_and_only_transient_failures_retry() {
         assert_eq!(

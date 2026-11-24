@@ -30,8 +30,7 @@ static func capture_state(source: SubViewport, mask: int, parent: Node = null) -
 	viewport.size_2d_override = Core.layout_size(source)
 	viewport.size_2d_override_stretch = true
 	viewport.oversampling = source.oversampling
-	viewport.size = initial_size(source)
-	preload("res://scenes/EffectCaptureBudget.gd").fit(viewport)
+	preload("res://scenes/EffectCaptureBudget.gd").fit(viewport, initial_size(source))
 	if snapshot != null:
 		viewport.terminal_view = snapshot.create_view(viewport._density())
 		viewport.add_child(viewport.terminal_view)
@@ -86,5 +85,4 @@ func request_extent(extent: Vector2) -> void:
 	if size_2d_override == Vector2i.ZERO:
 		size_2d_override = size
 		size_2d_override_stretch = true
-	size = Vector2i(requested.ceil()).max(Vector2i.ONE)
-	preload("res://scenes/EffectCaptureBudget.gd").fit(self)
+	preload("res://scenes/EffectCaptureBudget.gd").fit(self, Vector2i(requested.ceil()))

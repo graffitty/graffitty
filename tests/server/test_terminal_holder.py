@@ -213,27 +213,54 @@ class TerminalHolderTests(unittest.TestCase):
         from private_session_e2e import PrivateClient
 
         self.start_server()
-        self.new_pane("one")
+        pid = self.new_pane("one")
+        transcript = self.root / "source.jsonl"
+        transcript.write_text("source marker\n")
+
+        def read(peer):
+            reply = peer.action("rpc", second, method="graph.read",
+                                params={"node": f"t{first}", "offset": 0})
+            self.assertEqual(reply["type"], "ack", reply)
+            self.assertEqual(reply["result"]["text"], transcript.read_text())
+
         peer = PrivateClient(json.loads(self.descriptor.read_text())["local"], "one")
         try:
             first = peer.topology["panes"][0]["id"]
             second = peer.action("create", first, kind="pane")["created"]
             for pane in (first, second):
-                reply = peer.action("rpc", pane, method="agent.event",
-                                    params={"provider": "codex", "event": "SessionStart"})
+                event = {"provider": "codex", "event": "SessionStart"}
+                if pane == first:
+                    event.update(pid=pid, session_id="source", transport="inbox",
+                                 transcript_path=str(transcript))
+                reply = peer.action("rpc", pane, method="agent.event", params=event)
                 self.assertEqual(reply["type"], "ack", reply)
             edge = {"from": f"t{first}", "to": f"t{second}", "read": True}
             reply = peer.action("rpc", first, method="graph.connect", params=edge)
             self.assertEqual(reply["type"], "ack", reply)
+            read(peer)
         finally:
             peer.socket.close()
 
-        for _ in range(2):
+        for restart in range(2):
             self.gft("server", "restart")
             peer = PrivateClient(json.loads(self.descriptor.read_text())["local"], "one")
             try:
                 wires = peer.topology["graph"]["edges"]
                 self.assertEqual([{key: wire[key] for key in edge} for wire in wires], [edge])
+                read(peer)
+                self.assertNotIn(str(transcript), json.dumps(peer.topology))
+                if restart == 0:
+                    peer.action("rpc", first, method="agent.event",
+                                params={"event": "SessionStart", "provider": "codex",
+                                        "pid": pid, "session_id": "source", "transcript_path": None,
+                                        "transport": "inbox"})
+                    read(peer)
+                if restart == 1:
+                    peer.action("rpc", first, method="agent.event",
+                                params={"event": "SessionStart", "provider": "codex",
+                                        "pid": pid, "session_id": "replacement"})
+                    denied = peer.action("rpc", second, method="graph.read", params={"node": f"t{first}"})
+                    self.assertEqual(denied["type"], "error", denied)
             finally:
                 peer.socket.close()
 

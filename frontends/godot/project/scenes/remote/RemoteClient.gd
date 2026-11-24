@@ -470,7 +470,13 @@ static func resume_focus(topology: Dictionary) -> int:
 	var focused := str(tab.get("focused", "")) if tab is Dictionary else ""
 	if not preload("res://scenes/PaneTargets.gd").valid(focused): return active
 	var pane := PaneAddress.id(focused)
-	return pane if topology.get("panes", []).any(func(item): return int(item.id) == pane and int(item.tab) == active) else active
+	return pane if pane_tab(topology, pane) == active else active
+
+static func pane_tab(topology: Dictionary, id: int) -> int:
+	var collection := "chromiums" if id > PaneAddress.CHROMIUM_BASE else "panes"
+	for pane in topology.get(collection, []):
+		if int(pane.id) == id: return int(pane.tab)
+	return -1
 
 
 func _refresh() -> void:
@@ -508,13 +514,10 @@ func _refresh_body() -> void:
 				var wire := int(host.get_meta("session_switch_focus"))
 				host.remove_meta("session_switch_focus")
 				var wanted := int(switching_peer.local_id(wire))
-				if target.get("panes", []).any(func(pane): return int(pane.id) == wanted): pending_focus = wanted
+				if pane_tab(target, wanted) >= 0: pending_focus = wanted
 			if pending_focus >= 0:
-				switch_tab = pending_focus
-				for pane in target.get("panes", []):
-					if int(pane.id) == pending_focus:
-						switch_tab = int(pane.tab)
-						break
+				var tab := pane_tab(target, pending_focus)
+				switch_tab = tab if tab >= 0 else pending_focus
 			pending_focus_from = -1
 		switching_peer = null
 	if state.tabs.is_empty():
@@ -657,7 +660,7 @@ func _refresh_body() -> void:
 			host.workspaces[controller].chromium = id
 		host.chromiums[id].pinned_title = str(item.pinned_title)
 		host.chromiums[id].apply_state(item.state)
-	if pending_focus >= 0 and host.sessions.has(pending_focus):
+	if pending_focus >= 0 and (host.sessions.has(pending_focus) or host.chromiums.has(pending_focus)):
 		# Selecting another tab after asking for a pane cancels the automatic jump.
 		if pending_focus_from < 0 or host.workspace_layout.active == pending_focus_from:
 			# Reveal: a hidden pane focused in place leaves the camera fitting
@@ -857,7 +860,7 @@ func _install_layout(state: Dictionary, preserve: bool, switch_tab := -1) -> voi
 			mirror.merge(layout)
 			layout = mirror
 		host.workspace_layout.tabs.append(layout)
-		host.application.next_id = maxi(host.application.next_id, int(tab.id) + 1)
+		host.application.reserve_id(int(tab.id))
 	if authoritative:
 		host.application.tiling_default = bool(snapshot.layout.default_enabled)
 		if not preserve: active = int(snapshot.get("active", active))

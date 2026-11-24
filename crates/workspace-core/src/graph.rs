@@ -77,6 +77,7 @@ pub struct Graph {
     runs: HashMap<String, usize>,
     run_limits: HashMap<String, usize>,
     default_run_limit: usize,
+    owner_wiring: Option<(u64, usize, std::sync::Arc<Value>)>,
     journal: crate::graph_journal::Journal,
     revision: u64,
     notification_revision: u64,
@@ -191,6 +192,7 @@ impl Default for Graph {
 impl Graph {
     pub fn with_settings(settings: NodeSettings) -> Self {
         Self {
+            owner_wiring: None,
             nodes: BTreeMap::new(), edges: BTreeMap::new(), queues: BTreeMap::new(),
             receipts: Vec::new(), runs: HashMap::new(), run_limits: HashMap::new(),
             default_run_limit: settings.run_messages, journal: crate::graph_journal::Journal::with_limits(settings.delivery_history, settings.delivery_transitions),
@@ -339,12 +341,28 @@ impl Graph {
         }
         let Some(found) = state.as_object() else { return; };
         let mut found = found.clone();
+        let failures = found.remove("failed_turns").unwrap_or(Value::Null);
+        let turn = &state["observed_turn"];
+        let prompt_turn = node["codex_prompt_turn"].as_str();
+        let current_prompt = prompt_turn.is_some() && turn["id"].as_str() == prompt_turn;
+        let turn_changed = !replaced && same_session && (had_turn_baseline || current_prompt) && turn["id"].is_string()
+            && (turn["id"] != previous_turn["id"] || turn["status"] != previous_turn["status"]);
+        let stopped_without_success = matches!(turn["status"].as_str(), Some("failed" | "interrupted")) && state["status"] == "idle";
+        // Codex does not send StopFailure. Apply a new terminal failure, and
+        // allow discovery to see the retry when it has no prompt hook either.
+        let codex_transition = state["provider"] == "codex" && same_session && !replaced &&
+            ((stopped_without_success && (current_prompt || prompt_turn.is_none()) && (turn_changed || !had_turn_baseline)) ||
+             (turn_changed && matches!(previous_turn["status"].as_str(), Some("failed" | "interrupted")) && state["status"] == "busy"));
+        if replaced || found.get("status").is_some_and(|status| status == "offline") {
+            node.as_object_mut().unwrap().remove("transcript_path");
+        }
         if replaced {
+            node.as_object_mut().unwrap().remove("codex_prompt_turn");
             node.as_object_mut().unwrap().remove("integrated");
         }
         let claude_blocked = !replaced && node["provider"] == "claude" && node["status_source"] == "program"
             && node["program_status"]["app"] == "claude-code" && node["program_status"]["state"] == "blocked";
-        if (node["integrated"] == true || claude_blocked) && found.get("status") != Some(&json!("offline")) {
+        if ((node["integrated"] == true && !codex_transition) || claude_blocked) && found.get("status") != Some(&json!("offline")) {
             found.remove("status");
         }
         // Keep the status from lifecycle events or OSC 7501 when discovery only
@@ -365,23 +383,34 @@ impl Graph {
         // client/server reconnects. Never apply it over authoritative hooks.
         let observed_at = found.get("status").and_then(|_| found.get("status_at")).and_then(Value::as_str).map(str::to_owned);
         found.remove("status_at");
+        let stopped_without_completion = stopped_without_success && found.contains_key("status") && state["provider"] == "codex"
+            && (!had_turn_baseline || turn_changed || previous["status"] == "busy" || previous["status"] == "waiting");
         node.as_object_mut().unwrap().extend(found);
-        attention::update(node, string(&previous, "status"), replaced);
+        if current_prompt && turn["status"] == "completed" && state["status"] == "idle" {
+            node.as_object_mut().unwrap().remove("codex_prompt_turn");
+        }
+        if stopped_without_completion {
+            if current_prompt { node.as_object_mut().unwrap().remove("codex_prompt_turn"); }
+            node.as_object_mut().unwrap().remove("attention");
+        } else {
+            attention::update(node, string(&previous, "status"), replaced);
+        }
         if ["codex", "claude", "opencode", "pi"].contains(&string(node, "provider")) { record_status_at(node, self.settings.status_history, observed_at.as_deref()); }
         let waiting = node["status"] == "waiting";
-        let turn = node["observed_turn"].clone();
         if *node != previous { self.notification_revision = self.notification_revision.wrapping_add(1); }
         if !was_waiting && waiting {
             let _ = self.enqueue_lifecycle(&key, "waiting", &json!({}));
         }
         // Establish a baseline on attachment; do not replay a historical error.
         // Comparing status too catches a turn seen running before it failed.
-        if same_session && had_turn_baseline
-            && (turn["id"] != previous_turn["id"] || turn["status"] != previous_turn["status"])
-            && turn["status"] == "failed" && turn["id"].is_string() {
-            let _ = self.enqueue_lifecycle(&key, "error", &json!({
-                "text":turn["error"]["message"], "outcome":"error", "payload":{"error":turn["error"],"turn_id":turn["id"]}
-            }));
+        if turn_changed {
+            for failure in failures.as_array().into_iter().flatten().filter(|f| turn["status"] != "failed" || f["id"] != turn["id"])
+                .chain(std::iter::once(turn).filter(|t| t["status"] == "failed")) {
+                let _ = self.enqueue_lifecycle(&key, "error", &json!({
+                    "text":failure["error"]["message"], "outcome":"error",
+                    "payload":{"error":failure["error"],"turn_id":failure["id"]}
+                }));
+            }
         }
     }
     /// Apply the terminal's OSC 7501 root record (`None` once cleared). Every
@@ -395,8 +424,8 @@ impl Graph {
             None => { node.as_object_mut().unwrap().remove("program_status"); }
         }
         // Claude reports authentication failures at its prompt even when no stop hook arrives.
-        let claude_blocked = node["provider"] == "claude" && node["status"] == "busy"
-            && node["program_status"]["app"] == "claude-code" && node["program_status"]["state"] == "blocked";
+        let claude_blocked = node["provider"] == "claude" && matches!(string(node, "status"), "busy" | "idle")
+            && node["program_status"] != previous["program_status"] && node["program_status"]["app"] == "claude-code" && node["program_status"]["state"] == "blocked";
         if !claude_blocked && !matches!(node["status"].as_str(), Some("unintegrated" | "unknown")) && node["status_source"] != "program" {
             if *node != previous { self.notification_revision = self.notification_revision.wrapping_add(1); }
             return;
@@ -420,6 +449,9 @@ impl Graph {
         let replaced = !previous_app.is_empty() && !app.is_empty() && previous_app != app;
         attention::update(node, string(&previous, "status"), replaced);
         if *node != previous { self.notification_revision = self.notification_revision.wrapping_add(1); }
+        if previous["status"] != "waiting" && node["status"] == "waiting" && node["provider"] == "claude" && node["program_status"]["app"] == "claude-code" {
+            let _ = self.enqueue_lifecycle(&format!("t{id}"), "waiting", &json!({}));
+        }
     }
     pub fn remove(&mut self, id: u64) {
         let key = format!("t{id}");
@@ -615,23 +647,15 @@ impl Graph {
         }
         self.revoke_at(now);
     }
-    fn reconcile_ports(&mut self) {
+    /// A registration can invalidate only ports owned by the reporting pane.
+    fn reconcile_ports(&mut self, key: &str) {
         self.edges.retain(|_, edge| {
-            let output = port(
-                &self.nodes[string(edge, "from")],
-                true,
-                string(edge, "from_port"),
-            );
-            let input = port(
-                &self.nodes[string(edge, "to")],
-                false,
-                string(edge, "to_port"),
-            );
-            output.is_ok_and(|p| {
-                let mode = string(&p, "mode");
-                edge["send"] == (mode == "send")
-                    && edge["turn_completed"] == (mode == "turn_completed")
-            }) && input.is_ok()
+            if edge["from"] == key {
+                let Ok(output) = port(&self.nodes[key], true, string(edge, "from_port")) else { return false };
+                let mode = string(&output, "mode");
+                return edge["send"] == (mode == "send") && edge["turn_completed"] == (mode == "turn_completed");
+            }
+            edge["to"] != key || port(&self.nodes[key], false, string(edge, "to_port")).is_ok()
         });
     }
     pub fn can_read(&self, source: &str, target: &str) -> bool {
@@ -784,7 +808,7 @@ impl Graph {
                 }
                 let manifest = manifest(p)?;
                 self.nodes.get_mut(&key).unwrap()["manifest"] = manifest;
-                self.reconcile_ports();
+                self.reconcile_ports(&key);
                 self.revoke();
                 Ok(self.nodes[&key].clone())
             }
@@ -862,6 +886,9 @@ impl Graph {
                 let node = self.nodes.get_mut(&key).unwrap();
                 let previous = node.clone();
                 let replaced = attention::identity_replaced(node, p);
+                if replaced || p["event"] == "SessionEnd" {
+                    node.as_object_mut().unwrap().remove("transcript_path");
+                }
                 let starting = p["event"] == "SessionStart";
                 let reconnect = starting && !replaced && ["pid", "session_id"].iter()
                     .any(|field| !p[*field].is_null() && p[*field] == node[*field]);
@@ -872,7 +899,13 @@ impl Graph {
                     // A newly launched node must not inherit the previous
                     // agent's conversation identity in the same terminal.
                     for field in ["session_id", "transcript_path", "session_file", "provider_home", "checkpoint_state", "observed_turn"] {
+                        if reconnect && matches!(field, "session_id" | "transcript_path") { continue; }
                         node.as_object_mut().unwrap().remove(field);
+                    }
+                    if !reconnect {
+                        for field in ["pid", "started"] {
+                            node.as_object_mut().unwrap().remove(field);
+                        }
                     }
                     match p.get("restore").filter(|v| !v.is_null()) {
                         Some(restore) => node["restore"] = restore.clone(),
@@ -911,7 +944,7 @@ impl Graph {
                     "provider_home",
                     "started",
                 ] {
-                    if let Some(value) = p.get(field) {
+                    if let Some(value) = p.get(field).filter(|value| !value.is_null()) {
                         node[field] = value.clone();
                     }
                 }
@@ -925,6 +958,10 @@ impl Graph {
                 attention::update(node, previous_status.as_str().unwrap_or(""), replaced || (starting && !reconnect));
                 record_status(node, self.settings.status_history);
                 if p["event"] == "UserPromptSubmit" || p["event"] == "SessionStart" {
+                    node.as_object_mut().unwrap().remove("codex_prompt_turn");
+                    if p["event"] == "UserPromptSubmit" && node["provider"] == "codex" && p["turn_id"].is_string() {
+                        node["codex_prompt_turn"] = p["turn_id"].clone();
+                    }
                     node.as_object_mut().unwrap().remove("last_lifecycle_error");
                 }
                 if p["event"] == "UserPromptSubmit" {
@@ -946,12 +983,12 @@ impl Graph {
                 } else if p["event"] == "SessionStart" {
                     node.as_object_mut().unwrap().remove("run_id");
                 }
-                self.reconcile_ports();
+                self.reconcile_ports(&key);
                 self.revoke();
                 if !was_waiting && self.nodes[&key]["status"] == "waiting" {
                     self.enqueue_lifecycle(&key, "waiting", &json!({}))?;
                 }
-                if p["event"] == "Error" || (p["event"] == "Stop" && p["outcome"] == "error") {
+                if p["event"] == "Error" || (matches!(string(p, "event"), "Stop" | "AwaitingInput") && p["outcome"] == "error") {
                     let signature = json!([p["session_id"], p["completion_id"], p["text"]]);
                     if self.nodes[&key]["last_lifecycle_error"] != signature {
                         self.nodes.get_mut(&key).unwrap()["last_lifecycle_error"] = signature;

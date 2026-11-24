@@ -20,6 +20,15 @@ func test_missing_or_stale_state_falls_back() -> void:
 	expect(Client.resume_focus(_topology(null, "t7")) == 1, "no active tab: the first tab")
 	expect(Client.resume_focus({"tabs": []}) == -1, "an empty session")
 
+func test_session_switch_lands_on_the_selected_chromium_tab() -> void:
+	var browser := preload("res://scenes/PaneAddress.gd").id("c1")
+	var topology := _topology(5, "c1")
+	topology.chromiums = [{"id": browser, "tab": 5, "owner": 7}]
+	expect(Client.resume_focus(topology) == browser, "A remembered Chromium pane resumes with its tab")
+	topology.workspace_state.active = 1
+	expect(Client.pane_tab(topology, browser) == 5, "Selecting the browser targets its tab independently of the saved tab or owner")
+	expect(Client.pane_tab(topology, browser + 1) == -1, "A closed browser cannot redirect the flight")
+
 class StartupHost extends Node:
 	var active_session_id := -1
 	var workspace_layout := preload("res://scenes/WorkspaceLayout.gd").new()

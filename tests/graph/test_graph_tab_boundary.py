@@ -43,6 +43,13 @@ class GraphTabBoundaryTests(unittest.TestCase):
                     session = next(s for s in catalog["sessions"] if link in s["agent_tree"]["edges"])
                     self.assertEqual({n["key"] for n in session["agent_tree"]["nodes"] if n["kind"] == "agent"},
                                      set(link.values()))
+                    child = source.action("rpc", first, method="terminal.run", params={
+                        "command": r"printf '\033]2;Build logs\007'"})["result"]["pane"]
+                    catalog = viewer.until(lambda message: message.get("type") == "session_list" and any(
+                        node["key"] == child and node["title"] == "Build logs"
+                        for descriptor in message["sessions"] for node in descriptor["agent_tree"]["nodes"]))
+                    self.assertTrue(any(node["key"] == child and node["kind"] == "terminal"
+                                        for descriptor in catalog["sessions"] for node in descriptor["agent_tree"]["nodes"]))
                 finally:
                     viewer.socket.close()
                     source.socket.close()

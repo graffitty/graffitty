@@ -50,6 +50,19 @@ fn reference(value: &mut Value) {
     }
 }
 
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn adopts_high_terminal_ids_without_changing_the_holder_identity() {
+        let mut tab = json!({"focused":"%4294967295","windows":[{"key":"%4294967295"}]});
+        layout(&mut tab);
+        assert_eq!(tab["focused"], "t4294967295");
+        assert_eq!(tab["windows"][0]["key"], "t4294967295");
+    }
+}
+
 /// A running process keeps the environment its holder gave it. Resolve only
 /// its own old address, after authenticating its original pane capability.
 pub(super) fn inherited_target(session: &crate::session::Session, params: &mut Value) {

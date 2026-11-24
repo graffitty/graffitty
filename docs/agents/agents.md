@@ -15,7 +15,8 @@ See Claude, Codex, Pi and OpenCode across connected servers and sessions.
 | Idle | Ready for more work |
 
 - Hover an agent to pin it.
-- Connected browsers, terminals and agents stay grouped when you switch tabs or sessions. Select a child row to open its session and focus that pane.
+- Connected browsers, terminals and agents stay grouped when you switch tabs or sessions. Select a child row to open its session and focus that pane. A leader with unknown or offline status stays at the top of its group while any connected agent has a listed status.
+- `NextAgent` and `PreviousAgent` step through connected agents in panel order.
 - Drag the panel title to move or dock it.
 
 The elapsed time starts at the server-recorded status change, including time

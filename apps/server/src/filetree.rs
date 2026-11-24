@@ -935,7 +935,7 @@ fn open_in_chromium(
         if server.chromiums.len() >= 32 {
             return Err("Server chromium limit reached".into());
         }
-        let id = server.chromium_identity(None)?;
+        let id = server.chromium_identity(None, None)?;
         // Validate placement before starting a new process.
         place_viewer(
             &mut layout,

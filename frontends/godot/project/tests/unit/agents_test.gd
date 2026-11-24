@@ -186,6 +186,19 @@ func test_agents_in_other_sessions_and_servers_are_listed() -> void:
 	var child: Dictionary = controller.trees[by_key["t3"].id][0]
 	expect(child.row_id == by_key["t4"].id and child.status == "working", "The background child retains identity and status")
 	expect(controller._away[child.away_id].session == "$1", "Selecting the child targets its own session")
+	peer.available_sessions[0].agents[0].status = "unknown"
+	controller.refresh()
+	expect(controller.rows.any(func(row): return row.key == "t3") and controller.trees[by_key["t3"].id][0].row_id == by_key["t4"].id, "A background leader with unknown status keeps its active child connected")
+	var leader_summary: Dictionary = peer.available_sessions[0].agents.pop_front()
+	controller.refresh()
+	expect(controller.rows.any(func(row): return row.key == "t4"), "A missing background leader summary promotes its listed child")
+	peer.available_sessions[0].agents.push_front(leader_summary)
+	peer.available_sessions[0].agents[0].status = "waiting"
+	peer.available_sessions[0].agents[1].provider = "codex"
+	peer.available_sessions[0].agents[1].status = "offline"
+	controller.refresh()
+	expect(controller.trees[by_key["t3"].id][0].status == "offline", "An offline child retains its status in the background tree")
+	peer.available_sessions[0].agents[1].status = "busy"
 	peer.available_sessions[0].agent_tree.edges.clear()
 	controller.refresh()
 	expect(controller.rows.size() == 3, "Disconnecting the wire restores separate rows while away")
@@ -341,3 +354,64 @@ func test_connected_panes_form_a_tree_under_the_first_agent() -> void:
 	connection.free()
 	host.free()
 	app.free()
+
+func test_unknown_leader_keeps_each_branch_and_keyboard_order() -> void:
+	var app := Application.new()
+	var host := TreeHost.new()
+	var peer := TreeConnection.new()
+	app.hosts = [host]
+	app.agent_attention.in_view = func(view): return view == host
+	var windows := []
+	for id in [2, 17, 18, 22]:
+		var key := PaneAddress.key(id)
+		host.terminal(id)
+		windows.append({"pane": key, "shown": true, "rect": Rect2(id, 0, 100, 100)})
+		app.agent_api.graph.nodes[key] = {"provider": "claude", "status": "unknown" if id == 2 else "idle"}
+		app.agent_api.graph.remote_owners[key] = peer
+	host.workspace_layout.tabs = [{"id": 1, "tree": {"type": "windows", "windows": windows}}]
+	host.workspace_layout.active = 1
+	host.pane_focus = "t17"
+	app.agent_api.graph.edges = {"a": {"from": "t2", "to": "t17"}, "b": {"from": "t17", "to": "t18"}, "c": {"from": "t2", "to": "t22"}}
+	var controller := preload("res://scenes/Agents.gd").new()
+	controller.application = app
+	controller._sounds = {"enabled": false}
+	controller.refresh()
+	var by_key := {}
+	for row in controller.rows: by_key[row.key] = row
+	expect(by_key.has("t2") and by_key.size() == 1, "The unknown leader remains the one visible group root")
+	if by_key.has("t2"):
+		var children: Array = controller.trees[by_key.t2.id]
+		expect(children.map(func(child): return child.key) == ["t17", "t18", "t22"], "The leader retains both connected branches in graph order")
+		expect(children[1].parent == "t17" and children[1].lines.size() == 2, "The grandchild retains its parent and depth")
+		controller.refresh()
+		expect(controller.trees[by_key.t2.id] == children, "Repeated refreshes preserve order and metadata")
+		controller.step(1)
+		expect(host.revealed == "t18", "NextAgent moves from the branch parent to its child")
+		host.pane_focus = "t18"
+		controller.refresh()
+		controller.step(-1)
+		expect(host.revealed == "t17", "PreviousAgent returns from the nested child to its parent")
+		controller.step(1)
+		expect(host.revealed == "t22", "NextAgent reaches the other branch from the nested child")
+		for key in app.agent_api.graph.nodes: app.agent_api.graph.nodes[key].status = "offline"
+		controller.refresh()
+		expect(controller.rows.is_empty() and controller.trees.is_empty(), "An entirely unavailable component leaves no empty group")
+	controller.free()
+	peer.free()
+	host.free()
+	app.free()
+
+func test_malformed_provider_entry_leaves_peers_visible() -> void:
+	var core: RefCounted = ClassDB.instantiate("AgentsCore")
+	var working := {"id": "working", "key": "t17", "title": "Review", "provider": "codex",
+		"status": "busy", "looking": false, "focused": false}
+	var malformed := working.duplicate()
+	malformed.id = "broken"
+	malformed.program = {"state": []}
+	var snapshot: Dictionary = core.observe([malformed, working], 1)
+	expect(snapshot.rows.size() == 1 and snapshot.rows[0].id == "working", "A malformed provider report cannot suppress its healthy peer")
+	var tree: Array = core.tree({
+		"nodes": [{"key":"t17","kind":"agent","provider":"codex"}, {"key":"t18","kind":"agent","provider":"codex"}, {"key":"t2","rect":true}],
+		"edges": [{"from":"t17","to":"t18"}, {"from":null}],
+	})
+	expect(tree.size() == 1 and tree[0].rows[0].key == "t18", "Valid tree nodes and wires survive a malformed neighbor")

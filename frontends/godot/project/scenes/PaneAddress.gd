@@ -1,6 +1,6 @@
 extends RefCounted
 
-const CHROMIUM_BASE := 1 << 30
+const CHROMIUM_BASE := 1 << 32
 
 static func key(surface: int) -> String:
 	return "c%d" % (surface - CHROMIUM_BASE) if surface > CHROMIUM_BASE else "t%d" % surface

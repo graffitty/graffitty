@@ -1196,10 +1196,7 @@ func _fit_world_viewport() -> void:
 	world_container.scale = Vector2.ONE / density
 	world_viewport.size_2d_override = Vector2i(layout_root.size.round())
 	world_viewport.size_2d_override_stretch = true
-	var device := RenderingServer.get_rendering_device()
-	var limit := 8192.0
-	if device != null:
-		limit = minf(float(device.limit_get(RenderingDevice.LIMIT_MAX_TEXTURE_SIZE_2D)), 16384.0)
+	var limit := preload("res://scenes/EffectCaptureBudget.gd").texture_limit()
 	_resize_world_container(world_container, (layout_root.size * density).round(), limit)
 	_sync_world_chrome_clip()
 

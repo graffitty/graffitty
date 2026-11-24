@@ -87,7 +87,7 @@ func test_monitor_follows_chromium_and_terminal_focus() -> void:
 	var chromium_monitor := Monitor.new()
 	chromium_monitor._accept_sample(sample(1000))
 	chromium.resource_monitor = chromium_monitor
-	host.chromiums[(1 << 30) + 7] = chromium
+	host.chromiums[(1 << 32) + 7] = chromium
 	var terminal_monitor := Monitor.new()
 	host.sessions[2] = {"resource_monitor": terminal_monitor}
 	host.active_session_id = 2

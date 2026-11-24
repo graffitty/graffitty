@@ -30,6 +30,7 @@ var owners: Dictionary = { }
 var mounted_packs: Dictionary[String, bool] = { }
 var next_chromium_id := PaneAddress.CHROMIUM_BASE + 1
 var next_id := 1
+var _reserved_ids := {}
 ## First effective spawn directory, shared by every window for this launch.
 var initial_directory := ""
 ## Explicit preferences for future local PTYs, shared by this app's windows.
@@ -513,19 +514,23 @@ func configure_window_scale(window: Window) -> void:
 
 
 func allocate_id(chromium := false) -> int:
-	if chromium:
-		var surface := next_chromium_id
-		next_chromium_id += 1
-		return surface
-	var id := next_id
-	next_id += 1
+	var id := next_chromium_id if chromium else next_id
+	while _reserved_ids.erase(id):
+		id += 1
+	if chromium: next_chromium_id = id + 1
+	else: next_id = id + 1
 	return id
+
+
+## A restored owner can claim a high ID while lower numbers are still available.
+func reserve_id(id: int) -> void:
+	var next := next_chromium_id if id > PaneAddress.CHROMIUM_BASE else next_id
+	if id >= next: _reserved_ids[id] = true
 
 
 func claim(id: int, host: Node) -> void:
 	owners[id] = host
-	if id > PaneAddress.CHROMIUM_BASE: next_chromium_id = maxi(next_chromium_id, id + 1)
-	else: next_id = maxi(next_id, id + 1)
+	reserve_id(id)
 
 
 func host_for_workspace(id: int) -> Node:

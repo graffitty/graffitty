@@ -310,7 +310,7 @@ pub fn validate(v: &Value) -> Result<()> {
 
 #[cfg(test)]
 mod tests {
-    use super::validate;
+    use super::{CHROMIUM_BASE, validate};
     use serde_json::{Value, json};
 
     /// A terminal and its chromium side by side, and a window whose
@@ -320,11 +320,11 @@ mod tests {
             {"active":1,"position":[0,0],"size":[900,700],
              "tabs":[{"id":1,"focused":"t1","tree":{"windows":[{"pane":"t1"},{"pane":"c2"}]}}],
              "panes":[{"id":1,"pid":-1,"cwd":"/tmp"}],
-             "chromiums":[{"id":1073741826,"owner":1,"urls":["https://example.com/a","about:blank"],"profile":""}]},
+             "chromiums":[{"id":(CHROMIUM_BASE + 2),"owner":1,"urls":["https://example.com/a","about:blank"],"profile":""}]},
             {"active":4,"position":[40,40],"size":[900,700],
              "tabs":[{"id":4,"focused":"t4","tree":{"pane":"t4"}},{"id":5,"focused":"c3","tree":{"windows":[{"pane":"c3"}]}}],
              "panes":[{"id":4,"pid":-1,"cwd":"/tmp"}],
-             "chromiums":[{"id":1073741827,"owner":null,"urls":["http://127.0.0.1:8000/"],"profile_template":"/tmp/template"}]}]})
+             "chromiums":[{"id":(CHROMIUM_BASE + 3),"owner":null,"urls":["http://127.0.0.1:8000/"],"profile_template":"/tmp/template"}]}]})
     }
     fn rejected(change: impl FnOnce(&mut Value)) -> String {
         let mut v = fixture();

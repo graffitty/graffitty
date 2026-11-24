@@ -1,6 +1,6 @@
 //! Typed public pane addresses and their numeric transport keys.
 //! The disjoint ranges let a renderer index both t1 and c1 by integer.
-pub const CHROMIUM_BASE: u64 = 1 << 30;
+pub const CHROMIUM_BASE: u64 = 1 << 32;
 
 pub fn address(id: u64) -> String {
     if id > CHROMIUM_BASE {
@@ -29,11 +29,11 @@ mod tests {
 
     #[test]
     fn pane_types_have_independent_ordinals() {
-        for (key, id) in [("t1", 1), ("t20", 20), ("c1", CHROMIUM_BASE + 1)] {
+        for (key, id) in [("t1", 1), ("t4294967295", u32::MAX as u64), ("c1", CHROMIUM_BASE + 1)] {
             assert_eq!(parse(key), Some(id));
             assert_eq!(address(id), key);
         }
-        for invalid in ["%1", "t0", "c0", "t01", "t1a", "c-1", "t1073741824", "값"] {
+        for invalid in ["%1", "t0", "c0", "t01", "t1a", "c-1", "t4294967296", "값"] {
             assert_eq!(parse(invalid), None);
         }
     }

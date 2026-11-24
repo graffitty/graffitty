@@ -5010,10 +5010,9 @@ func _workspace_transition_layers(origin: Vector3, du: Vector3, dv: Vector3, sha
 		still.transparent_bg = true
 		still.use_hdr_2d = true
 		still.disable_3d = true
-		still.size = Vector2i(rect.size.ceil()).max(Vector2i.ONE)
-		still.size_2d_override = still.size
+		still.size_2d_override = Vector2i(rect.size.ceil()).max(Vector2i.ONE)
 		still.size_2d_override_stretch = true
-		preload("res://scenes/EffectCaptureBudget.gd").fit(still)
+		preload("res://scenes/EffectCaptureBudget.gd").fit(still, still.size_2d_override)
 		still.render_target_update_mode = SubViewport.UPDATE_ONCE
 		still.add_child(border.drawing)
 		view.canvas.add_child(still)
@@ -5022,7 +5021,7 @@ func _workspace_transition_layers(origin: Vector3, du: Vector3, dv: Vector3, sha
 		layer.tree_exiting.connect(still.queue_free)
 		var at := rect.position / _sheet_size()
 		var extent := rect.size / _sheet_size()
-		var whole := Rect2(Vector2.ZERO, Vector2(still.size))
+		var whole := Rect2(Vector2.ZERO, Vector2(still.size_2d_override))
 		layer.build_regions(still, [whole], whole, origin + du * at.x + dv * at.y, du * extent.x, dv * extent.y, Vector2.ZERO, 0)
 		layer.set_progress(1.0)
 		layer.set_meta("panel", true)
@@ -5062,10 +5061,9 @@ func _workspace_transition_layers(origin: Vector3, du: Vector3, dv: Vector3, sha
 		var padding := Vector2.ONE * maxf(32.0, drawing.local_width(view.size * 0.5, 32.0))
 		var rect: Rect2 = view.visible_canvas_rect().grow(padding.x)
 		rect = Rect2(rect.position.floor(), rect.end.ceil() - rect.position.floor())
-		still.size = Vector2i(rect.size).max(Vector2i.ONE)
-		still.size_2d_override = still.size
+		still.size_2d_override = Vector2i(rect.size).max(Vector2i.ONE)
 		still.size_2d_override_stretch = true
-		preload("res://scenes/EffectCaptureBudget.gd").fit(still)
+		preload("res://scenes/EffectCaptureBudget.gd").fit(still, still.size_2d_override)
 		drawing.position = -rect.position
 		still.render_target_update_mode = SubViewport.UPDATE_ONCE
 		still.add_child(drawing)

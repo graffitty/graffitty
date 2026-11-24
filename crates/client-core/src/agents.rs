@@ -20,6 +20,9 @@ pub struct Input {
     /// Server-recorded transitions for durations only, never unread inference.
     #[serde(default)]
     pub status_history: Vec<StatusChange>,
+    /// Stable id of the leading agent when this pane is a connected child.
+    #[serde(default)]
+    pub group: Option<String>,
     pub looking: bool,
     pub focused: bool,
 }
@@ -88,6 +91,8 @@ impl Agents {
     pub fn observe(&mut self, input: Vec<Input>, now: u64) -> (Vec<Row>, Vec<String>) {
         let mut rows = Vec::new();
         let mut alerts = Vec::new();
+        let mut leaders = HashMap::new();
+        let mut groups = HashMap::new();
         for mut item in input {
             let supported = |app: &str| ["pi", "claude", "codex", "opencode"].contains(&app);
             // A shell/SSH/tmux pane can report an agent through OSC without
@@ -102,9 +107,13 @@ impl Agents {
                 }.into();
                 if !program.title.is_empty() { item.title = program.title.clone(); }
             }
-            if !["busy", "waiting", "idle", "error"].contains(&item.status.as_str()) { continue; }
             // Herdr: a row is never blank; without a title it reads as its program.
             if item.title.trim().is_empty() { item.title = app_name(&item.provider).into(); }
+            if let Some(group) = item.group.take() { groups.insert(item.id.clone(), group); }
+            if !["busy", "waiting", "idle", "error"].contains(&item.status.as_str()) {
+                leaders.insert(item.id.clone(), item);
+                continue;
+            }
             let next = word(&item.status);
             let status = if next == "idle" && item.attention.as_ref()
                 .is_some_and(|attention| attention.kind == AttentionKind::Completed && !attention.seen)
@@ -149,6 +158,23 @@ impl Agents {
             .then_with(|| if a.pinned && b.pinned { rank(&b.status).cmp(&rank(&a.status)) } else { std::cmp::Ordering::Equal })
             .then(b.at.cmp(&a.at))
             .then(self.agents[&b.id].seq.cmp(&self.agents[&a.id].seq)));
+        // A leader without a current turn still connects its live descendants.
+        // Use the highest-priority child's position without inventing an unread
+        // transition, timestamp or notification for the leader.
+        let mut parents = Vec::new();
+        for (index, row) in rows.iter().enumerate() {
+            if let Some(leader) = groups.get(&row.id).and_then(|id| leaders.remove(id)) {
+                let pinned = self.saved.pins.contains(&leader.id);
+                let parent = Row {
+                    id: leader.id, key: leader.key, title: leader.title, provider: leader.provider,
+                    status: leader.status, section: if pinned { "Pinned".into() } else { row.section.clone() },
+                    at: 0, focused: leader.focused, pinned,
+                };
+                parents.push((if pinned { 0 } else { index }, parent));
+            }
+        }
+        parents.sort_by_key(|(index, _)| *index);
+        for (index, parent) in parents.into_iter().rev() { rows.insert(index, parent); }
         let listed: HashSet<_> = rows.iter().map(|r| r.id.clone()).collect();
         self.saved.changed.retain(|id, stamp| listed.contains(id) || now.saturating_sub(stamp.at) <= 30 * 86400);
         (rows, alerts)
@@ -161,7 +187,7 @@ mod tests {
     const FIRST: &str = "00000000-0000-4000-8000-000000000001";
     const SECOND: &str = "00000000-0000-4000-8000-000000000002";
     fn input(status: &str, looking: bool, focused: bool) -> Vec<Input> {
-        vec![Input { id: "server/epoch/1".into(), key: "t1".into(), title: "task".into(), provider: "pi".into(), status: status.into(), program: None, attention: None, status_history: vec![], looking, focused }]
+        vec![Input { id: "server/epoch/1".into(), key: "t1".into(), title: "task".into(), provider: "pi".into(), status: status.into(), program: None, attention: None, status_history: vec![], group: None, looking, focused }]
     }
     fn completed(event: &str, seen: bool, looking: bool, focused: bool) -> Vec<Input> {
         let mut items = input("idle", looking, focused);
@@ -323,6 +349,28 @@ mod tests {
         assert!(sounds.is_empty());
         snapshot[0].program = None;
         assert!(model.observe(snapshot, 14).0.is_empty());
+    }
+
+    #[test]
+    fn unavailable_leader_keeps_its_identity_and_pin_only_with_listed_descendants() {
+        let mut state = Agents::default();
+        let mut leader = input("unknown", false, false).remove(0);
+        leader.title.clear();
+        let mut child = input("waiting", false, false).remove(0);
+        child.id = "child".into();
+        child.key = "t2".into();
+        child.group = Some(leader.id.clone());
+        assert!(state.observe(vec![leader.clone()], 10).0.is_empty());
+        let (rows, sounds) = state.observe(vec![child.clone(), leader.clone()], 11);
+        assert_eq!(rows.iter().map(|row| row.id.as_str()).collect::<Vec<_>>(), [leader.id.as_str(), "child"]);
+        assert_eq!((&*rows[0].title, &*rows[0].status, &*rows[0].section, rows[0].at), ("Pi", "unknown", "Needs you", 0));
+        assert_eq!(sounds, ["blocked"]);
+        state.pin(leader.id.clone(), true);
+        leader.status = "offline".into();
+        let (rows, sounds) = state.observe(vec![leader.clone(), child.clone()], 12);
+        assert!(rows[0].pinned && rows[0].section == "Pinned" && sounds.is_empty());
+        child.status = "offline".into();
+        assert!(state.observe(vec![leader, child], 13).0.is_empty());
     }
 
     #[test] fn sorting_pins_recent_changes_and_provider_filtering() {

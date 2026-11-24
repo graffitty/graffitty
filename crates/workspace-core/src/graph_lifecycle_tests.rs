@@ -120,3 +120,97 @@ fn background_session_speaks_only_for_its_own_pane() {
     graph.dispatch(3, "agent.event", &json!({"provider":"claude","event":"SessionStart","pid":3,"session_id":"fresh","detached":true,"parent_session_id":null})).unwrap();
     assert_eq!(graph.nodes["t3"]["session_id"], "fresh");
 }
+
+
+#[test]
+fn integrated_codex_quota_failure_and_retry_update_status_and_wires_once() {
+    let mut graph = fixture("codex");
+    let prompt = json!({"provider":"codex","event":"UserPromptSubmit","integrated":true});
+    let mut scan = json!({"provider":"codex","pid":1,"session_id":"session-1","status":"busy",
+        "observed_turn":{"id":"turn-a","status":"inProgress"}});
+    graph.dispatch(1, "agent.event", &prompt).unwrap();
+    graph.observe_agent(1, &scan);
+    scan["status"] = json!("idle");
+    scan["observed_turn"] = json!({"id":"turn-a","status":"failed","error":{"message":"Quota exceeded"}});
+    graph.observe_agent(1, &scan);
+    assert_eq!(graph.nodes["t1"]["status"], "idle");
+    assert!(graph.nodes["t1"]["attention"].is_null());
+    graph.dispatch(1, "agent.event", &prompt).unwrap();
+    graph.observe_agent(1, &scan);
+    assert_eq!(graph.nodes["t1"]["status"], "busy", "a repeated failed poll cannot undo retry");
+    scan["status"] = json!("busy");
+    scan["observed_turn"] = json!({"id":"turn-c","status":"inProgress"});
+    scan["failed_turns"] = json!([{"id":"turn-b","status":"failed","error":{"message":"Retry failed"}}]);
+    graph.observe_agent(1, &scan);
+    graph.observe_agent(1, &scan);
+    assert_eq!(graph.nodes["t1"]["status"], "busy");
+    graph.dispatch(1, "agent.event", &json!({"provider":"codex","event":"Stop","completion_id":"turn-c","text":"Done"})).unwrap();
+    assert_eq!(graph.nodes["t1"]["attention"]["kind"], "completed");
+    let events = &graph.queues["t2"];
+    assert_eq!(events.iter().map(|e| string(e, "source_port")).collect::<Vec<_>>(), ["error","error","turn_completed"]);
+    assert_eq!(events[0]["payload"]["turn_id"], "turn-a");
+    assert_eq!(events[1]["payload"]["turn_id"], "turn-b");
+}
+
+#[test]
+fn discovery_only_failure_clears_completion_and_retry_returns_to_work() {
+    let mut graph = fixture("codex");
+    let mut scan = json!({"provider":"codex","pid":1,"session_id":"session-1","status":"busy",
+        "observed_turn":{"id":"first","status":"inProgress"}});
+    graph.observe_agent(1, &scan);
+    scan["status"] = json!("idle");
+    scan["observed_turn"]["status"] = json!("failed");
+    graph.observe_agent(1, &scan);
+    assert!(graph.nodes["t1"]["attention"].is_null());
+    scan["status"] = json!("busy");
+    scan["observed_turn"] = json!({"id":"retry","status":"inProgress"});
+    graph.observe_agent(1, &scan);
+    assert_eq!(graph.nodes["t1"]["status"], "busy");
+    scan["status"] = json!("idle");
+    scan["observed_turn"]["status"] = json!("completed");
+    graph.observe_agent(1, &scan);
+    assert_eq!(graph.nodes["t1"]["attention"]["kind"], "completed");
+    assert_eq!(graph.queues["t2"].len(), 1);
+    assert_eq!(graph.queues["t2"][0]["source_port"], "error");
+}
+
+#[test]
+fn claude_login_prompt_and_hook_emit_one_waiting_event_in_either_order() {
+    let blocked = json!({"app":"claude-code","state":"blocked","msg":"Login expired"});
+    let hook = json!({"provider":"claude","event":"AwaitingInput","outcome":"error","text":"Login expired"});
+    for osc_first in [false, true] {
+        let mut graph = fixture("claude");
+        for turn in 1..=2 {
+            graph.dispatch(1, "agent.event", &json!({"provider":"claude","event":"UserPromptSubmit","integrated":true})).unwrap();
+            graph.observe_program_status(1, Some(&json!({"app":"claude-code","state":"working"})));
+            if osc_first { graph.observe_program_status(1, Some(&blocked)); }
+            graph.dispatch(1, "agent.event", &hook).unwrap();
+            graph.observe_program_status(1, Some(&blocked));
+            graph.observe_agent(1, &json!({"provider":"claude","pid":1,"session_id":"session-1","status":"busy"}));
+            assert_eq!(graph.nodes["t1"]["status"], "waiting");
+            assert_eq!(graph.queues["t2"].iter().filter(|e| e["source_port"] == "waiting").count(), turn);
+            assert_eq!(graph.queues["t2"].iter().filter(|e| e["source_port"] == "error").count(), turn);
+        }
+    }
+}
+
+
+#[test]
+fn codex_prompt_id_keeps_a_newer_hook_busy_during_an_older_failure_poll() {
+    let mut graph = fixture("codex");
+    let prompt = |id| json!({"provider":"codex","event":"UserPromptSubmit","integrated":true,"turn_id":id});
+    graph.dispatch(1, "agent.event", &prompt("a")).unwrap();
+    let mut scan = json!({"provider":"codex","session_id":"session-1","pid":1,"status":"busy",
+        "observed_turn":{"id":"a","status":"inProgress"}});
+    graph.observe_agent(1, &scan);
+    graph.dispatch(1, "agent.event", &prompt("b")).unwrap();
+    scan["status"] = json!("idle");
+    scan["observed_turn"]["status"] = json!("failed");
+    graph.observe_agent(1, &scan);
+    assert_eq!(graph.nodes["t1"]["status"], "busy");
+    assert_eq!(graph.queues["t2"][0]["payload"]["turn_id"], "a");
+    scan["observed_turn"]["id"] = json!("b");
+    graph.observe_agent(1, &scan);
+    assert_eq!(graph.nodes["t1"]["status"], "idle");
+    assert_eq!(graph.queues["t2"].len(), 2);
+}

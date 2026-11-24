@@ -49,6 +49,9 @@ fn pids() -> Vec<i32> {
     pids.into_iter().filter(|pid|*pid>0).collect()
 }
 fn identity(pid:i32) -> Option<Identity> {process(pid).map(|(job,_)|job)}
+pub(crate) fn process_start(pid: u32) -> Option<(u64, u64)> {
+    identity(i32::try_from(pid).ok()?).map(|job| job.started)
+}
 /// The parent stays out of the identity: a reparented job is still the same job.
 #[cfg(target_os="macos")]
 fn process(pid:i32) -> Option<(Identity,i32)> {

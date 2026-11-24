@@ -41,5 +41,12 @@ func handle(peer: int, text: String) -> void:
 		response = {"error": {"message": "invalid fixture token"}}
 	else:
 		response = await graph.dispatch(id, str(request.method), request.params)
+	# Godot parses JSON numbers as floats. Preserve the integer checkpoint
+	# that the Rust authority returned when relaying events to the SDK.
+	for event in response.get("result", {}).get("events", []):
+		if event is Dictionary:
+			for session in event.get("sessions", []):
+				if session.has("checkpoint"):
+					session.checkpoint.byte_offset = int(session.checkpoint.byte_offset)
 	response["id"] = request.id
 	transport.respond(peer, JSON.stringify(response))

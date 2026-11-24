@@ -320,7 +320,7 @@ pub fn create_pane(
         .get(&tab)
         .cloned()
         .ok_or("Unknown workspace tab")?;
-    let key = pane_address(server.next);
+    let key = pane_address(server.pane_identity(saved));
     layout.add_neighbor(
         &pane_address(source),
         &key,

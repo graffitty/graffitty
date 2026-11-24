@@ -482,7 +482,13 @@ func _open_chromiums(connection: Node, saved: Dictionary) -> bool:
 func _open_chromium(connection: Node, owner: int, saved: Dictionary) -> int:
 	var urls: Array = saved.urls
 	var params := {"url": str(urls[0])}
-	if document.get("keep_ids", false): params.id = int(saved.id)
+	if document.get("keep_ids", false):
+		params.id = int(saved.id)
+		var through := int(saved.id)
+		for window in document.windows:
+			for chromium in window.chromiums:
+				through = maxi(through, int(chromium.id))
+		params.through = through
 	for field in ["profile", "profile_template"]:
 		if saved.get(field) != null: params[field] = str(saved[field])
 	var reply: Dictionary = await _remote(connection, owner, "chromium.create", params)

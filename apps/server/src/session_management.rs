@@ -101,6 +101,37 @@ fn agents(server: &Server, key: &str) -> Vec<Value> {
     result
 }
 
+/// Keep the previous label while a terminal or webpage animates its automatic title.
+pub(crate) struct CatalogTitle {
+    published: String,
+    candidate: String,
+    since: std::time::Instant,
+}
+
+impl CatalogTitle {
+    fn sample<'a>(
+        cache: &'a mut std::collections::HashMap<u64, Self>,
+        pane: u64,
+        title: String,
+        pinned: bool,
+        now: std::time::Instant,
+    ) -> &'a str {
+        let entry = cache.entry(pane).or_insert_with(|| Self {
+            published: title.clone(), candidate: title.clone(), since: now,
+        });
+        if entry.candidate != title {
+            entry.candidate = title;
+            entry.since = now;
+        }
+        if entry.candidate != entry.published
+            && (pinned || now.duration_since(entry.since) >= std::time::Duration::from_secs(1))
+        {
+            entry.published.clone_from(&entry.candidate);
+        }
+        &entry.published
+    }
+}
+
 /// Only connected panes contribute to a background session's agent tree.
 fn agent_tree(server: &Server, workspace: &str, agents: &[Value]) -> Value {
     use graffitty_protocol::pane_id::address;
@@ -124,6 +155,8 @@ fn agent_tree(server: &Server, workspace: &str, agents: &[Value]) -> Value {
         links.insert((address(pane.owner), address(pane.id)));
     }
     if !links.is_empty() {
+        let mut titles = server.pane_catalog_titles.borrow_mut();
+        let now = std::time::Instant::now();
         let keys: BTreeSet<_> = links.iter().flat_map(|(a,b)| [a.as_str(), b.as_str()]).collect();
         let summaries: BTreeMap<_,_> = agents.iter().filter_map(|a| Some((a["pane"].as_u64()?, a))).collect();
         for pane in server.sessions.values().filter(|p| p.workspace == workspace && !p.exited) {
@@ -136,7 +169,8 @@ fn agent_tree(server: &Server, workspace: &str, agents: &[Value]) -> Value {
                 } else { &agent["program"]["app"] };
                 json!({"key":key,"kind":"agent","provider":provider,"title":agent["title"],"rect":rect})
             } else {
-                json!({"key":key,"kind":"terminal","title":if pane.pinned_title.is_empty() { &key } else { &pane.pinned_title },
+                let title = CatalogTitle::sample(&mut titles, pane.id, pane.title(), !pane.pinned_title.is_empty(), now);
+                json!({"key":key,"kind":"terminal","title":title,
                     "app":server.foreground_apps.get(&pane.id).and_then(|app| app["id"].as_str()).unwrap_or(""),"rect":rect})
             };
             nodes.insert(key, node);
@@ -145,7 +179,8 @@ fn agent_tree(server: &Server, workspace: &str, agents: &[Value]) -> Value {
             let key = address(pane.id);
             if keys.contains(key.as_str()) {
                 let rect = server.workspace_state.pane_rect(workspace, pane.tab, &key).unwrap_or_default();
-                nodes.insert(key.clone(), json!({"key":key,"kind":"chromium","title":pane.title(),"rect":rect}));
+                let title = CatalogTitle::sample(&mut titles, pane.id, pane.title(), !pane.pinned_title.is_empty(), now);
+                nodes.insert(key.clone(), json!({"key":key,"kind":"chromium","title":title,"rect":rect}));
             }
         }
     }
@@ -177,6 +212,7 @@ fn turn_title(title: &str, pane: u64) -> String {
 }
 
 pub fn descriptions(server: &Server) -> Vec<Value> {
+    server.pane_catalog_titles.borrow_mut().retain(|id, _| server.sessions.contains_key(id) || server.chromiums.contains_key(id));
     let mut keys: Vec<_> = server.workspaces.iter().collect();
     keys.sort_by_key(|key| server.workspaces.info(key).id);
     keys.into_iter()
@@ -336,6 +372,23 @@ fn close_workspace(server: &mut Server, key: &str) -> Result<(), Error> {
 #[cfg(test)]
 mod tests {
     use serde_json::json;
+
+    #[test]
+    fn catalog_uses_stable_automatic_titles_and_immediate_pins() {
+        use std::time::{Duration, Instant};
+        let mut cache = std::collections::HashMap::new();
+        let start = Instant::now();
+        let mut sample = |title: &str, pinned, ms| {
+            super::CatalogTitle::sample(&mut cache, 1, title.to_owned(), pinned, start + Duration::from_millis(ms)).to_owned()
+        };
+        assert_eq!(sample("Build logs", false, 0), "Build logs");
+        for n in 1..30 {
+            assert_eq!(sample(&format!("Progress {n}"), false, n * 100), "Build logs");
+        }
+        assert_eq!(sample("Done", false, 3000), "Build logs");
+        assert_eq!(sample("Done", false, 4000), "Done");
+        assert_eq!(sample("Pinned", true, 4020), "Pinned");
+    }
 
     #[test]
     fn agent_summary_matches_graph_receipts_for_hooks_and_osc_only_agents() {

@@ -147,3 +147,12 @@ func test_pid_scope_freshness_and_secret_filtering() -> void:
 	api.graph.free()
 	api.free()
 	cleanup(app, host)
+
+func test_high_restored_ids_leave_room_for_federated_panes() -> void:
+	var application := preload("res://scenes/TerminalApplication.gd").new()
+	var base := PaneAddress.CHROMIUM_BASE
+	for reserved in [1, base - 1, base + 1, 2 * base - 1]:
+		application.reserve_id(reserved)
+	expect(application.allocate_id() == 2, "A restored high terminal leaves lower terminal IDs available")
+	expect(application.allocate_id(true) == base + 2, "A restored high browser leaves lower browser IDs available")
+	application.free()

@@ -113,8 +113,7 @@ static func capture_control(control: Control) -> SubViewport:
 	still.size_2d_override = logical
 	still.size_2d_override_stretch = true
 	still.oversampling = true
-	still.size = Vector2i((Vector2(logical) * scale).floor()).max(Vector2i.ONE)
-	preload("res://scenes/EffectCaptureBudget.gd").fit(still)
+	preload("res://scenes/EffectCaptureBudget.gd").fit(still, Vector2i((Vector2(logical) * scale).floor()).max(Vector2i.ONE))
 	still.render_target_update_mode = SubViewport.UPDATE_ONCE
 	var copy := preload("res://scenes/RetainedPresentation.gd").control(control)
 	copy.position = Vector2.ZERO

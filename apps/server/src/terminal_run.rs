@@ -181,7 +181,7 @@ pub fn run(server: &mut Server, caller: u64, params: &Value) -> Result<Value, Er
     let state = server.workspace_state.snapshot(&workspace);
     let mut layout = state.layout.tabs.get(&tab).cloned().ok_or("Unknown workspace tab")?;
     let area = state.tabs[&tab].area;
-    let key = format!("t{}", server.next);
+    let key = format!("t{}", server.pane_identity(Default::default()));
     if let Some(side) = placement.side {
         layout.add_beside(&anchor, &key, side, area)?;
     }

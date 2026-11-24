@@ -140,7 +140,7 @@ func test_remote_pointer_and_key_events_cross_native_message_mapping() -> void:
 	chromium.release_input()
 	var connection := preload("res://scenes/remote/RemoteConnection.gd").new()
 	connection.namespace_ids = true
-	connection.local_ids = {(1 << 30) + 7: (1 << 30) + 70}
+	connection.local_ids = {(1 << 32) + 7: (1 << 32) + 70}
 	expect(chromium.events.size() >= 9, "Exercise motion, clicks, scrolling, typing and focus-loss release")
 	for event in chromium.events:
 		var mapped: Variant = connection.map_graph({"chromium": "c70", "event": event}, false)

@@ -19,7 +19,7 @@ import pytest
 from test_node import event_file
 
 EXAMPLE = Path(__file__).resolve().parents[1]
-ROOT = EXAMPLE.parents[1]
+GODOT_PROJECT = EXAMPLE.parents[1] / "frontends/godot/project"
 
 
 def wait_until(check, timeout=15):
@@ -93,7 +93,7 @@ def test_real_host_routing(provider, custom):
         processes = []
         try:
             with (directory / "host.log").open("w+") as host_log, (directory / "node.log").open("w+") as node_log:
-                host = subprocess.Popen(["godot", "--headless", "--path", str(ROOT), "--script", "tests/jev_node_host.gd"],
+                host = subprocess.Popen(["godot", "--headless", "--path", str(GODOT_PROJECT), "--script", "tests/jev_node_host.gd"],
                     env={**os.environ, "JEV_TEST_DIRECTORY": str(directory)}, stdout=host_log, stderr=host_log,
                     start_new_session=True)
                 processes.append(host)
@@ -122,7 +122,7 @@ def test_real_host_routing(provider, custom):
                 wait_until(registered)
                 labels = list(config.get("options", {"True": "", "False": ""}))
                 for label, target in zip(labels, [3, 4]):
-                    rpc(endpoint, 1, "graph.connect", {"from": "t2", "to": f"%{target}", "from_port": label, "send": True})
+                    rpc(endpoint, 1, "graph.connect", {"from": "t2", "to": f"t{target}", "from_port": label, "send": True})
                 def healthy():
                     try:
                         return httpx.get(f"http://127.0.0.1:{port}/health").status_code == 200
@@ -140,7 +140,10 @@ def test_real_host_routing(provider, custom):
                 except AssertionError:
                     node_log.seek(0)
                     pytest.fail(node_log.read())
-                assert receipts[-1]["status"] == "delivered", receipts
+                if receipts[-1]["status"] != "delivered":
+                    details = httpx.post(f"http://127.0.0.1:{port}/events/{receipts[-1]['event_id']}",
+                                         headers={"Authorization": "Bearer 2"}).json()
+                    pytest.fail(str(details))
                 selected, other = (4, 3) if custom else (3, 4)
                 output = rpc(endpoint, selected, "graph.take", {})["events"]
                 assert len(output) == 1

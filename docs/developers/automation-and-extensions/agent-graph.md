@@ -39,6 +39,9 @@ A connection from A's output to B's input determines what B receives or can read
 
 - **Turn completed is not approval.** Check the result before acting on it.
 - Waiting and Error do not grant transcript access.
+- A recorded Codex quota failure emits Error once, including when a retry starts between discovery polls. The failed turn leaves no unread completion. Reattaching restores the recorded status without replaying old failures.
+- Local Codex sessions use the rollout’s turn records. A token-count update at 100% usage supplies no turn outcome. An older client that records only a turn start leaves discovery waiting for the next lifecycle record. A plain completion from a client that omitted its failure details is indistinguishable from success.
+- An expired Claude login enters Waiting. The terminal report and the authentication hook share one Waiting notification per transition. The failure hook also emits Error.
 - An interrupted turn emits neither completion nor failure.
 - An idle agent is not necessarily waiting for human input.
 - Connections stay within one tab. Moving a connected group carries its connections with it, including paused ones.
@@ -78,6 +81,8 @@ gft graph read --node t1
 - Removing a connection revokes future graph access. It cannot revoke a file path already disclosed to a local process. **The graph is not an OS sandbox.**
 
 ## Launch a connected agent
+
+A server restart preserves connections between surviving holder-backed terminals. A Read connection can resume at its previous byte offset when the same provider process and conversation survive. The server verifies the process creation time before restoring the private transcript path.
 
 New pane shells inherit `CLAUDE_CONFIG_DIR` and clear the launching Claude process's child-session markers. This lets an interactive Claude agent in the pane save its own transcript for Read connections.
 

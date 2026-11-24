@@ -154,12 +154,22 @@ class ServerCheckpoints(unittest.TestCase):
                         self.assertLess(time.monotonic(), deadline, (owner.directory / "server.log").read_text())
                         time.sleep(.2)
                     # The selected page, the new tab, comes first; no page state is kept.
-                    self.assertEqual(window["chromiums"], [{"id": (1 << 30) + int(chromium[1:]), "owner": first, "title": "Docs",
+                    self.assertEqual(window["chromiums"], [{"id": (1 << 32) + int(chromium[1:]), "owner": first, "title": "Docs",
                         "urls": [base + "/second.html", base + "/first.html"], "profile": ""}])
                     self.assertIn(chromium, [w["pane"] for tab in window["tabs"] for w in tab["tree"]["windows"]])
                     # A restore receives the chromium list unchanged.
                     prepared = json.loads(self.cli(env, "checkpoint", "restore", "--tag", "auto", "--prepare-only", "--checkpoint", "0"))
                     self.assertEqual(json.loads(Path(prepared["prepared"]).read_text())["windows"][0]["chromiums"], window["chromiums"])
+                    # A restore beside the original keeps c2 free for the second saved browser.
+                    client = PrivateClient(json.loads(owner.descriptor.read_text())["local"], "browsing")
+                    try:
+                        first_id = window["chromiums"][0]["id"]
+                        reserved = first_id + 1
+                        for saved, expected in [(first_id, "c3"), (reserved, "c2")]:
+                            restored = rpc("chromium.create", {"id": saved, "through": reserved})
+                            self.assertEqual(restored["chromium"], expected)
+                    finally:
+                        client.socket.close()
             finally:
                 web.shutdown()
                 web.server_close()

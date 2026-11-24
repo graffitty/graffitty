@@ -3,6 +3,15 @@ use crate::graph_client::{from_variant, to_variant};
 use godot::{classes::{IRefCounted, RefCounted}, prelude::*};
 use graffitty_client_core::agents::{Agents, Input};
 
+/// Bad provider data invalidates only its own row. Other panes in this
+/// snapshot still supply current status and topology.
+fn entries<T: serde::de::DeserializeOwned>(value: &Variant) -> Result<Vec<T>, String> {
+    let array = value.try_to::<godot::builtin::AnyArray>().map_err(|e| e.to_string())?;
+    Ok(array.iter_shared().filter_map(|entry| {
+        serde_json::from_value(from_variant(&entry).ok()?).ok()
+    }).collect())
+}
+
 #[derive(GodotClass)]
 #[class(base=RefCounted)]
 struct AgentsCore { base: Base<RefCounted>, state: Agents }
@@ -14,7 +23,7 @@ impl IRefCounted for AgentsCore {
 impl AgentsCore {
     #[func]
     fn observe(&mut self, input: Variant, now: i64) -> VarDictionary {
-        let result = from_variant(&input).and_then(|v| serde_json::from_value::<Vec<Input>>(v).map_err(|e| e.to_string()));
+        let result = entries::<Input>(&input);
         match result {
             Ok(input) => {
                 let (rows, sounds) = self.state.observe(input, now.max(0) as u64);
@@ -27,9 +36,9 @@ impl AgentsCore {
     #[func]
     fn tree(&self, input: Variant) -> Variant {
         use graffitty_client_core::agents_tree::{Edge, Node, trees};
-        let parsed = from_variant(&input).and_then(|v| {
-            let nodes = serde_json::from_value::<Vec<Node>>(v["nodes"].clone()).map_err(|e| e.to_string())?;
-            let edges = serde_json::from_value::<Vec<Edge>>(v["edges"].clone()).map_err(|e| e.to_string())?;
+        let parsed = input.try_to::<VarDictionary>().map_err(|e| e.to_string()).and_then(|tree| {
+            let nodes = entries::<Node>(&tree.get("nodes").ok_or("Missing tree nodes")?)?;
+            let edges = entries::<Edge>(&tree.get("edges").ok_or("Missing tree edges")?)?;
             Ok((nodes, edges))
         });
         match parsed {

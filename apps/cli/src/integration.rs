@@ -105,6 +105,9 @@ pub fn event(args: crate::options::IntegrationCallback) -> Result<()> {
         }
     }
     let mut params = json!({"provider":provider,"event":normalized_event(provider, event, &payload),"session_id":payload["session_id"],"transcript_path":payload["transcript_path"],"provider_home":provider_home,"text":payload["last_assistant_message"],"prompt":payload["prompt"],"integrated":true,"pid":owner.map(|p| p.pid),"started":owner.map(|p| &p.started)});
+    if provider == "codex" && payload["turn_id"].is_string() {
+        params["turn_id"] = payload["turn_id"].clone();
+    }
     // Claude Code's background daemon hosts sessions from every pane with the
     // environment of the pane that started it.
     //
@@ -202,7 +205,7 @@ fn runtime(provider: &str, entry: &str) -> Result<()> {
 // Keep the original hook name for Claude's hookSpecificOutput response.
 fn normalized_event<'a>(provider: &str, event: &'a str, payload: &Value) -> &'a str {
     if provider == "claude" && event == "StopFailure" {
-        "Error"
+        if payload["error"] == "authentication_failed" { "AwaitingInput" } else { "Error" }
     } else if provider == "claude" && event == "PreToolUse" && payload["tool_name"] == "AskUserQuestion" {
         "AwaitingInput"
     } else {
@@ -213,6 +216,12 @@ fn normalized_event<'a>(provider: &str, event: &'a str, payload: &Value) -> &'a 
 #[cfg(test)]
 mod lifecycle_tests {
     use super::*;
+
+    #[test]
+    fn claude_login_failure_waits_for_reauthentication() {
+        assert_eq!(normalized_event("claude", "StopFailure", &json!({"error":"authentication_failed"})), "AwaitingInput");
+        assert_eq!(normalized_event("claude", "StopFailure", &json!({"error":"rate_limit"})), "Error");
+    }
 
     #[test]
     fn claude_question_waits_until_tool_returns() {

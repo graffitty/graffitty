@@ -18,6 +18,48 @@ use std::path::{Path, PathBuf};
 fn old_pane_environment() -> bool { true }
 fn first_chromium() -> u64 { graffitty_protocol::pane_id::CHROMIUM_BASE + 1 }
 
+#[cfg(unix)]
+use crate::session_jobs::process_start;
+#[cfg(windows)]
+use terminal_resource_monitor::windows::process_start;
+
+/// Private Read reference belonging to one live provider process and conversation.
+#[derive(Clone, PartialEq, Serialize, Deserialize)]
+pub struct Transcript {
+    path: String,
+    provider: String,
+    session_id: String,
+    pid: u32,
+    process_start: (u64, u64),
+}
+
+impl Transcript {
+    fn identifies(&self, node: &serde_json::Value) -> bool {
+        node["provider"] == self.provider && node["session_id"] == self.session_id
+            && node["pid"].as_u64() == Some(u64::from(self.pid))
+    }
+
+    pub fn capture(node: &serde_json::Value, previous: Option<&Self>) -> Option<Self> {
+        if node["status"] == "offline" { return None; }
+        let path = node["transcript_path"].as_str().filter(|s| !s.is_empty())?;
+        if let Some(previous) = previous.filter(|record| record.identifies(node) && record.path == path) {
+            return Some(previous.clone());
+        }
+        let pid = u32::try_from(node["pid"].as_u64()?).ok()?;
+        Some(Self {
+            path: path.into(), provider: node["provider"].as_str()?.into(),
+            session_id: node["session_id"].as_str().filter(|s| !s.is_empty())?.into(),
+            pid, process_start: process_start(pid)?,
+        })
+    }
+
+    pub fn restore(&self, node: &mut serde_json::Value) {
+        if self.identifies(node) && process_start(self.pid) == Some(self.process_start) {
+            node["transcript_path"] = serde_json::json!(self.path);
+        }
+    }
+}
+
 const VERSION: u32 = 1;
 
 #[derive(Serialize, Deserialize, Clone, PartialEq)]
@@ -35,9 +77,11 @@ pub struct OwnerState {
     /// Optional agent metadata, bound to the live panes adopted from holders.
     #[serde(default)]
     pub agent_attention: HashMap<u64, graffitty_workspace_core::graph::AttentionState>,
+    #[serde(default, skip_serializing_if = "HashMap::is_empty")]
+    pub transcripts: HashMap<u64, Transcript>,
     /// Connections and advertised ports for graphs with live wiring.
     #[serde(default, skip_serializing_if = "HashMap::is_empty")]
-    pub wiring: HashMap<String, serde_json::Value>,
+    pub wiring: HashMap<String, std::sync::Arc<serde_json::Value>>,
     /// Optional application metadata; terminals can exist without any filetrees.
     #[serde(default)]
     pub filetrees: crate::filetree::SavedFiletrees,
@@ -164,6 +208,7 @@ impl OwnerState {
             workspaces: Default::default(),
             agent_attention: HashMap::new(),
             wiring: HashMap::new(),
+            transcripts: HashMap::new(),
             filetrees: Default::default(),
             last_viewed: None,
         }
@@ -175,6 +220,25 @@ mod tests {
     use super::*;
     use graffitty_workspace_core::graph::Graph;
     use serde_json::json;
+
+    #[test]
+    fn transcript_recovery_checks_the_process_start_and_conversation() {
+        let node = json!({"provider":"claude","pid":std::process::id(),
+            "session_id":"session","transcript_path":"example.jsonl"});
+        let record = Transcript::capture(&node, None).unwrap();
+        let mut adopted = node.clone();
+        adopted.as_object_mut().unwrap().remove("transcript_path");
+        let mut reused_pid = record.clone();
+        reused_pid.process_start.0 ^= 1;
+        reused_pid.restore(&mut adopted);
+        assert!(adopted["transcript_path"].is_null());
+        adopted["session_id"] = json!("another-session");
+        record.restore(&mut adopted);
+        assert!(adopted["transcript_path"].is_null());
+        adopted["session_id"] = json!("session");
+        record.restore(&mut adopted);
+        assert_eq!(adopted["transcript_path"], node["transcript_path"]);
+    }
 
     #[test]
     fn owner_state_round_trip_keeps_the_current_agent_receipt() {

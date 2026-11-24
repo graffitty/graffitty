@@ -187,6 +187,7 @@ struct Server {
     session_name_cache: std::cell::RefCell<HashMap<String, (Instant, Option<String>)>>,
     /// Agent titles for session descriptors, taken at turn boundaries: pane -> (status, title).
     agent_title_cache: std::cell::RefCell<HashMap<u64, (String, String)>>,
+    pane_catalog_titles: std::cell::RefCell<HashMap<u64, session_management::CatalogTitle>>,
     /// `terminal.run --wire` requests waiting for their agent to register.
     pending_wires: HashMap<u64, graph_wiring::Pending>,
     started_session: bool,
@@ -318,22 +319,24 @@ impl Server {
         self.create_with_environment(workspace, tab, source, options, &[], SavedIdentity::default())
     }
     /// Restore a saved terminal ID when free, otherwise use the next terminal number.
-    fn pane_identity(&self, saved: Option<u64>) -> u64 {
-        SavedIdentity::choose([saved, None], self.next, |id| !self.sessions.contains_key(&id))
+    fn pane_identity(&self, saved: SavedIdentity) -> u64 {
+        let next = saved.through.filter(|id| *id < SavedIdentity::LIMIT)
+            .map_or(self.next, |id| self.next.max(id + 1));
+        SavedIdentity::choose([saved.pane, None], next, |id| !self.sessions.contains_key(&id))
     }
     /// A new tab's identity: the saved one, else `fallback`, while no live tab
     /// has it, else the next unused one after `taken`.
     fn tab_identity(&self, saved: Option<u64>, fallback: u64, taken: u64) -> u64 {
         // The workspace layout accepts only positive tab IDs.
-        SavedIdentity::choose([saved, Some(fallback)], self.next.max(taken + 1), |tab| {
+        SavedIdentity::choose([saved, Some(fallback)], self.next.max(taken.saturating_add(1)), |tab| {
             !self.sessions.values().any(|s| s.tab == tab) && !self.chromiums.values().any(|b| b.tab == tab)
         })
     }
-    fn chromium_identity(&self, saved: Option<u64>) -> Result<u64, Error> {
+    fn chromium_identity(&self, saved: Option<u64>, through: Option<u64>) -> Result<u64, Error> {
         let base = graffitty_protocol::pane_id::CHROMIUM_BASE;
-        let id = saved.filter(|id| (base + 1..2 * base).contains(id)
-            && !self.chromiums.contains_key(id)
-            && !self.retired_chromiums.iter().any(|b| b.id == *id)).unwrap_or(self.next_chromium);
+        let id = SavedIdentity::choose_chromium(saved, through, self.next_chromium, |id| {
+            !self.chromiums.contains_key(&id) && !self.retired_chromiums.iter().any(|b| b.id == id)
+        });
         if id >= 2 * base { return Err("Chromium ID space exhausted".into()); }
         Ok(id)
     }
@@ -367,12 +370,8 @@ impl Server {
         let cwd = source.and_then(|id| self.sessions.get(&id)).and_then(Session::cwd);
         let effective = self.settings.spawn_options(options.as_ref());
         let prepared = Some(effective.prepare(&self.shell, cwd.as_deref())?);
-        // A pane that cannot keep its ID must not take another saved pane's.
-        if let Some(through) = saved.through.filter(|id| *id < SavedIdentity::LIMIT) {
-            self.identities_taken(&[through]);
-        }
-        let id = self.pane_identity(saved.pane);
-        if id >= SavedIdentity::LIMIT { return Err("Terminal ID space exhausted".into()); }
+        let id = self.pane_identity(saved);
+        if id >= graffitty_protocol::pane_id::CHROMIUM_BASE { return Err("Terminal ID space exhausted".into()); }
         let new_tab = self.tab_identity(saved.tab, id, id);
         let initial_font = self.recent_font_size.unwrap_or_else(|| source.and_then(|id| self.sessions.get(&id)).map_or(self.settings.terminal.font.size, |s| s.font_size));
         let mut session = Session::new_with_font(
@@ -396,6 +395,10 @@ impl Server {
             if options.as_ref().and_then(|v| v.cwd.as_ref()).is_none() {
                 session.initial_directory.clone_from(&source.initial_directory);
             }
+        }
+        // A pane that cannot keep its ID must not take another saved pane's.
+        if let Some(through) = saved.through.filter(|id| *id < SavedIdentity::LIMIT) {
+            self.identities_taken(&[through]);
         }
         self.identities_taken(&[id]);
         if tab.is_none() {
@@ -610,8 +613,13 @@ impl Server {
                 // A closed shell's PID can be reused. Only check its registered agent.
                 let shell = if s.exited { None } else { s.pid() };
                 if shell.is_none() && (node["pid"].is_null() || node["status"] == "offline") { return None; }
-                Some(json!({"node":key,"pid":shell,"agent_pid":node["pid"],"started":node["started"],
-                    "provider_home":node["provider_home"],"launch_context":node["launch_context"]}))
+                let mut root = json!({"node":key,"pid":shell,"agent_pid":node["pid"],"started":node["started"],
+                    "provider_home":node["provider_home"],"launch_context":node["launch_context"]});
+                if let Some(turn) = node.get("observed_turn") {
+                    root["session_id"] = node["session_id"].clone();
+                    root["observed_turn"] = turn.clone();
+                }
+                Some(root)
             }).collect();
             if !roots.is_empty() {
                 self.workers.start(&self.cli, "scan".into(), json!({"op":"scan","roots":roots}), json!({}));
@@ -668,7 +676,7 @@ impl Server {
                 if self.chromiums[&root].window_is_closing(window) { continue; }
                 if self.chromiums.values().any(|b|b.session_id==session && b.state["windowId"]==window) { continue; }
                 if self.chromiums.len() >= 32 { break; }
-                let Ok(id) = self.chromium_identity(None) else { break };
+                let Ok(id) = self.chromium_identity(None, None) else { break };
                 match self.chromiums[&root].sibling(id,window,self.resources.clone()) {
                     Ok(chromium)=>{self.next_chromium = id + 1; self.chromiums.insert(id,chromium);self.lifecycle_dirty=true;},
                     Err(error)=>eprintln!("Could not mirror Chromium window: {error}"),
@@ -924,7 +932,10 @@ impl Server {
             if params.get("id").is_some_and(|saved| !saved.is_u64()) {
                 return Err("Expected a saved chromium ID".into());
             }
-            let chromium_id = self.chromium_identity(params["id"].as_u64())?;
+            if params.get("through").is_some_and(|value| !value.is_u64()) {
+                return Err("Expected a saved Chromium ID in through".into());
+            }
+            let chromium_id = self.chromium_identity(params["id"].as_u64(), params["through"].as_u64())?;
             let chromium = chromium::Chromium::new(
                 chromium_id,
                 id,
@@ -2287,6 +2298,7 @@ pub fn run(options: Options, foreground_apps: fn(&Value) -> Value) -> Result<(),
         workspaces: session_registry::Registry::default(),
         session_name_cache: Default::default(),
         agent_title_cache: Default::default(),
+        pane_catalog_titles: Default::default(),
         pending_wires: HashMap::new(),
         started_session: false,
         lifecycle_dirty: false,
@@ -2770,7 +2782,7 @@ pub struct SavedIdentity {
     pub through: Option<u64>,
 }
 impl SavedIdentity {
-    /// Keeps one restored file from moving every later identity out of reach.
+    /// Holder IDs fit in an unsigned 32-bit integer.
     const LIMIT: u64 = graffitty_protocol::pane_id::CHROMIUM_BASE;
     pub fn parse(value: &Value) -> Result<Self, Error> {
         let field = |name: &str| match value.get(name) {
@@ -2779,10 +2791,20 @@ impl SavedIdentity {
         };
         Ok(Self { pane: field("id")?, tab: field("tab")?, through: field("through")? })
     }
+    fn choose_chromium(saved: Option<u64>, through: Option<u64>, next: u64, unused: impl Fn(u64) -> bool) -> u64 {
+        let base = graffitty_protocol::pane_id::CHROMIUM_BASE;
+        let ordinal = |id: u64| id.checked_sub(base).filter(|n| (1..Self::LIMIT).contains(n));
+        let first = next.saturating_sub(base).max(through.and_then(ordinal).map_or(1, |id| id + 1));
+        base + Self::choose([saved.and_then(ordinal), None], first, |id| unused(base + id))
+    }
     /// The first wanted identity, from 1 up, that nothing live has, else
     /// the next new one.
     fn choose(wanted: [Option<u64>; 2], next: u64, unused: impl Fn(u64) -> bool) -> u64 {
-        wanted.into_iter().flatten().find(|id| (1..Self::LIMIT).contains(id) && unused(*id)).unwrap_or(next)
+        if let Some(id) = wanted.into_iter().flatten().find(|id| (1..Self::LIMIT).contains(id) && unused(*id)) {
+            return id;
+        }
+        let start = if (1..Self::LIMIT).contains(&next) { next } else { 1 };
+        (start..Self::LIMIT).chain(1..start).find(|id| unused(*id)).unwrap_or(Self::LIMIT)
     }
 }
 #[cfg(test)]
@@ -2806,6 +2828,25 @@ mod saved_identity_tests {
         assert_eq!(SavedIdentity::choose([Some(0), Some(0)], 9, unused), 9, "A layout tab is never zero");
     }
     #[test]
+    fn exhausted_holder_counter_wraps_to_an_unused_id() {
+        let limit = SavedIdentity::LIMIT;
+        let unused = |id| ![1, limit - 1].contains(&id);
+        for next in [limit - 1, limit, u64::MAX] {
+            assert_eq!(SavedIdentity::choose([None, None], next, unused), 2);
+        }
+        assert_eq!(SavedIdentity::choose([None, None], limit, |_| true), 1);
+    }
+
+    #[test]
+    fn conflicting_chromium_skips_free_saved_browsers() {
+        let base = graffitty_protocol::pane_id::CHROMIUM_BASE;
+        let through = Some(base + 2);
+        let unused = |id| id != base + 1;
+        assert_eq!(SavedIdentity::choose_chromium(Some(base + 1), through, base + 2, unused), base + 3);
+        assert_eq!(SavedIdentity::choose_chromium(Some(base + 2), through, base + 4, unused), base + 2);
+    }
+
+    #[test]
     fn saved_identities_are_optional_unsigned_numbers() {
         let saved = SavedIdentity::parse(&json!({"id":4,"tab":2,"through":9})).unwrap();
         assert_eq!((saved.pane, saved.tab, saved.through), (Some(4), Some(2), Some(9)));
@@ -2823,9 +2864,17 @@ impl Server {
                 .map(|state| (session.id, state))).collect()
     }
 
-    fn saved_wiring(&self) -> HashMap<String, Value> {
-        self.graphs.iter().filter(|(_, graph)| !graph.edges.is_empty())
-            .map(|(workspace, graph)| (workspace.clone(), graph.checkpoint())).collect()
+    fn saved_transcripts(&self) -> HashMap<u64, owner_state::Transcript> {
+        self.sessions.values().filter(|s| s.is_held() && !s.exited).filter_map(|session| {
+            let node = self.graphs.get(&session.workspace)?.nodes.get(&pane_address(session.id))?;
+            let previous = self.saved_owner.as_ref().and_then(|state| state.transcripts.get(&session.id));
+            owner_state::Transcript::capture(node, previous).map(|record| (session.id, record))
+        }).collect()
+    }
+
+    fn saved_wiring(&mut self) -> HashMap<String, std::sync::Arc<Value>> {
+        self.graphs.iter_mut().filter_map(|(workspace, graph)|
+            graph.owner_wiring().map(|saved| (workspace.clone(), saved))).collect()
     }
 
     /// Commit recovery metadata before acknowledging a request or event.
@@ -2839,6 +2888,7 @@ impl Server {
         state.last_viewed = self.last_viewed.clone();
         state.agent_attention = self.saved_agent_attention();
         state.wiring = self.saved_wiring();
+        state.transcripts = self.saved_transcripts();
         state.sessions = self.sessions.values().filter(|s| s.is_held() && !s.exited).map(Session::saved).collect();
         if self.saved_owner.as_ref() == Some(&state) { return Ok(()); }
         // Persist even an empty registry: deletion errors must not silently
@@ -2880,6 +2930,7 @@ fn hand_over(server: &mut Server, runtime: &std::path::Path) {
     }
     state.agent_attention = server.saved_agent_attention();
     state.wiring = server.saved_wiring();
+    state.transcripts = server.saved_transcripts();
     if let Err(error) = owner_state::save(&server.descriptor, &state) {
         eprintln!("[holder] cannot save owner state: {error}");
     }
@@ -2936,7 +2987,7 @@ fn owner_state_adopt(server: &mut Server, adopted: Vec<holder_link::Adopted>, pr
         return;
     };
     server.next = server.next.max(previous.next);
-    server.next_chromium = previous.next_chromium;
+    server.next_chromium = server.next_chromium.max(previous.next_chromium);
     server.tab_titles = previous.tab_titles.clone();
     server.workspaces = previous.workspaces.clone();
     server.last_viewed = previous.last_viewed.clone();
@@ -2964,6 +3015,9 @@ fn owner_state_adopt(server: &mut Server, adopted: Vec<holder_link::Adopted>, pr
                 eprintln!("[holder] cannot restore attention for %{id}: {error}");
             }
         }
+        if let Some(record) = previous.transcripts.get(&id) {
+            record.restore(graph.nodes.get_mut(&pane_address(id)).unwrap());
+        }
         let status = session.program_status.status.as_ref().map(|status| json!(status));
         graph.observe_program_status(id, status.as_ref());
         if let Some(pid) = session.pid() {
@@ -2975,16 +3029,24 @@ fn owner_state_adopt(server: &mut Server, adopted: Vec<holder_link::Adopted>, pr
         server.sessions.insert(id, session);
         server.started_session = true;
     }
-    for (workspace, mut saved) in previous.wiring {
+    for (workspace, saved) in previous.wiring {
+        let mut saved = std::sync::Arc::unwrap_or_clone(saved);
         let Some(graph) = server.graphs.get_mut(&workspace) else { continue };
         // A holder can disappear before adoption. Restore only links whose
         // endpoints the new owner actually adopted in this workspace.
         let ids: HashMap<_, _> = graph.nodes.keys().map(|key| (key.clone(), key.clone())).collect();
-        if let Some(nodes) = saved["nodes"].as_array_mut() {
-            nodes.retain(|n| n["node"].as_str().is_some_and(|key| ids.contains_key(key)));
-        }
+        let mut connected = HashSet::new();
         if let Some(edges) = saved["edges"].as_array_mut() {
-            edges.retain(|e| ["from", "to"].iter().all(|k| e[*k].as_str().is_some_and(|key| ids.contains_key(key))));
+            edges.retain(|edge| {
+                let Some((from, to)) = edge["from"].as_str().zip(edge["to"].as_str()) else { return false };
+                if !ids.contains_key(from) || !ids.contains_key(to) { return false; }
+                connected.insert(from.to_owned());
+                connected.insert(to.to_owned());
+                true
+            });
+        }
+        if let Some(nodes) = saved["nodes"].as_array_mut() {
+            nodes.retain(|n| n["node"].as_str().is_some_and(|key| connected.contains(key)));
         }
         if let Err(error) = graph.restore_checkpoint(&saved, &ids) {
             eprintln!("[holder] cannot restore connections in {workspace}: {error}");

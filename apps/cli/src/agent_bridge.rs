@@ -90,7 +90,7 @@ fn find_transcript(dir: &Path, name: &str, depth: u8) -> Option<PathBuf> {
 }
 /// Bind only files open in this process. A shared daemon's files identify
 /// the daemon, so they cannot establish which frontend owns a thread.
-fn codex_files(paths: &[PathBuf]) -> Value {
+fn codex_files(paths: &[PathBuf], root: &Value) -> Value {
     let mut threads = std::collections::BTreeMap::<String, (PathBuf, Option<PathBuf>)>::new();
     let mut subagents = std::collections::HashSet::new();
     for path in paths {
@@ -135,14 +135,12 @@ fn codex_files(paths: &[PathBuf]) -> Value {
         "queue_error":"This Codex process owns its session locally and has no external queue endpoint (local mode, e.g. --no-daemon or incompatible command-line config overrides). Detection and transcript reading work; native message delivery is unavailable."});
     if let Some(path) = path {
         result["transcript_path"] = json!(path);
-        if let Ok(t) = transcript(&path, None) {
-            result["status"] = t["status"].clone();
-        }
         // A long turn can put its start outside the bounded text preview.
         // Reconstruct lifecycle facts independently, including after restart.
-        if let Ok(Some((status, at))) = codex_lifecycle(&path) {
-            result["status"] = json!(status);
-            if let Some(at) = at { result["status_at"] = json!(at); }
+        let baseline = root.get("observed_turn").filter(|_| root["session_id"] == id);
+        match codex_lifecycle(&path, baseline) {
+            Ok(lifecycle) => result.as_object_mut().unwrap().extend(lifecycle.as_object().unwrap().clone()),
+            Err(error) => result["discovery_note"] = json!(error.to_string()),
         }
     }
     result
@@ -153,6 +151,9 @@ pub fn scan(roots: &Value) -> Value {
     let table = crate::sessions::pane_processes(&pids);
     let mut result = serde_json::Map::new();
     let mut daemon_inventories = std::collections::HashMap::<PathBuf, std::result::Result<Vec<Value>, String>>::new();
+    let baselines = roots.as_array().into_iter().flatten().filter_map(|root| {
+        Some((root["session_id"].as_str()?, root.get("observed_turn")?))
+    }).collect();
     for root in roots.as_array().into_iter().flatten() {
         let Some(p) = crate::sessions::foreground(integer(&root["pid"]).unwrap_or(-1), &table)
         else {
@@ -208,7 +209,7 @@ pub fn scan(roots: &Value) -> Value {
             }
         } else if kind == "codex" {
             let open_paths = crate::sessions::open_paths(p.pid);
-            let mut discovered = codex_files(&open_paths);
+            let mut discovered = codex_files(&open_paths, root);
             if discovered.get("session_id").is_none() {
                 let ports = crate::codex_discovery::listener_ports(p.pid);
                 if !ports.is_empty() {
@@ -225,7 +226,7 @@ pub fn scan(roots: &Value) -> Value {
                     }).collect();
                     let home = if homes.len() == 1 { homes.into_iter().next().unwrap() } else { home };
                     let inventory = daemon_inventories.entry(home.clone()).or_insert_with(|| {
-                        crate::codex_discovery::Rpc::connect(&home).and_then(|mut rpc| crate::codex_discovery::inventory(&mut rpc)).map_err(|e| e.to_string())
+                        crate::codex_discovery::Rpc::connect(&home).and_then(|mut rpc| crate::codex_discovery::inventory(&mut rpc, &baselines)).map_err(|e| e.to_string())
                     });
                     match inventory {
                         Ok(records) => match crate::codex_discovery::select(records, &ports, &home) {
@@ -269,34 +270,74 @@ fn completed_checkpoint(tail: &Value) -> Option<u64> {
     })
 }
 
-fn codex_event_status(record: &Value) -> Option<&'static str> {
-    if record["type"] != "event_msg" { return None; }
-    match record["payload"]["type"].as_str()? {
-        "task_started" | "turn_started" | "user_message" => Some("busy"),
-        "task_complete" | "turn_complete" | "turn_aborted" => Some("idle"),
+fn codex_turn_status(payload: &Value) -> Option<&'static str> {
+    match payload["type"].as_str()? {
+        "task_started" | "turn_started" | "user_message" => Some("inProgress"),
+        "task_complete" | "turn_complete" if !payload["error"].is_null() => Some("failed"),
+        "task_complete" | "turn_complete" => Some("completed"),
+        "turn_aborted" => Some("interrupted"),
+        "error" if payload["message"].is_string() && payload["codex_error_info"] != "thread_rollback_failed"
+            && payload["codex_error_info"].get("active_turn_not_steerable").is_none() => Some("failed"),
         _ => None,
     }
 }
 
-/// Latest complete lifecycle record, independent of how much tool output a
-/// turn wrote. Scan backwards in bounded blocks; skip oversized content records
-/// and incomplete trailing JSON. This runs only in the off-thread worker.
-fn codex_lifecycle(path: &Path) -> Result<Option<(&'static str, Option<String>)>> {
+/// Apply a Codex lifecycle record to the turn it belongs to. Some providers
+/// store the failure as a standalone error followed by an ordinary task_complete.
+fn update_local_turn(turn: &mut Value, payload: &Value, offset: u64) -> bool {
+    let Some(mut status) = codex_turn_status(payload) else { return false; };
+    let event = payload["type"].as_str().unwrap();
+    let previous_id = turn["id"].as_str();
+    let native_id = payload["turn_id"].as_str();
+    let same_turn = native_id.is_none() || previous_id == native_id
+        || previous_id.is_some_and(|id| id.starts_with("record-"));
+    if event == "error" && !matches!(turn["status"].as_str(), Some("inProgress" | "failed")) {
+        return false;
+    }
+    let starting = matches!(event, "task_started" | "turn_started")
+        || (event == "user_message" && turn["status"] != "inProgress");
+    let id = native_id.or(previous_id.filter(|_| !starting)).map(str::to_owned)
+        .unwrap_or_else(|| format!("record-{offset}"));
+    let mut error = payload["error"].clone();
+    if event == "error" {
+        error = json!({"message":payload["message"],"codex_error_info":payload["codex_error_info"]});
+    }
+    if same_turn && status == "completed" && matches!(turn["status"].as_str(), Some("failed" | "interrupted")) {
+        status = if turn["status"] == "failed" { "failed" } else { "interrupted" };
+        error = turn["error"].clone();
+    }
+    *turn = json!({"id":id,"status":status,"error":error});
+    true
+}
+
+/// Resume at the previous complete lifecycle record. On attachment, scan
+/// backwards to the current turn start. The worker skips large content records
+/// and partial trailing lines without loading the rollout into memory.
+fn codex_lifecycle(path: &Path, baseline: Option<&Value>) -> Result<Value> {
     let mut file = fs::File::open(path)?;
     let mut end = file.metadata()?.len();
+    let resume_at = baseline.and_then(|turn| turn["rollout_offset"].as_u64()).filter(|offset| *offset <= end);
+    let mut turn = baseline.filter(|_| resume_at.is_some()).cloned().unwrap_or(Value::Null);
     let mut line_end = None;
+    let mut records = Vec::new();
     let deadline = std::time::Instant::now() + Duration::from_secs(2);
-    let mut read_record = |start: u64, end: u64| -> Result<Option<(&'static str, Option<String>)>> {
-        if end - start > 1024 * 1024 { return Ok(None); }
+    let mut read_record = |start: u64, end: u64| -> Result<bool> {
+        if resume_at.is_some_and(|offset| end < offset) { return Ok(true); }
+        if end - start > 1024 * 1024 { return Ok(false); }
         file.seek(SeekFrom::Start(start))?;
         let mut line = vec![0; (end - start) as usize];
         file.read_exact(&mut line)?;
-        let Ok(record) = serde_json::from_slice::<Value>(&line) else { return Ok(None) };
-        Ok(codex_event_status(&record).map(|state| (state, record["timestamp"].as_str().map(str::to_owned))))
+        let Ok(record) = serde_json::from_slice::<Value>(&line) else { return Ok(false); };
+        let payload = &record["payload"];
+        if record["type"] != "event_msg" || codex_turn_status(payload).is_none() { return Ok(false); }
+        let starting = matches!(payload["type"].as_str(), Some("task_started" | "turn_started"));
+        // Keep provider error details and discard conversational content.
+        records.push((end + 1, record["timestamp"].clone(), json!({"type":payload["type"],"turn_id":payload["turn_id"],
+            "error":payload["error"],"message":if payload["type"] == "error" { &payload["message"] } else { &Value::Null },"codex_error_info":payload["codex_error_info"]})));
+        Ok(resume_at.is_none() && starting)
     };
-    // A second handle keeps block reads independent from individual line reads.
     let mut blocks = fs::File::open(path)?;
-    while end > 0 {
+    'scan: while end > 0 {
         if std::time::Instant::now() >= deadline { return Err("Codex lifecycle scan timed out".into()); }
         let start = end.saturating_sub(128 * 1024);
         blocks.seek(SeekFrom::Start(start))?;
@@ -305,13 +346,30 @@ fn codex_lifecycle(path: &Path) -> Result<Option<(&'static str, Option<String>)>
         for (offset, byte) in block.iter().enumerate().rev() {
             if *byte != b'\n' { continue; }
             let position = start + offset as u64;
-            if let Some(previous) = line_end
-                && let Some(found) = read_record(position + 1, previous)? { return Ok(Some(found)); }
+            if let Some(previous) = line_end && read_record(position + 1, previous)? { break 'scan; }
             line_end = Some(position);
         }
         end = start;
+        if end == 0 && let Some(last) = line_end { read_record(0, last)?; }
     }
-    match line_end { Some(end) => read_record(0, end), None => Ok(None) }
+    let mut failures = Vec::<Value>::new();
+    for (offset, at, payload) in records.into_iter().rev() {
+        let was_failed = turn["status"] == "failed";
+        if !update_local_turn(&mut turn, &payload, offset) { continue; }
+        if baseline.is_some() && turn["status"] == "failed" && !was_failed {
+            failures.push(turn.clone());
+        }
+        turn["rollout_offset"] = json!(offset);
+        turn["at"] = at;
+    }
+    let mut state = json!({"observed_turn":turn,"failed_turns":failures});
+    if turn.is_null() {
+        state["observed_turn"] = json!({"rollout_offset":0});
+    } else if turn["status"].is_string() {
+        state["status"] = json!(if turn["status"] == "inProgress" { "busy" } else { "idle" });
+        if !turn["at"].is_null() { state["status_at"] = turn["at"].clone(); }
+    }
+    Ok(state)
 }
 
 /// Bounded raw JSONL plus normalized assistant text. Never parse a partial last record.
@@ -338,6 +396,7 @@ pub fn transcript(path: &Path, offset: Option<u64>) -> Result<Value> {
     let raw = String::from_utf8_lossy(&bytes).into_owned();
     let mut last = String::new();
     let mut status = "unknown";
+    let mut local_turn = Value::Null;
     let mut completion_checkpoint = None;
     let mut position = start;
     for line in bytes.split_inclusive(|byte| *byte == b'\n') {
@@ -345,17 +404,17 @@ pub fn transcript(path: &Path, offset: Option<u64>) -> Result<Value> {
         let Ok(v) = serde_json::from_slice::<Value>(line) else {
             continue;
         };
-        if v["type"] == "event_msg" {
-            match v["payload"]["type"].as_str().unwrap_or("") {
-                "task_started" | "turn_started" | "user_message" => status = "busy",
-                "task_complete" | "turn_complete" => {
+        if v["type"] == "event_msg" && update_local_turn(&mut local_turn, &v["payload"], position) {
+            match local_turn["status"].as_str() {
+                Some("inProgress") => status = "busy",
+                Some("completed") => {
                     status = "idle";
                     completion_checkpoint = Some(position);
                     if let Some(s) = v["payload"]["last_agent_message"].as_str() {
                         last = s.into();
                     }
                 }
-                "turn_aborted" => status = "idle",
+                Some("interrupted" | "failed") => status = "idle",
                 _ => {}
             }
         }
@@ -602,11 +661,11 @@ mod codex_discovery_tests {
         let output = json!({"type":"response_item", "payload":{"type":"function_call_output", "output":"x".repeat(2 * 1024 * 1024)}});
         fs::write(&path, format!("{started}\n{output}\n{{\"type\":\"event_msg\",\"payload\":{{\"type\":\"token_count\"}}}}\n")).unwrap();
         assert_eq!(transcript(&path, None).unwrap()["status"], "unknown", "The text preview contains no lifecycle event");
-        assert_eq!(codex_lifecycle(&path).unwrap(), Some(("busy", Some("2026-11-22T10:00:00Z".into()))));
+        assert_eq!(codex_lifecycle(&path, None).unwrap()["status_at"], "2026-11-22T10:00:00Z");
         let stopped = json!({"timestamp":"2026-11-22T19:00:00+09:00", "type":"event_msg", "payload":{"type":"task_complete"}});
         let mut file = fs::OpenOptions::new().append(true).open(&path).unwrap();
         write!(file, "{stopped}\n{output}\n{{\"type\":\"event_msg\",\"payload\":{{\"type\":\"task_started\"}}}}").unwrap();
-        assert_eq!(codex_lifecycle(&path).unwrap(), Some(("idle", Some("2026-11-22T19:00:00+09:00".into()))), "An incomplete trailing record cannot start another turn");
+        assert_eq!(codex_lifecycle(&path, None).unwrap()["status_at"], "2026-11-22T19:00:00+09:00", "An incomplete trailing record cannot start another turn");
     }
 
     #[test]
@@ -631,9 +690,77 @@ mod codex_discovery_tests {
         fs::remove_file(path).unwrap();
     }
     #[test]
+    fn local_codex_quota_failures_survive_fast_retries_without_success_checkpoints() {
+        let dir = tempfile::tempdir().unwrap();
+        let sessions = dir.path().join("sessions");
+        fs::create_dir(&sessions).unwrap();
+        let id = "11111111-1111-4111-8111-111111111111";
+        let path = sessions.join(format!("rollout-test-{id}.jsonl"));
+        let mut file = fs::File::create(&path).unwrap();
+        writeln!(file, "{}", json!({"type":"session_meta","payload":{"id":id}})).unwrap();
+        let scan = |before: &Value| codex_files(std::slice::from_ref(&path), before);
+        let append = |file: &mut fs::File, payload: Value| {
+            writeln!(file, "{}", json!({"type":"event_msg","payload":payload})).unwrap();
+        };
+        let failure = |turn: &str| json!({"type":"task_complete","turn_id":turn,
+            "error":{"message":"Quota exceeded","codex_error_info":"usage_limit_exceeded"}});
+        let start = |turn: &str| json!({"type":"task_started","turn_id":turn});
+        let baseline = scan(&Value::Null);
+        append(&mut file, start("a"));
+        append(&mut file, failure("a"));
+        let first = scan(&baseline);
+        assert_eq!(first["status"], "idle");
+        assert_eq!(first["observed_turn"]["status"], "failed");
+        assert_eq!(first["failed_turns"][0]["error"]["message"], "Quota exceeded");
+        assert!(completed_checkpoint(&transcript(&path, None).unwrap()).is_none());
+        append(&mut file, start("b"));
+        append(&mut file, failure("b"));
+        append(&mut file, start("c"));
+        let retry = scan(&first);
+        assert_eq!(retry["status"], "busy");
+        assert_eq!(retry["failed_turns"].as_array().unwrap().len(), 1);
+        assert_eq!(retry["failed_turns"][0]["id"], "b");
+        assert_eq!(scan(&retry)["failed_turns"], json!([]));
+        append(&mut file, json!({"type":"task_complete","turn_id":"c","last_agent_message":"Done"}));
+        let done = scan(&retry);
+        assert_eq!(done["observed_turn"]["status"], "completed");
+        let tail = transcript(&path, None).unwrap();
+        assert_eq!(tail["last_message"], "Done");
+        assert_eq!(completed_checkpoint(&tail), Some(file.metadata().unwrap().len()));
+    }
+
+    #[test]
+    fn local_codex_rollout_preserves_standalone_errors_interrupts_and_unknown_outcomes() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("rollout.jsonl");
+        let mut file = fs::File::create(&path).unwrap();
+        let mut append = |payload: Value| writeln!(file, "{}", json!({"type":"event_msg","payload":payload})).unwrap();
+        append(json!({"type":"task_started","turn_id":"a"}));
+        append(json!({"type":"token_count","rate_limits":{"primary":{"used_percent":100.0}}}));
+        let baseline = codex_lifecycle(&path, None).unwrap();
+        assert_eq!(baseline["status"], "busy", "a token count says nothing about the outcome");
+        append(json!({"type":"error","message":"Out of credits","codex_error_info":"usage_limit_exceeded"}));
+        append(json!({"type":"task_complete","turn_id":"a"}));
+        let failed = codex_lifecycle(&path, baseline.get("observed_turn")).unwrap();
+        assert_eq!(failed["observed_turn"]["status"], "failed");
+        assert_eq!(failed["failed_turns"].as_array().unwrap().len(), 1);
+        assert!(completed_checkpoint(&transcript(&path, None).unwrap()).is_none());
+        let reattached = codex_lifecycle(&path, None).unwrap();
+        assert_eq!(reattached["observed_turn"]["status"], "failed");
+        assert_eq!(reattached["failed_turns"], json!([]));
+        append(json!({"type":"task_started","turn_id":"b"}));
+        append(json!({"type":"stream_error","message":"retrying"}));
+        append(json!({"type":"turn_aborted","turn_id":"b","reason":"interrupted"}));
+        let aborted = codex_lifecycle(&path, failed.get("observed_turn")).unwrap();
+        assert_eq!(aborted["status"], "idle");
+        assert_eq!(aborted["observed_turn"]["status"], "interrupted");
+        assert_eq!(aborted["failed_turns"], json!([]));
+    }
+
+    #[test]
     fn lock_identifies_thread_before_transcript_exists() {
         let id = "11111111-1111-4111-8111-111111111111";
-        let v = codex_files(&[PathBuf::from(format!("/custom/codex/thread-writer-locks/{id}.lock"))]);
+        let v = codex_files(&[PathBuf::from(format!("/custom/codex/thread-writer-locks/{id}.lock"))], &Value::Null);
         assert_eq!(v["session_id"], id);
         assert_eq!(v["provider_home"], "/custom/codex");
         assert!(v.get("transcript_path").is_none());
@@ -645,7 +772,7 @@ mod codex_discovery_tests {
             PathBuf::from("/x/thread-writer-locks/11111111-1111-4111-8111-111111111111.lock"),
             PathBuf::from("/x/thread-writer-locks/22222222-2222-4222-8222-222222222222.lock"),
         ], vec![PathBuf::from("/x/thread-writer-locks/not-a-thread.lock")]] {
-            let v = codex_files(&paths);
+            let v = codex_files(&paths, &Value::Null);
             assert!(v.get("session_id").is_none());
             assert!(v["discovery_note"].is_string());
         }
@@ -663,11 +790,11 @@ mod codex_discovery_tests {
             paths.extend([dir.join(format!("thread-writer-locks/{id}.lock")), path]);
         }
         for _ in 0..2 {
-            assert_eq!(codex_files(&paths)["session_id"], main);
+            assert_eq!(codex_files(&paths, &Value::Null)["session_id"], main);
             paths.reverse();
         }
         let child_paths: Vec<_> = paths.into_iter().filter(|p| p.to_string_lossy().contains(child)).collect();
-        assert!(codex_files(&child_paths).get("session_id").is_none());
+        assert!(codex_files(&child_paths, &Value::Null).get("session_id").is_none());
         fs::remove_dir_all(dir).unwrap();
     }
     #[test]
@@ -679,7 +806,7 @@ mod codex_discovery_tests {
         fs::write(&path, format!("{}\n{}\n{}\n", json!({"type":"session_meta","payload":{"id":id}}),
             json!({"type":"event_msg","payload":{"type":"task_started"}}),
             json!({"type":"event_msg","payload":{"type":"task_complete"}}))).unwrap();
-        let v = codex_files(&[path.clone(), dir.join(format!("thread-writer-locks/{id}.lock"))]);
+        let v = codex_files(&[path.clone(), dir.join(format!("thread-writer-locks/{id}.lock"))], &Value::Null);
         assert_eq!(v["session_id"], id);
         assert_eq!(v["status"], "idle");
         assert_eq!(v["transcript_path"], json!(path));

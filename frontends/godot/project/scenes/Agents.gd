@@ -94,25 +94,29 @@ func refresh_body() -> void:
 					"looking": shown, "focused": focused}
 		host_trees.append([host, ids_by_key])
 	var background_trees := _add_away(input, remotes, sessions)
+	var next_trees := _build_trees(host_trees)
+	next_trees.merge(background_trees, true)
+	for id in next_trees:
+		for sub in next_trees[id]:
+			var child: String = sub.get("row_id", "")
+			if input.has(child): input[child].group = id
 	var result: Dictionary = _core.observe(input.values(), int(Time.get_unix_time_from_system()))
 	var next: Array = result.get("rows", [])
 	var by_id := {}
 	for row in next:
+		row.remote = remotes.get(row.id, "")
+		row.session = sessions.get(row.id, "")
 		by_id[row.id] = row
-		row["remote"] = remotes.get(row.id, "")
-		row["session"] = sessions.get(row.id, "")
-	var next_trees := _build_trees(host_trees, next)
-	for root_id in background_trees:
-		for sub in background_trees[root_id]:
-			if sub.kind == "agent" and by_id.has(sub.away_id):
-				sub.row_id = sub.away_id
-				sub.merge(by_id[sub.row_id], true)
-		next_trees[root_id] = background_trees[root_id]
-	var hidden: Dictionary = {}
-	for id in next_trees:
+	var hidden := {}
+	for id in next_trees.keys():
+		if not by_id.has(id):
+			next_trees.erase(id)
+			continue
 		for sub in next_trees[id]:
-			if sub.kind == "agent" and sub.has("row_id"):
-				hidden[sub.row_id] = true
+			var child: String = sub.get("row_id", "")
+			if sub.kind == "agent" and by_id.has(child):
+				sub.merge(by_id[child], true)
+				hidden[child] = true
 	next = next.filter(func(row): return not hidden.has(row.id))
 	if next != rows or next_trees != trees:
 		rows = next
@@ -136,6 +140,7 @@ func _add_away(input: Dictionary, remotes: Dictionary, sessions: Dictionary) -> 
 			if not value is Dictionary: continue
 			var label := preload("res://scenes/session/SessionLabel.gd").name_of(value)
 			for agent in value.get("agents", []):
+				if not agent is Dictionary: continue
 				var pane := int(agent.get("pane", -1))
 				var id := JSON.stringify([peer.url, peer.epoch, pane])
 				if pane < 0 or input.has(id): continue
@@ -152,14 +157,23 @@ func _add_away(input: Dictionary, remotes: Dictionary, sessions: Dictionary) -> 
 
 			var topology: Dictionary = value.get("agent_tree", {})
 			if topology.get("edges", []).is_empty(): continue
-			for tree in _core.tree(topology):
+			# A closing root may already lack a catalog summary. Removing it
+			# lets the tree builder choose a remaining agent for each branch.
+			var nodes: Array = topology.get("nodes", []).filter(func(node):
+				return node is Dictionary and (node.get("kind") != "agent" or
+					input.has(JSON.stringify([peer.url, peer.epoch, PaneAddress.id(str(node.get("key", "")))]))))
+			for tree in _core.tree({"nodes": nodes, "edges": topology.edges}):
 				var root_id := JSON.stringify([peer.url, peer.epoch, PaneAddress.id(tree.root)])
-				if not _away.has(root_id): continue
+				if _owners.has(root_id): continue
+				var session_id := str(value.id)
 				for sub in tree.rows:
 					var pane := PaneAddress.id(sub.key)
 					sub.away_id = JSON.stringify([peer.url, peer.epoch, pane])
-					_away[sub.away_id] = {"host": group.host, "peer": peer, "session": str(value.id), "pane": pane}
-					if input.has(sub.away_id): sub.title = input[sub.away_id].title
+					_away[sub.away_id] = {"host": group.host, "peer": peer, "session": session_id, "pane": pane}
+					if sub.kind == "agent": sub.row_id = sub.away_id
+					if input.has(sub.away_id):
+						sub.title = input[sub.away_id].title
+						if input[sub.away_id].status == "offline": sub.status = "offline"
 				background_trees[root_id] = tree.rows
 	return background_trees
 
@@ -176,9 +190,7 @@ static func session_label(connection: Object) -> String:
 
 ## One graph per host: nodes for every pane in its tabs and the wires among
 ## them. The Rust model picks each group's leading agent and orders children.
-func _build_trees(host_trees: Array, top_rows: Array) -> Dictionary:
-	var by_id: Dictionary = {}
-	for row in top_rows: by_id[row.id] = row
+func _build_trees(host_trees: Array) -> Dictionary:
 	var result: Dictionary = {}
 	for pair in host_trees:
 		var host: Node = pair[0]
@@ -235,10 +247,6 @@ func _build_trees(host_trees: Array, top_rows: Array) -> Dictionary:
 				item["host_id"] = host.get_instance_id()
 				if ids_by_key.has(item.key):
 					item["row_id"] = ids_by_key[item.key]
-					var agent: Dictionary = by_id.get(item.row_id, {})
-					item.status = agent.get("status", item.status)
-					item.remote = agent.get("remote", "")
-					item.session = agent.get("session", "")
 				subs.append(item)
 			result[root_id] = subs
 	return result
@@ -270,12 +278,17 @@ func pin(id: String, pinned: bool) -> void:
 ## With no agent focused it starts at the first row, or the last when stepping
 ## back.
 func step(direction: int) -> void:
-	if rows.is_empty(): return
-	var current := -1
-	for index in rows.size():
-		if rows[index].get("focused", false): current = index
-	var target := posmod(current + direction, rows.size()) if current >= 0 else (0 if direction > 0 else rows.size() - 1)
-	focus(str(rows[target].id))
+	var order: Array = []
+	for row in rows:
+		order.append(row)
+		for sub in trees.get(row.id, []):
+			if sub.kind == "agent" and sub.has("row_id"): order.append(sub)
+	if order.is_empty(): return
+	var current := order.find_custom(func(row): return row.get("focused", false))
+	var index := posmod(current + direction, order.size()) if current >= 0 else (0 if direction > 0 else order.size() - 1)
+	var target: Dictionary = order[index]
+	if target.has("host_id"): focus_key(target.host_id, target.key)
+	else: focus(str(target.get("away_id", target.get("id", ""))))
 
 func focus(id: String) -> void:
 	if _away.has(id) and not _owners.has(id):
@@ -285,8 +298,7 @@ func focus(id: String) -> void:
 	if not is_instance_valid(host): return
 	for row in rows:
 		if row.id == id:
-			host.get_window().grab_focus()
-			_reveal(host, row.key)
+			focus_key(host.get_instance_id(), row.key)
 			return
 
 ## The shared host of several servers decides whether this crosses to another

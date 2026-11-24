@@ -213,6 +213,18 @@ fn process_ids(job: HANDLE) -> Result<Vec<u32>, String> {
     }
     Err("Job process inventory kept growing during enumeration".into())
 }
+/// Process creation time identifies a PID across a server handover.
+pub fn process_start(pid: u32) -> Option<(u64, u64)> {
+    let raw = unsafe { OpenProcess(PROCESS_QUERY_LIMITED_INFORMATION, 0, pid) };
+    if raw.is_null() { return None; }
+    let handle = unsafe { OwnedHandle::from_raw_handle(raw) };
+    let mut times: [FILETIME; 4] = unsafe { zeroed() };
+    let [start, exit, kernel, user] = &mut times;
+    if unsafe { GetProcessTimes(handle.as_raw_handle(), start, exit, kernel, user) } == 0
+        || exit.dwHighDateTime != 0 || exit.dwLowDateTime != 0 { return None; }
+    Some((u64::from(start.dwHighDateTime), u64::from(start.dwLowDateTime)))
+}
+
 fn process_row(job: HANDLE, pid: u32) -> ProcessSnapshot {
     let mut row = ProcessSnapshot {
         pid,
