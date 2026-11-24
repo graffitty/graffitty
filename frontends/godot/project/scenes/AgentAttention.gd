@@ -165,7 +165,7 @@ func refresh() -> void:
 			var row: Dictionary = view_nodes.get(key, {})
 			var event: Variant = row.get("attention")
 			if event is Dictionary and (snapshot_session == peer.workspace or peer.connected):
-				displayed_events[[key, peer.url, peer.epoch, peer.workspace, event.event]] = true
+				displayed_events[[key, peer.url, peer.epoch, peer.workspace, peer.wire_id(PaneAddress.id(key)), event.event]] = true
 	# A retained layout can outlive both the closed pane and its graph row.
 	# Explicitly retire its previous event when the complete inventory omits it.
 	for key in _activity_scopes:
@@ -174,7 +174,7 @@ func refresh() -> void:
 		var peer: Node = previous_owners.get(key)
 		if not is_instance_valid(peer) or [peer.url, peer.epoch] != scope.slice(0, 2): continue
 		var catalog: Dictionary = _catalogs.get([peer.url, peer.epoch], {})
-		if outside_catalog(catalog, peer.wire_id(PaneAddress.id(key)), scope[2], _activity[key]): nodes[key] = {}
+		if outside_catalog(catalog, scope[3], scope[2], _activity[key]): nodes[key] = {}
 	for key in scopes:
 		if scopes[key] == _activity_scopes.get(key) and _newer(_activity[key], nodes[key]):
 			nodes[key] = _activity[key]
@@ -203,6 +203,17 @@ func catalog_snapshot(peer: Node) -> Dictionary:
 	return known if not known.is_empty() else _catalog_snapshot(peer)
 
 
+## Shared graph keys are client-local. Only the same attachment's evidence
+## can supersede its catalog, even when several windows reuse a local key.
+static func graph_node_for(peer: Node, local_id: int, owner: Node, node: Dictionary) -> Dictionary:
+	if node.is_empty() or not is_instance_valid(peer) or not is_instance_valid(owner): return {}
+	if owner.url != peer.url or owner.epoch != peer.epoch or owner.workspace != peer.workspace: return {}
+	if "topology" in owner and owner.topology.get("workspace", "") != peer.workspace: return {}
+	var pane: int = peer.wire_id(local_id)
+	if pane <= 0 or owner.wire_id(local_id) != pane: return {}
+	return node
+
+
 ## A newer graph can report an agent before its catalog arrives. Otherwise the
 ## complete inventory decides whether the pane still belongs to this session.
 static func outside_catalog(catalog: Dictionary, pane: int, session: String, node: Dictionary) -> bool:
@@ -229,13 +240,13 @@ func _merge_activity(key: String, row: Dictionary, peer: Node, session: String, 
 	if _newer(row, current) or (int(row.get("activity_revision", 0)) == int(current.get("activity_revision", 0)) and live_route):
 		nodes[key] = row
 		_receipt_owners[key] = peer
-		scopes[key] = [peer.url, peer.epoch, session]
+		scopes[key] = [peer.url, peer.epoch, session, peer.wire_id(PaneAddress.id(key))]
 	elif peer == route and not scopes.has(key) and int(row.get("activity_revision", 0)) == int(current.get("activity_revision", 0)):
-		scopes[key] = [peer.url, peer.epoch, session]
+		scopes[key] = [peer.url, peer.epoch, session, peer.wire_id(PaneAddress.id(key))]
 
 
 func activity_node(key: String, node: Dictionary, peer: Node, session: String) -> Dictionary:
-	if _activity_scopes.get(key) != [peer.url, peer.epoch, session]: return node
+	if _activity_scopes.get(key) != [peer.url, peer.epoch, session, peer.wire_id(PaneAddress.id(key))]: return node
 	var current: Dictionary = _activity.get(key, {})
 	return current if not current.is_empty() and _newer(current, node) else node
 

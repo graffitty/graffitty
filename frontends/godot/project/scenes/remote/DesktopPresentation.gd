@@ -27,6 +27,7 @@ func park(source: Node, retain_parent := false) -> void:
 	if is_instance_valid(host):
 		host._remove_menu()
 		host.application.hosts.erase(host)
+		if host.application.mods != null: host.application.mods.queue_refresh()
 	process_mode = client.process_mode
 	connection_process_mode = client.connection.process_mode
 	client.applying = true
@@ -76,6 +77,7 @@ func restore(target: Window) -> bool:
 	saved.applying = false
 	if is_instance_valid(host):
 		host.application.hosts.append(host)
+		if host.application.mods != null: host.application.mods.queue_refresh()
 		host.layout_root.show()
 		host._refresh_workspace_layout()
 		host._build_menu.call_deferred()

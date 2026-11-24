@@ -38,9 +38,11 @@ class GraphTabBoundaryTests(unittest.TestCase):
                     link = {"from": f"t{first}", "to": f"t{second}"}
                     reply = source.action("rpc", first, method="graph.connect", params={**link, "read": True})
                     self.assertNotIn("error", reply)
+                    catalog_link = {**link, "kind": "graph"}
                     catalog = viewer.until(lambda m: m.get("type") == "session_list" and any(
-                        link in session["agent_tree"]["edges"] for session in m["sessions"]))
-                    session = next(s for s in catalog["sessions"] if link in s["agent_tree"]["edges"])
+                        catalog_link in session["agent_tree"]["edges"] for session in m["sessions"]))
+                    session = next(s for s in catalog["sessions"] if catalog_link in s["agent_tree"]["edges"])
+                    self.assertGreater(session["agent_tree"]["graph_revision"], 0)
                     self.assertEqual({n["key"] for n in session["agent_tree"]["nodes"] if n["kind"] == "agent"},
                                      set(link.values()))
                     child = source.action("rpc", first, method="terminal.run", params={
@@ -50,6 +52,8 @@ class GraphTabBoundaryTests(unittest.TestCase):
                         for descriptor in message["sessions"] for node in descriptor["agent_tree"]["nodes"]))
                     self.assertTrue(any(node["key"] == child and node["kind"] == "terminal"
                                         for descriptor in catalog["sessions"] for node in descriptor["agent_tree"]["nodes"]))
+                    spawned = {"from": f"t{first}", "to": child, "kind": "spawned"}
+                    self.assertTrue(any(spawned in entry["agent_tree"]["edges"] for entry in catalog["sessions"]))
                     prior_activity = next(agent["activity_revision"] for entry in catalog["sessions"]
                                           for agent in entry["agents"] if agent["pane"] == second)
                     self.assertLess(prior_activity, catalog["revision"])
@@ -57,6 +61,10 @@ class GraphTabBoundaryTests(unittest.TestCase):
                     closed = viewer.until(lambda message: message.get("type") == "session_list"
                         and all(agent["pane"] != second for entry in message["sessions"] for agent in entry["agents"]))
                     self.assertGreater(closed["revision"], catalog["revision"])
+                    remaining = next(entry["agent_tree"] for entry in closed["sessions"] if entry["id"] == session["id"])
+                    self.assertGreater(remaining["graph_revision"], session["agent_tree"]["graph_revision"])
+                    self.assertNotIn(catalog_link, remaining["edges"])
+                    self.assertIn(spawned, remaining["edges"])
                     source.action("rpc", first, method="agent.event", params={
                         "provider":"codex", "event":"UserPromptSubmit", "session_id":f"fixture-{first}"})
                     source.sync()

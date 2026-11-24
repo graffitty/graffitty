@@ -138,26 +138,28 @@ fn agent_tree(server: &Server, workspace: &str, agents: &[Value]) -> Value {
     use std::collections::{BTreeMap, BTreeSet};
     let mut links = BTreeSet::new();
     let mut nodes = BTreeMap::new();
-    if agents.is_empty() { return json!({"nodes":[],"edges":[]}); }
-    if let Some(graph) = server.graphs.get(workspace) {
+    let graph = server.graphs.get(workspace);
+    let revision = graph.map_or(0, |graph| graph.notification_revision().0);
+    if agents.is_empty() { return json!({"graph_revision":revision,"nodes":[],"edges":[]}); }
+    if let Some(graph) = graph {
         for edge in graph.edges.values() {
             if let (Some(from), Some(to)) = (edge["from"].as_str(), edge["to"].as_str()) {
-                links.insert((from.to_owned(), to.to_owned()));
+                links.insert((from.to_owned(), to.to_owned(), "graph"));
             }
         }
     }
     for pane in server.sessions.values().filter(|p| p.workspace == workspace && !p.exited) {
         if let Some(parent) = pane.spawned_by {
-            links.insert((address(parent), address(pane.id)));
+            links.insert((address(parent), address(pane.id), "spawned"));
         }
     }
     for pane in server.chromiums.values().filter(|p| p.workspace == workspace && p.id != p.owner) {
-        links.insert((address(pane.owner), address(pane.id)));
+        links.insert((address(pane.owner), address(pane.id), "chromium"));
     }
     if !links.is_empty() {
         let mut titles = server.pane_catalog_titles.borrow_mut();
         let now = std::time::Instant::now();
-        let keys: BTreeSet<_> = links.iter().flat_map(|(a,b)| [a.as_str(), b.as_str()]).collect();
+        let keys: BTreeSet<_> = links.iter().flat_map(|(a,b,_)| [a.as_str(), b.as_str()]).collect();
         let summaries: BTreeMap<_,_> = agents.iter().filter_map(|a| Some((a["pane"].as_u64()?, a))).collect();
         for pane in server.sessions.values().filter(|p| p.workspace == workspace && !p.exited) {
             let key = address(pane.id);
@@ -184,9 +186,9 @@ fn agent_tree(server: &Server, workspace: &str, agents: &[Value]) -> Value {
             }
         }
     }
-    let edges: Vec<_> = links.into_iter().filter(|(a,b)| nodes.contains_key(a) && nodes.contains_key(b))
-        .map(|(from,to)| json!({"from":from,"to":to})).collect();
-    json!({"nodes":nodes.into_values().collect::<Vec<_>>(),"edges":edges})
+    let edges: Vec<_> = links.into_iter().filter(|(a,b,_)| nodes.contains_key(a) && nodes.contains_key(b))
+        .map(|(from,to,kind)| json!({"from":from,"to":to,"kind":kind})).collect();
+    json!({"graph_revision":revision,"nodes":nodes.into_values().collect::<Vec<_>>(),"edges":edges})
 }
 
 fn agent_summary(pane: u64, value: &Value, title: &str) -> Option<Value> {

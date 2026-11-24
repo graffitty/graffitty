@@ -63,6 +63,20 @@ func refresh_body() -> void:
 		if not group.connected: continue
 		var peer: Node = group.peer
 		connected_scopes[[peer.url, peer.epoch]] = true
+	# Sessions groups by URL. Two live windows may still present different epochs.
+	for host in application.hosts:
+		if not is_instance_valid(host) or host.is_queued_for_deletion(): continue
+		var backend: Variant = host.get("session_backend")
+		if backend == null or not backend.is_remote or not is_instance_valid(backend.connection): continue
+		var connection: Node = backend.connection
+		for peer in connection.connections if "connections" in connection else [connection]:
+			if not is_instance_valid(peer) or not peer.connected or connected_scopes.has([peer.url,peer.epoch]): continue
+			var group_index := groups.find_custom(func(group): return group.id == peer.url)
+			if group_index < 0: continue
+			var group: Dictionary = groups[group_index].duplicate()
+			group.merge({"peer":peer,"host":host,"connected":true},true)
+			groups.append(group)
+			connected_scopes[[peer.url,peer.epoch]] = true
 	for host in application.hosts:
 		if not is_instance_valid(host) or host.is_queued_for_deletion(): continue
 		var looking: bool = application.agent_attention.in_view.call(host)
@@ -92,15 +106,17 @@ func refresh_body() -> void:
 					if connected_scopes.has(scope) and not peer.connected:
 						stale_keys[key] = true
 						continue
-					if application.agent_attention.outside_catalog(catalog, pane, peer.workspace, node): continue
+					# The graph cache is shared across windows. Resolve selection through
+					# this layout's own transport and attachment.
+					node = application.agent_attention.graph_node_for(peer, local_id, connection, node)
+					connection = peer
+					if application.agent_attention.outside_catalog(catalog, pane, peer.workspace, node):
+						if catalog.destinations.has(pane): stale_keys[key] = true
+						continue
 					if peer.connected and catalog.destinations.has(pane) and not peer.session_view_ready(peer.workspace):
 						stale_keys[key] = true
 						continue
-					# The graph cache is shared across windows. Resolve selection through
-					# this layout's own transport and attachment.
-					if is_instance_valid(connection):
-						if connection.url != peer.url or connection.epoch != peer.epoch or connection.workspace != peer.workspace: node = {}
-						connection = peer
+
 				if key == selected_key and tab.id == host.workspace_layout.active:
 					var route: Node = peer if backend != null and backend.is_remote else connection
 					if is_instance_valid(route) and route.connected and route.session_view_ready(route.workspace):
@@ -117,9 +133,9 @@ func refresh_body() -> void:
 				var id := JSON.stringify([connection.url, connection.epoch, connection.wire_id(PaneAddress.id(key))])
 				# Two views of the same server terminal are still one agent. Prefer
 				# its focused/visible owner for seen rules and subsequent selection.
+				ids_by_key[key] = id
 				if input.has(id) and (input[id].focused or (input[id].looking and not focused)): continue
 				_owners[id] = host
-				ids_by_key[key] = id
 				remotes[id] = preload("res://scenes/remote/ConnectionName.gd").display({
 					"name": connection.display_name if "display_name" in connection else "",
 					"hostname": connection.server_hostname if "server_hostname" in connection else "",
@@ -132,9 +148,8 @@ func refresh_body() -> void:
 					"attention": application.agent_attention.project_attention(node.get("attention")),
 					"looking": shown, "focused": focused}
 		host_trees.append([host, ids_by_key, stale_keys])
-	var background_trees := _add_away(input, remotes, sessions, catalog_views, groups)
-	var next_trees := _build_trees(host_trees)
-	next_trees.merge(background_trees, true)
+	var topologies := _add_away(input, remotes, sessions, catalog_views, groups)
+	var next_trees := _build_trees(host_trees, topologies, input)
 	for id in next_trees:
 		for sub in next_trees[id]:
 			var child: String = sub.get("row_id", "")
@@ -174,7 +189,7 @@ func refresh_body() -> void:
 ## descriptors' server-owned agent summaries. Shown views win: their rows carry
 ## live titles and looking/focused state.
 func _add_away(input: Dictionary, remotes: Dictionary, sessions: Dictionary, catalog_views: Dictionary, groups: Array) -> Dictionary:
-	var background_trees := {}
+	var topologies := {}
 	_away.clear()
 	for group in groups:
 		var peer: Node = group.get("peer")
@@ -204,26 +219,17 @@ func _add_away(input: Dictionary, remotes: Dictionary, sessions: Dictionary, cat
 					"looking": view.get("looking", false), "focused": view.get("focused", false)}
 
 			var topology: Dictionary = value.get("agent_tree", {})
-			if topology.get("edges", []).is_empty(): continue
+			if topology.is_empty(): continue
 			# A closing root may already lack a catalog summary. Removing it
 			# lets the tree builder choose a remaining agent for each branch.
 			var nodes: Array = topology.get("nodes", []).filter(func(node):
 				return node is Dictionary and (node.get("kind") != "agent" or
 					input.has(JSON.stringify([peer.url, peer.epoch, PaneAddress.id(str(node.get("key", "")))]))))
-			for tree in _core.tree({"nodes": nodes, "edges": topology.edges}):
-				var root_id := JSON.stringify([peer.url, peer.epoch, PaneAddress.id(tree.root)])
-				if _owners.has(root_id): continue
-				var session_id := str(value.id)
-				for sub in tree.rows:
-					var pane := PaneAddress.id(sub.key)
-					sub.away_id = JSON.stringify([peer.url, peer.epoch, pane])
-					_away.get_or_add(sub.away_id, {"host": group.host, "peer": peer, "session": session_id, "pane": pane})
-					if sub.kind == "agent": sub.row_id = sub.away_id
-					if input.has(sub.away_id):
-						sub.title = input[sub.away_id].title
-						if input[sub.away_id].status == "offline": sub.status = "offline"
-				background_trees[root_id] = tree.rows
-	return background_trees
+			var scoped_nodes := {}
+			for node in nodes: scoped_nodes[node.key] = node
+			topologies[[peer.url, peer.epoch, value.id]] = {"nodes":scoped_nodes, "edges":topology.edges.duplicate(),
+				"graph_revision":int(topology.graph_revision), "routes":{}, "host":group.host, "peer":peer, "session":str(value.id)}
+	return topologies
 
 ## Server-owned session label (manual or automatic name), falling back to its ID.
 static func session_label(connection: Object) -> String:
@@ -236,9 +242,28 @@ static func session_label(connection: Object) -> String:
 				return label if not label.is_empty() else current.trim_prefix("$")
 	return current.trim_prefix("$")
 
+## The peer snapshot contains local addresses. Compare only revisions from the
+## same server, epoch and workspace, then translate its graph edges to wire IDs.
+func _merge_graph_snapshot(topology: Dictionary, peer: Node) -> void:
+	if not "topology" in peer or peer.topology.get("workspace") != topology.session: return
+	var snapshot: Variant = peer.topology.get("graph")
+	if not snapshot is Dictionary: return
+	var revision := int(snapshot.get("revision", -1))
+	if revision <= topology.graph_revision: return
+	topology.graph_revision = revision
+	topology.edges = topology.edges.filter(func(edge): return edge.get("kind") != "graph")
+	for edge in snapshot.get("edges", []):
+		var source := PaneAddress.id(str(edge.get("from", "")))
+		var target := PaneAddress.id(str(edge.get("to", "")))
+		if source < 0 or target < 0: continue
+		var source_wire: int = peer.wire_id(source)
+		var target_wire: int = peer.wire_id(target)
+		if source_wire > 0 and target_wire > 0:
+			topology.edges.append({"from":PaneAddress.key(source_wire),"to":PaneAddress.key(target_wire),"kind":"graph"})
+
 ## One graph per host: nodes for every pane in its tabs and the wires among
 ## them. The Rust model picks each group's leading agent and orders children.
-func _build_trees(host_trees: Array) -> Dictionary:
+func _build_trees(host_trees: Array, topologies: Dictionary, input: Dictionary) -> Dictionary:
 	var result: Dictionary = {}
 	for pair in host_trees:
 		var host: Node = pair[0]
@@ -247,6 +272,15 @@ func _build_trees(host_trees: Array) -> Dictionary:
 		var nodes: Array = []
 		var edges: Array = []
 		var keys: Dictionary = {}
+		var wire_keys := {}
+		var pane_peers := {}
+		var backend: Variant = host.get("session_backend")
+		var transport: Node = backend.connection if backend != null and backend.is_remote else null
+		if is_instance_valid(transport):
+			for peer in transport.connections if "connections" in transport else [transport]:
+				if not is_instance_valid(peer) or not peer.connected: continue
+				var scope := [peer.url,peer.epoch,peer.workspace]
+				if topologies.has(scope): _merge_graph_snapshot(topologies[scope],peer)
 		for tab in host.workspace_layout.tabs:
 			for window in Layout.windows(tab.tree):
 				var key: String = window.pane
@@ -255,6 +289,20 @@ func _build_trees(host_trees: Array) -> Dictionary:
 				var entry := {"key": key, "kind": "terminal", "title": host.pane_title(key), "provider": "", "app": "", "status": "",
 					"rect": [rect.position.x, rect.position.y, rect.size.x, rect.size.y]}
 				var id := PaneAddress.id(key)
+				var peer: Node = transport.owners.get(id) if is_instance_valid(transport) and "owners" in transport else transport
+				var scope := []
+				var wire := ""
+				if is_instance_valid(peer) and peer.connected and peer.session_view_ready(peer.workspace):
+					pane_peers[key] = peer
+					scope = [peer.url,peer.epoch,peer.workspace]
+					wire = PaneAddress.key(peer.wire_id(id))
+					if topologies.has(scope):
+						wire_keys[key] = [scope,wire]
+						var routes: Dictionary = topologies[scope].routes
+						var agent_id := JSON.stringify([peer.url,peer.epoch,peer.wire_id(id)])
+						var preferred: Node = _owners.get(agent_id, _away.get(agent_id, {}).get("host"))
+						if not routes.has(wire) or preferred == host:
+							routes[wire] = {"host_id":host.get_instance_id(),"key":key}
 				if host.is_chromium_pane(key):
 					entry.kind = "chromium"
 					var owner_id: int = host.chromiums[id].owner_id if host.chromiums.has(id) else id
@@ -262,7 +310,9 @@ func _build_trees(host_trees: Array) -> Dictionary:
 				elif host.is_terminal_pane(key) and host.sessions.has(id):
 					var node: Dictionary = graph.nodes.get(key, {})
 					var owner: Node = graph.remote_owners.get(key)
-					if is_instance_valid(owner):
+					if is_instance_valid(peer):
+						node = application.agent_attention.graph_node_for(peer, id, owner, node)
+					if not node.is_empty() and is_instance_valid(owner):
 						node = application.agent_attention.activity_node(key, node, owner, owner.workspace)
 					var term: Node = host.sessions[id].term
 					var provider := str(node.get("provider", ""))
@@ -285,11 +335,32 @@ func _build_trees(host_trees: Array) -> Dictionary:
 					if spawned_by >= 0 and spawned_by != id: edges.append({"from": PaneAddress.key(spawned_by), "to": key, "kind": "spawned"})
 				else: continue
 				keys[key] = true
-				nodes.append(entry)
+				if wire_keys.has(key):
+					entry.key = wire
+					var catalog_nodes: Dictionary = topologies[scope].nodes
+					if entry.kind == "agent" or catalog_nodes.get(wire, {}).get("kind") != "agent":
+						catalog_nodes[wire] = entry
+				else: nodes.append(entry)
 		for edge in graph.edges.values():
-			if keys.has(str(edge.get("from", ""))) and keys.has(str(edge.get("to", ""))):
-				edges.append({"from": str(edge.from), "to": str(edge.to), "kind": "graph"})
-		var computed: Variant = _core.tree({"nodes": nodes, "edges": edges})
+			if wire_keys.has(edge.from) or wire_keys.has(edge.to): continue
+			if not keys.has(edge.from) or not keys.has(edge.to): continue
+			var matches := true
+			for key in [edge.from,edge.to]:
+				if not pane_peers.has(key): continue
+				var owner: Node = graph.remote_owners.get(key)
+				if application.agent_attention.graph_node_for(pane_peers[key], PaneAddress.id(key), owner, graph.nodes.get(key, {})).is_empty():
+					matches = false
+			if matches: edges.append({"from":edge.from,"to":edge.to,"kind":"graph"})
+		var local_edges := []
+		for edge in edges:
+			if not wire_keys.has(edge.from) and not wire_keys.has(edge.to):
+				local_edges.append(edge)
+			elif wire_keys.has(edge.from) and wire_keys.has(edge.to):
+				var source: Array = wire_keys[edge.from]
+				var target: Array = wire_keys[edge.to]
+				if source[0] == target[0]:
+					topologies[source[0]].edges.append({"from":source[1],"to":target[1],"kind":edge.kind})
+		var computed: Variant = _core.tree({"nodes": nodes, "edges": local_edges})
 		if not computed is Array: continue
 		for tree in computed:
 			var root_id = ids_by_key.get(str(tree.root))
@@ -302,6 +373,24 @@ func _build_trees(host_trees: Array) -> Dictionary:
 					item["row_id"] = ids_by_key[item.key]
 				subs.append(item)
 			result[root_id] = subs
+	for topology in topologies.values():
+		var peer: Node = topology.peer
+		for tree in _core.tree({"nodes":topology.nodes.values(),"edges":topology.edges}):
+			var root_id := JSON.stringify([peer.url,peer.epoch,PaneAddress.id(tree.root)])
+			for sub in tree.rows:
+				var pane := PaneAddress.id(sub.key)
+				var id := JSON.stringify([peer.url,peer.epoch,pane])
+				sub.parent = topology.routes.get(sub.parent, {}).get("key",sub.parent)
+				if topology.routes.has(sub.key):
+					sub.merge(topology.routes[sub.key],true)
+				else:
+					sub.away_id = id
+					_away.get_or_add(id, {"host":topology.host,"peer":peer,"session":topology.session,"pane":pane})
+				if sub.kind == "agent": sub.row_id = id
+				if input.has(id):
+					sub.title = input[id].title
+					if input[id].status == "offline": sub.status = "offline"
+			result[root_id] = tree.rows
 	return result
 
 func focus_key(host_id: int, key: String) -> void:

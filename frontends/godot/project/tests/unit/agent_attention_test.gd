@@ -258,6 +258,29 @@ class ViewPeer extends Peer:
 	var topology := {"workspace":"$1", "graph":{"nodes":[]}}
 
 
+class WirePeer extends ViewPeer:
+	var wire := 7
+	func wire_id(_id: int) -> int: return wire
+
+
+func test_only_matching_graph_attachment_may_override_catalog_membership() -> void:
+	var peer := WirePeer.new()
+	var owner := WirePeer.new()
+	var row := {"activity_revision": 100}
+	var catalog := {"revision": 2, "destinations": {7: "$2"}}
+	for mismatch in ["none", "server", "epoch", "workspace", "snapshot", "wire", "missing"]:
+		owner.url = "test://other" if mismatch == "server" else peer.url
+		owner.epoch = "other" if mismatch == "epoch" else peer.epoch
+		owner.workspace = "$2" if mismatch == "workspace" else peer.workspace
+		owner.topology.workspace = "$2" if mismatch == "snapshot" else peer.workspace
+		owner.wire = 8 if mismatch == "wire" else peer.wire
+		var candidate := Attention.graph_node_for(peer, 1, null if mismatch == "missing" else owner, row)
+		expect(Attention.outside_catalog(catalog, peer.wire, peer.workspace, candidate) == (mismatch != "none"),
+			"Only the matching graph revision overrides the inventory: " + mismatch)
+	peer.free()
+	owner.free()
+
+
 func test_disconnected_visible_window_cannot_read_another_windows_new_graph() -> void:
 	var app := Application.new()
 	var cached := RemoteHost.new()

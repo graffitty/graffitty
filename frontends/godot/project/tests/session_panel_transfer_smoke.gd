@@ -52,6 +52,8 @@ func run() -> void:
 		quit(1)
 		return
 	var pid: int = source.sessions[tab].term.get_shell_pid()
+	var agents_panel: Window = preload("res://scenes/mods/PanelWindow.gd").open(source, "agents")
+	var agents_copy: int = agents_panel.view.copy_id()
 	var state := {"source": source, "id": tab, "kind": "tab", "session_drop": {"session": ""}}
 	await SessionDrag.commit(app, state, null)
 	var target: Node
@@ -62,6 +64,8 @@ func run() -> void:
 		quit(1)
 		return
 	check(await wait_for(func(): return target.get_parent().connection.connected and target.sessions.has(tab)), "Destination attaches")
+	check(await wait_for(func(): return agents_panel.source == target and agents_panel._props().window == target.get_instance_id()),
+		"The docked Agents panel follows the destination presentation")
 	var session: String = target.session_backend.connection.workspace
 	check(target.get_window() == root, "New-session drop reuses the current window")
 	check(session != original, "New-session drop allocates another server session")
@@ -75,6 +79,9 @@ func run() -> void:
 	if not returned:
 		quit(1)
 		return
+	check(await wait_for(func(): return agents_panel.source == source and agents_panel.view.copy_id() == agents_copy),
+		"Returning restores the same Agents panel to its original host")
+	agents_panel._close_panel()
 	check(source.workspace_layout.tab(first).size() > 0 and source.workspace_layout.tab(tab).size() > 0, "Both tabs remain distinct")
 	check(source.sessions[tab].term.get_shell_pid() == pid, "Return transfer retains PID")
 	# A pane drop splits only the carried group before transferring the new tab.

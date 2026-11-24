@@ -71,6 +71,8 @@ func queue_refresh() -> void:
 func _flush_refresh() -> void:
 	_refresh_pending = false
 	if not available: return
+	for panel in get_tree().get_nodes_in_group(&"panel_window"):
+		_sync_panel_source(panel)
 	for terminal_host in application.hosts:
 		if not is_instance_valid(terminal_host) or terminal_host.is_queued_for_deletion(): continue
 		watch_host(terminal_host)
@@ -508,6 +510,17 @@ func _host_for(window_id: int) -> Node:
 	return null
 
 
+## A docked or floating panel stays under the workspace Window across server switches.
+func _sync_panel_source(panel: Window) -> void:
+	var owner := panel.get_parent().get_window()
+	if is_instance_valid(panel.source) and panel.source in application.hosts and panel.source.get_window() == owner: return
+	for candidate in application.hosts:
+		if is_instance_valid(candidate) and candidate.is_inside_tree() and candidate.get_window() == owner:
+			panel.bind_source(candidate)
+			return
+	panel.bind_source(null)
+
+
 func _handle(request: Dictionary) -> void:
 	if str(request.kind) == "run" and str(request.name) == "PaneHeaderAction":
 		var header: Node = get_tree().get_first_node_in_group(&"pane_header_%d" % int(request.copy))
@@ -515,8 +528,13 @@ func _handle(request: Dictionary) -> void:
 		if is_instance_valid(header) and args is Dictionary: header.activate(str(args.get("action", "")))
 		return
 	var window: Node = get_tree().get_first_node_in_group(&"panel_window_%d" % int(request.copy))
-	var terminal_host: Node = window.source if window != null and "source" in window else null
-	if not is_instance_valid(terminal_host) and not application.hosts.is_empty(): terminal_host = application.hosts[0]
+	var terminal_host: Node
+	if window != null:
+		_sync_panel_source(window)
+		terminal_host = window.source
+		if not is_instance_valid(terminal_host): return
+	elif not application.hosts.is_empty():
+		terminal_host = application.hosts[0]
 	match str(request.kind):
 		"run": run(terminal_host, str(request.name), JSON.parse_string(str(request.args)) if request.args is String else {}, window)
 		"open", "close": pass # Overlays are not routed yet; the shipped mods open none.

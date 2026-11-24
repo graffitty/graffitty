@@ -109,10 +109,43 @@ func run() -> void:
 	dialog.view.click("sub-test-3|t17")
 	pump()
 	check(app.agents.focused == "child", "Expanded background child uses the same destination")
+	# Keep the same JS copy (and its fold state) across changes of presentation.
+	var replacement := Host.new()
+	replacement.application = app
+	root.add_child(replacement)
+	var other_window := Window.new()
+	root.add_child(other_window)
+	var independent := Host.new()
+	independent.application = app
+	other_window.add_child(independent)
+	app.hosts.append(independent)
+	var independent_dialog: Window = PanelWindow.open(independent, "agents")
+	var copy: int = dialog.view.copy_id()
+	app.agents.selections = {host.get_instance_id(): "test-1", replacement.get_instance_id(): "test-2"}
+	for current: Host in [replacement, host, replacement]:
+		app.hosts = [current, independent]
+		space.test_hosts = [current]
+		app.agents.changed.emit()
+		await settle()
+		dialog.set_compact(current == replacement)
+		dialog.view.render_now()
+		check(independent_dialog.source == independent and independent_dialog._props().window == independent.get_instance_id(),
+			"The other workspace window keeps its own panel source")
+		var selection: String = app.agents.selected_id(current)
+		check(dialog.source == current and dialog._props().window == current.get_instance_id() and dialog.view.copy_id() == copy,
+			"The retained panel follows the presenting host and its selection topic")
+		check(dialog.view.click("ag-" + selection), "Selected agent is actionable in this presentation")
+		pump()
+		check(app.mods.last_action_host == current and app.agents.focused == selection, "Agent action resolves the current presentation")
+	host.queue_free()
+	await settle()
+	check(dialog.source == replacement, "Freeing the outgoing host keeps the surviving panel bound")
+	dialog.set_compact(false)
 	app.agents.rows.clear()
 	app.agents.changed.emit()
 	await settle()
 	check(has_text(dialog, "No agent status yet"), "Empty list explains itself")
+	independent_dialog.queue_free()
 	dialog.queue_free()
 	await settle()
 	finish("AGENTS_DIALOG")

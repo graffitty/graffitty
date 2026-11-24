@@ -238,6 +238,13 @@ func test_selected_agent_is_scoped_to_each_presented_window_without_keyboard_foc
 	hosts[1].presentation_active = false
 	panel.refresh()
 	expect(panel.selected_id(hosts[1]).is_empty(), "Background presentations have no selected row")
+	hosts[1].presentation_active = true
+	peers[1].catalog_revision += 1
+	peers[1].available_sessions = [{"id":"$2","agents":[]},{"id":"$3","agents":[{"pane":7,"provider":"pi","status":"busy"}]}]
+	app.agent_api.graph.nodes.t1.activity_revision = 100
+	app.agent_attention.refresh()
+	panel.refresh()
+	expect(panel.selected_id(hosts[1]).is_empty(), "Another epoch’s higher revision cannot select an agent moved to a different session")
 	peers[0].connected = false
 	panel.refresh()
 	expect(panel.selected_id(hosts[0]).is_empty(), "A disconnected graph owner cannot select its retained row")
@@ -520,8 +527,8 @@ func test_agents_in_other_sessions_and_servers_are_listed() -> void:
 	expect(by_key["t1"].at == 1800000000 and by_key["t3"].at == 1800000300, "Visible and unshown sessions both use the server's transition time")
 	expect(by_key.has("t4") and by_key["t4"].provider == "codex" and by_key["t4"].title == "Refactor", "OSC-reported agents use their program app and message")
 	peer.available_sessions[0].agent_tree = {
-		"nodes": [{"key":"t3","kind":"agent","provider":"claude"}, {"key":"t4","kind":"agent","provider":"codex"}],
-		"edges": [{"from":"t3","to":"t4"}]}
+		"graph_revision":1, "nodes": [{"key":"t3","kind":"agent","provider":"claude"}, {"key":"t4","kind":"agent","provider":"codex"}],
+		"edges": [{"from":"t3","to":"t4","kind":"graph"}]}
 	controller.refresh()
 	expect(controller.rows.size() == 2, "A linked background agent appears under its root")
 	var child: Dictionary = controller.trees[by_key["t3"].id][0]
@@ -655,6 +662,76 @@ class TreeChromium extends RefCounted:
 
 class TreeConnection extends Connection:
 	func wire_id(id: int) -> int: return id
+
+class AttachedTreeHost extends TreeHost:
+	var presentation_active := true
+	var session_backend := Backend.new()
+
+class RevisionTreePeer extends Peer:
+	var topology := {"workspace":"$2","graph":{"revision":1,"edges":[],"nodes":[]}}
+
+func test_catalog_and_live_topology_share_scoped_children_and_local_navigation() -> void:
+	var app := Application.new()
+	var host := AttachedTreeHost.new()
+	var peer := RevisionTreePeer.new()
+	host.session_backend.connection = peer
+	app.hosts = [host]
+	host.pane_focus = "t8"
+	host.workspace_layout.active = 1
+	var windows := []
+	for pane in [1,8,9,10]:
+		host.terminal(pane, 1 if pane == 10 else -1)
+		windows.append({"pane":PaneAddress.key(pane),"shown":true})
+	host.workspace_layout.tabs = [{"id":1,"tree":{"windows":windows}}]
+	peer.available_sessions = [{"id":"$2","agents":[{"pane":7,"provider":"pi","status":"idle"},{"pane":8,"provider":"pi","status":"busy"}],
+		"agent_tree":{"graph_revision":2,"nodes":[{"key":"t7","kind":"agent","provider":"pi"},{"key":"t9","kind":"terminal"},
+			{"key":"t8","kind":"agent","provider":"pi"}],"edges":[{"from":"t7","to":"t9","kind":"graph"},{"from":"t9","to":"t8","kind":"graph"}]}}]
+	app.agent_api.graph.nodes.t1 = {"provider":"pi","status":"idle"}
+	app.agent_api.graph.remote_owners.t1 = peer
+	var panel := preload("res://scenes/Agents.gd").new()
+	panel.application = app
+	panel._sounds = {"enabled":false}
+	app.agents = panel
+	app.agent_attention.in_view = func(_host): return false
+	var leader_id := JSON.stringify([peer.url,peer.epoch,7])
+	var child_id := JSON.stringify([peer.url,peer.epoch,8])
+	for graph_ready in [false,true]:
+		if graph_ready:
+			app.agent_api.graph.nodes.t8 = {"provider":"pi","status":"busy"}
+			app.agent_api.graph.remote_owners.t8 = peer
+			app.agent_api.graph.remote_owners.t9 = peer
+			peer.topology.graph.revision = 2
+			peer.topology.graph.edges = [{"from":"t1","to":"t9"},{"from":"t9","to":"t8"}]
+			app.agent_api.graph.edges = {"first":{"from":"t1","to":"t9"},"second":{"from":"t9","to":"t8"}}
+		app.agent_attention.refresh()
+		expect(panel.rows.size() == 1 and panel.rows[0].id == leader_id and panel.rows[0].section == "Working", "The catalog-selected worker promotes its existing live leader")
+		var subs: Array = panel.trees.get(leader_id, [])
+		expect(subs.size() == 3, "Catalog and live links retain one intermediate terminal, one worker, and the live-only sibling")
+		var child: Array = subs.filter(func(row): return row.get("row_id") == child_id)
+		expect(panel.selected_id(host) == child_id and child.size() == 1 and child[0].parent == "t9", "The selected worker stays nested once across graph delivery")
+		var intermediate: Array = subs.filter(func(row): return row.key == "t9")
+		expect(intermediate.size() == 1 and intermediate[0].parent == "t1", "The catalog wire root resolves to its remapped local parent")
+		if not intermediate.is_empty(): panel.focus_key(intermediate[0].host_id,intermediate[0].key)
+		expect(host.revealed == "t9","Intermediate navigation reveals the pane locally")
+		panel.focus(leader_id)
+		expect(host.revealed == "t1","The live leader retains its local navigation target")
+	peer.topology.graph.revision = 3
+	peer.topology.graph.edges = []
+	app.agent_attention.refresh()
+	expect(panel.rows.size() == 2 and panel.trees[leader_id].size() == 1, "A newer empty graph removes both catalog wires and retains the spawned sibling")
+	peer.topology.graph.revision = 4
+	peer.topology.graph.edges = [{"from":"t1","to":"t8"}]
+	app.agent_attention.refresh()
+	expect(panel.rows.size() == 1 and panel.trees[leader_id].size() == 2, "A graph-first new connection replaces the earlier catalog path")
+	peer.catalog_revision += 1
+	peer.available_sessions[0].agent_tree = {"graph_revision":5,"nodes":[],"edges":[]}
+	app.agent_attention.refresh()
+	expect(panel.rows.size() == 2 and panel.trees[leader_id].size() == 1, "A newer empty catalog suppresses the stale live wire")
+	panel.free()
+	app.free()
+	host.free()
+	peer.free()
+
 
 func test_connected_panes_form_a_tree_under_the_first_agent() -> void:
 	var app := Application.new()
