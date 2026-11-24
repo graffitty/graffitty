@@ -1,0 +1,122 @@
+<!doctype html>
+<html lang="en"><head><meta charset="utf-8"><title>Tab pane tab</title>
+<script src="https://cdn.jsdelivr.net/npm/gsap@3.14.2/dist/gsap.min.js"></script><style>
+*{box-sizing:border-box}html,body{margin:0}#stage{position:relative;overflow:hidden;width:1920px;height:1080px;background:linear-gradient(140deg,#273044,#475365 55%,#2b3843)}
+.window{position:absolute;overflow:hidden;border-radius:16px;box-shadow:0 24px 65px #10152175,0 0 0 1px #ffffff35;background:#1f232b}
+video{display:block;width:100%;height:auto}
+.traffic-lights {
+      position: absolute; top: calc(36px * var(--footage-scale));
+      left: calc(20px * var(--footage-scale)); display: flex;
+      gap: calc(18px * var(--footage-scale));
+      height: calc(28px * var(--footage-scale)); z-index: 2; pointer-events: none;
+    }
+.light { width: calc(28px * var(--footage-scale)); height: calc(28px * var(--footage-scale)); border-radius: 50%; border: 1px solid #00000030; }
+.close { background: #ec6765; }
+.minimize { background: #f2ca44; }
+.maximize { background: #65c466; }.window{left:321px;top:97px;width:1278px;--footage-scale:1.42}#cursor{position:absolute;left:321px;top:97px;width:33px;height:40px;z-index:3}</style></head>
+<body><main id="stage" data-composition-id="tab-pane-tab" data-width="1920" data-height="1080" data-duration="9.1" data-fps="30"><div class="window"><video id="workspace" class="clip" src="assets/pane-transfer.mp4" data-start="0" data-duration="9.1" data-track-index="0" muted playsinline></video><div class="traffic-lights" aria-hidden="true"><span class="light close"></span><span class="light minimize"></span><span class="light maximize"></span></div></div><svg id="cursor" viewBox="0 0 26 32"><path d="M2 2L23 19L13 19L18 28L13 30L8 21L2 27Z" fill="#17191d" stroke="white" stroke-width="2" stroke-linejoin="round"/></svg></main>
+<script>const tl=gsap.timeline({paused:true});tl.set("#cursor",{x:856.26,y:71.00},0/30);
+tl.set("#cursor",{x:871.14,y:70.97},22/30);
+tl.set("#cursor",{x:864.91,y:70.89},23/30);
+tl.set("#cursor",{x:855.03,y:70.76},24/30);
+tl.set("#cursor",{x:841.91,y:70.58},25/30);
+tl.set("#cursor",{x:825.94,y:70.37},26/30);
+tl.set("#cursor",{x:807.54,y:70.12},27/30);
+tl.set("#cursor",{x:787.11,y:69.84},28/30);
+tl.set("#cursor",{x:765.06,y:69.55},29/30);
+tl.set("#cursor",{x:741.78,y:69.24},30/30);
+tl.set("#cursor",{x:717.70,y:68.91},31/30);
+tl.set("#cursor",{x:693.21,y:68.59},32/30);
+tl.set("#cursor",{x:668.72,y:68.26},33/30);
+tl.set("#cursor",{x:644.63,y:67.93},34/30);
+tl.set("#cursor",{x:621.36,y:67.62},35/30);
+tl.set("#cursor",{x:599.31,y:67.33},36/30);
+tl.set("#cursor",{x:578.88,y:67.05},37/30);
+tl.set("#cursor",{x:560.47,y:66.81},38/30);
+tl.set("#cursor",{x:544.51,y:66.59},39/30);
+tl.set("#cursor",{x:531.38,y:66.42},40/30);
+tl.set("#cursor",{x:521.51,y:66.28},41/30);
+tl.set("#cursor",{x:515.28,y:66.20},42/30);
+tl.set("#cursor",{x:513.12,y:66.17},43/30);
+tl.set("#cursor",{x:515.62,y:68.02},78/30);
+tl.set("#cursor",{x:522.84,y:73.34},79/30);
+tl.set("#cursor",{x:534.37,y:81.85},80/30);
+tl.set("#cursor",{x:549.81,y:93.24},81/30);
+tl.set("#cursor",{x:568.74,y:107.21},82/30);
+tl.set("#cursor",{x:590.75,y:123.45},83/30);
+tl.set("#cursor",{x:615.43,y:141.66},84/30);
+tl.set("#cursor",{x:642.37,y:161.53},85/30);
+tl.set("#cursor",{x:671.16,y:182.77},86/30);
+tl.set("#cursor",{x:701.38,y:205.07},87/30);
+tl.set("#cursor",{x:732.63,y:228.12},88/30);
+tl.set("#cursor",{x:764.50,y:251.64},89/30);
+tl.set("#cursor",{x:796.58,y:275.30},90/30);
+tl.set("#cursor",{x:828.44,y:298.81},91/30);
+tl.set("#cursor",{x:859.70,y:321.87},92/30);
+tl.set("#cursor",{x:889.92,y:344.17},93/30);
+tl.set("#cursor",{x:918.71,y:365.40},94/30);
+tl.set("#cursor",{x:945.65,y:385.28},95/30);
+tl.set("#cursor",{x:970.33,y:403.49},96/30);
+tl.set("#cursor",{x:992.34,y:419.72},97/30);
+tl.set("#cursor",{x:1011.27,y:433.69},98/30);
+tl.set("#cursor",{x:1026.70,y:445.08},99/30);
+tl.set("#cursor",{x:1038.24,y:453.59},100/30);
+tl.set("#cursor",{x:1045.46,y:458.92},101/30);
+tl.set("#cursor",{x:1047.96,y:460.76},102/30);
+tl.set("#cursor",{x:1046.96,y:458.71},150/30);
+tl.set("#cursor",{x:1044.08,y:452.85},151/30);
+tl.set("#cursor",{x:1039.54,y:443.61},152/30);
+tl.set("#cursor",{x:1033.55,y:431.39},153/30);
+tl.set("#cursor",{x:1026.30,y:416.64},154/30);
+tl.set("#cursor",{x:1018.02,y:399.76},155/30);
+tl.set("#cursor",{x:1008.91,y:381.20},156/30);
+tl.set("#cursor",{x:999.17,y:361.36},157/30);
+tl.set("#cursor",{x:989.02,y:340.67},158/30);
+tl.set("#cursor",{x:978.66,y:319.57},159/30);
+tl.set("#cursor",{x:968.30,y:298.46},160/30);
+tl.set("#cursor",{x:958.15,y:277.77},161/30);
+tl.set("#cursor",{x:948.41,y:257.93},162/30);
+tl.set("#cursor",{x:939.30,y:239.37},163/30);
+tl.set("#cursor",{x:931.02,y:222.49},164/30);
+tl.set("#cursor",{x:923.78,y:207.74},165/30);
+tl.set("#cursor",{x:917.78,y:195.52},166/30);
+tl.set("#cursor",{x:913.24,y:186.28},167/30);
+tl.set("#cursor",{x:910.37,y:180.42},168/30);
+tl.set("#cursor",{x:909.36,y:178.37},169/30);
+tl.set("#cursor",{x:909.24,y:178.11},170/30);
+tl.set("#cursor",{x:908.87,y:177.36},171/30);
+tl.set("#cursor",{x:908.27,y:176.14},172/30);
+tl.set("#cursor",{x:907.46,y:174.48},173/30);
+tl.set("#cursor",{x:906.45,y:172.42},174/30);
+tl.set("#cursor",{x:905.26,y:169.99},175/30);
+tl.set("#cursor",{x:903.89,y:167.20},176/30);
+tl.set("#cursor",{x:902.38,y:164.11},177/30);
+tl.set("#cursor",{x:900.72,y:160.72},178/30);
+tl.set("#cursor",{x:898.94,y:157.08},179/30);
+tl.set("#cursor",{x:897.04,y:153.22},180/30);
+tl.set("#cursor",{x:895.06,y:149.16},181/30);
+tl.set("#cursor",{x:892.99,y:144.94},182/30);
+tl.set("#cursor",{x:890.85,y:140.58},183/30);
+tl.set("#cursor",{x:888.66,y:136.11},184/30);
+tl.set("#cursor",{x:886.44,y:131.57},185/30);
+tl.set("#cursor",{x:884.19,y:126.98},186/30);
+tl.set("#cursor",{x:881.94,y:122.38},187/30);
+tl.set("#cursor",{x:879.69,y:117.80},188/30);
+tl.set("#cursor",{x:877.47,y:113.26},189/30);
+tl.set("#cursor",{x:875.28,y:108.79},190/30);
+tl.set("#cursor",{x:873.15,y:104.43},191/30);
+tl.set("#cursor",{x:871.08,y:100.21},192/30);
+tl.set("#cursor",{x:869.09,y:96.15},193/30);
+tl.set("#cursor",{x:867.20,y:92.29},194/30);
+tl.set("#cursor",{x:865.42,y:88.65},195/30);
+tl.set("#cursor",{x:863.76,y:85.26},196/30);
+tl.set("#cursor",{x:862.24,y:82.17},197/30);
+tl.set("#cursor",{x:860.88,y:79.38},198/30);
+tl.set("#cursor",{x:859.68,y:76.95},199/30);
+tl.set("#cursor",{x:858.67,y:74.89},200/30);
+tl.set("#cursor",{x:857.86,y:73.23},201/30);
+tl.set("#cursor",{x:857.27,y:72.01},202/30);
+tl.set("#cursor",{x:856.90,y:71.26},203/30);
+tl.set("#cursor",{x:856.77,y:71.00},204/30);
+
+window.__timelines=window.__timelines||{};window.__timelines["tab-pane-tab"]=tl;</script></body></html>
