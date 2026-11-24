@@ -53,7 +53,7 @@ if name == "RubberBand":
 shell.chmod(0o700)
 os.environ["GRAFFITTY_TEST_SERVER"] = str(cli)
 with ExitStack() as stack:
-    if name in ("Tabs", "PaneTabs") and shutil.which("aerospace"):
+    if name == "PaneTabs" and shutil.which("aerospace"):
         disabled = subprocess.run(
             ["aerospace", "enable", "off", "--fail-if-noop"], capture_output=True
         )

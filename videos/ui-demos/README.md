@@ -4,7 +4,7 @@ Four silent 1× recordings for presentations. The two tab demos and the landscap
 
 | Film | Interaction |
 | --- | --- |
-| Tab transfer | Pull Preview out of Notes and drop it back on the original tab strip. Both native Godot viewports and the pointer share a frame clock. The outgoing drag shows the native preview until release. After release both windows list sessions 1 and 2, with Notes selected in the original window and Preview in the detached window. On return the tab strip shows its insertion preview until the second release restores the two-tab window. HyperFrames positions the windows from the recorded drag coordinates and adds macOS traffic lights. |
+| Tab transfer | Pull Preview out of Notes and drop it back on the original tab strip. Both native Godot viewports and the pointer share a frame clock. The outgoing drag shows the native preview until release. After release both windows list sessions 1 and 2, with Notes selected in the original window and Preview in the detached window. On return the destination rises above the detached window. Its tab strip shows the insertion preview while the exposed part of the detached window follows the pointer until release. HyperFrames positions the windows from the recorded drag coordinates and adds macOS traffic lights. |
 | Tab → pane → tab | Drag Preview onto Notes, drop to split the workspace, then drag the Preview pane title back to the tab strip. |
 | Rubber band | The Android tab strip starts at the upper left. A short flick sends real eza, ripgrep and Git output coasting after the fingertip lifts. The terminal rebounds at the bottom, then a reverse flick rebounds at the top. |
 | Adaptive zoom demo | Two fingers pinch out to an overview of four mock agents. The test runner sits left of Claude, with the layout and Android reviewers above. Typing “Review the layout” on the simulated Gboard-style keyboard brings Claude into a close-up. Each key flashes under the touch marker as its input reaches Claude. Graffitty follows the input and restores the previous view after the idle timeout. |
@@ -25,7 +25,7 @@ hyperframes render "videos/ui-demos/$name" --strict --format webm --video-frame-
 
 ## Record new takes
 
-The desktop runner uses a private session server, a GPU window guard and the debug gft binary. For tab capture it disables AeroSpace and restores its previous state on exit. Use fresh take directories.
+The desktop runner uses a private session server, a GPU window guard and the debug gft binary. For the tab-to-pane capture it disables AeroSpace and restores its previous state on exit. Use fresh take directories.
 
 ```sh
 python3 videos/ui-demos/recording/desktop.py Tabs /tmp/gft-tabs-take

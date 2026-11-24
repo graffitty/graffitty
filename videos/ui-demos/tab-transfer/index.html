@@ -13,9 +13,9 @@ video{display:block;width:100%;height:auto}
 .light { width: calc(28px * var(--footage-scale)); height: calc(28px * var(--footage-scale)); border-radius: 50%; border: 1px solid #00000030; }
 .close { background: #ec6765; }
 .minimize { background: #f2ca44; }
-.maximize { background: #65c466; }.window{left:120px;top:165px;--footage-scale:1.08;width:972.0000000000001px;height:673.9200000000001px}#cursor{position:absolute;left:120px;top:165px;width:30px;height:37px;z-index:5}#floating{visibility:hidden}</style></head>
-<body><main id="stage" data-composition-id="tab-transfer" data-width="1920" data-height="1080" data-duration="7.6" data-fps="30"><div class="window"><video id="workspace" class="clip" src="assets/workspace.mp4" data-start="0" data-duration="7.6" data-track-index="0" muted playsinline></video><div class="traffic-lights" aria-hidden="true"><span class="light close"></span><span class="light minimize"></span><span class="light maximize"></span></div></div><div id="floating" class="window"><video id="detached" class="clip" src="assets/detached.mp4" data-start="1.2333333333333334" data-duration="3.3333333333333335" data-track-index="2" muted playsinline></video><div class="traffic-lights" aria-hidden="true"><span class="light close"></span><span class="light minimize"></span><span class="light maximize"></span></div></div><svg id="cursor" viewBox="0 0 26 32"><path d="M2 2L23 19L13 19L18 28L13 30L8 21L2 27Z" fill="#17191d" stroke="white" stroke-width="2" stroke-linejoin="round"/></svg></main>
-<script>const tl=gsap.timeline({paused:true});tl.set("#floating",{visibility:"visible"},1.2333333333333334);tl.set("#floating",{visibility:"hidden"},137/30);
+.maximize { background: #65c466; }.window{left:120px;top:165px;--footage-scale:1.08;width:972.0000000000001px;height:673.9200000000001px}#cursor{position:absolute;left:120px;top:165px;width:30px;height:37px;z-index:5}#destination{z-index:1}#floating{visibility:hidden;z-index:2}</style></head>
+<body><main id="stage" data-composition-id="tab-transfer" data-width="1920" data-height="1080" data-duration="7.6" data-fps="30"><div id="destination" class="window"><video id="workspace" class="clip" src="assets/workspace.mp4" data-start="0" data-duration="7.6" data-track-index="0" muted playsinline></video><div class="traffic-lights" aria-hidden="true"><span class="light close"></span><span class="light minimize"></span><span class="light maximize"></span></div></div><div id="floating" class="window"><video id="detached" class="clip" src="assets/detached.mp4" data-start="1.2333333333333334" data-duration="4.766666666666667" data-track-index="2" muted playsinline></video><div class="traffic-lights" aria-hidden="true"><span class="light close"></span><span class="light minimize"></span><span class="light maximize"></span></div></div><svg id="cursor" viewBox="0 0 26 32"><path d="M2 2L23 19L13 19L18 28L13 30L8 21L2 27Z" fill="#17191d" stroke="white" stroke-width="2" stroke-linejoin="round"/></svg></main>
+<script>const tl=gsap.timeline({paused:true});tl.set("#floating",{visibility:"visible"},1.2333333333333334);tl.set("#floating",{zIndex:0},137/30);tl.set("#floating",{visibility:"hidden"},180/30);
 tl.set("#cursor",{x:651.24,y:54.0},0/30);
 tl.set("#cursor",{x:664.32,y:53.01},28/30);
 tl.set("#cursor",{x:664.66,y:50.19},29/30);
@@ -187,5 +187,35 @@ tl.set("#floating",{x:639.36,y:56.16},133/30);
 tl.set("#floating",{x:628.56,y:54.0},134/30);
 tl.set("#floating",{x:617.76,y:51.84},135/30);
 tl.set("#floating",{x:604.8,y:49.68},136/30);
+tl.set("#floating",{x:591.84,y:47.52},137/30);
+tl.set("#floating",{x:578.88,y:47.52},138/30);
+tl.set("#floating",{x:565.92,y:45.36},139/30);
+tl.set("#floating",{x:550.8,y:43.2},140/30);
+tl.set("#floating",{x:537.84,y:41.04},141/30);
+tl.set("#floating",{x:522.72,y:38.88},142/30);
+tl.set("#floating",{x:509.76,y:36.72},143/30);
+tl.set("#floating",{x:494.64,y:34.56},144/30);
+tl.set("#floating",{x:479.52,y:32.4},145/30);
+tl.set("#floating",{x:466.56,y:30.24},146/30);
+tl.set("#floating",{x:451.44,y:28.08},147/30);
+tl.set("#floating",{x:436.32,y:25.92},148/30);
+tl.set("#floating",{x:423.36,y:23.76},149/30);
+tl.set("#floating",{x:408.24,y:21.6},150/30);
+tl.set("#floating",{x:395.28,y:19.44},151/30);
+tl.set("#floating",{x:382.32,y:17.28},152/30);
+tl.set("#floating",{x:369.36,y:15.12},153/30);
+tl.set("#floating",{x:358.56,y:12.96},154/30);
+tl.set("#floating",{x:345.6,y:12.96},155/30);
+tl.set("#floating",{x:334.8,y:10.8},156/30);
+tl.set("#floating",{x:324.0,y:8.64},157/30);
+tl.set("#floating",{x:315.36,y:6.48},158/30);
+tl.set("#floating",{x:306.72,y:6.48},159/30);
+tl.set("#floating",{x:298.08,y:4.32},160/30);
+tl.set("#floating",{x:291.6,y:4.32},161/30);
+tl.set("#floating",{x:285.12,y:2.16},162/30);
+tl.set("#floating",{x:278.64,y:2.16},163/30);
+tl.set("#floating",{x:276.48,y:2.16},164/30);
+tl.set("#floating",{x:272.16,y:0.0},165/30);
+tl.set("#floating",{x:270.0,y:0.0},166/30);
 
 window.__timelines=window.__timelines||{};window.__timelines["tab-transfer"]=tl;</script></body></html>

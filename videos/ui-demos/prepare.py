@@ -74,7 +74,7 @@ if args.name == "tab-transfer":
     assert visible == list(range(visible[0], visible[-1] + 1))
     dock = next(i for i, sample in enumerate(samples) if sample.get("docked"))
     hover = next(i for i, sample in enumerate(samples) if sample.get("dock_hover"))
-    assert visible[-1] + 1 == hover < dock
+    assert visible[0] < hover < dock == visible[-1] + 1
     assert all(sample.get("dock_hover") for sample in samples[hover:dock])
     # Both viewports are sampled at the same time as the pointer, including
     # the outgoing drag preview and the incoming tab-strip insertion preview.
@@ -86,15 +86,15 @@ if args.name == "tab-transfer":
         + f".window{{left:120px;top:165px;--footage-scale:{scale};width:{900 * scale}px;height:{624 * scale}px}}#cursor{{position:absolute;left:120px;top:165px;width:30px;height:37px;z-index:5}}"
     )
     body = (
-        '<div class="window">'
+        '<div id="destination" class="window">'
         + video("workspace", "workspace", 0, duration, 0)
         + lights
         + "</div>"
     )
     start = visible[0] / 30
     span = len(visible) / 30
-    css += "#floating{visibility:hidden}"
-    timeline += f'tl.set("#floating",{{visibility:"visible"}},{start});tl.set("#floating",{{visibility:"hidden"}},{hover}/30);\n'
+    css += "#destination{z-index:1}#floating{visibility:hidden;z-index:2}"
+    timeline += f'tl.set("#floating",{{visibility:"visible"}},{start});tl.set("#floating",{{zIndex:0}},{hover}/30);tl.set("#floating",{{visibility:"hidden"}},{dock}/30);\n'
     body += (
         '<div id="floating" class="window">'
         + video("detached", "detached", start, span, 2)

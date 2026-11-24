@@ -19,7 +19,7 @@ func capture() -> void:
 	var hovering: bool = is_instance_valid(second) and app.drag.get("mode", -1) == app.DragMode.DOCKED
 	if hovering: entry.dock_hover = true
 	if redocked: entry.docked = true
-	if is_instance_valid(win) and win.visible and not hovering and not redocked:
+	if is_instance_valid(win) and win.visible and not redocked:
 		win.get_texture().get_image().save_jpg(dir + "/tab-%04d.jpg" % frame, .97)
 		var pos := win.position-root.position
 		entry.window = [pos.x,pos.y]
