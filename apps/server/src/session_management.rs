@@ -66,9 +66,11 @@ pub fn description(server: &Server, key: &str) -> Value {
                 .map(|b| b.tab),
         )
         .collect();
+    let agents = agents(server, key);
+    let tree = agent_tree(server, key, &agents);
     json!({"id":info.id.to_string(), "name":info.name, "automatic_name":automatic,
         "windows":tabs.len(), "panes":panes.len(), "attached":server.frontend.has_owner(key),
-        "agents":agents(server, key)})
+        "agents":agents, "agent_tree":tree})
 }
 
 const AGENT_APPS: [&str; 4] = ["pi", "claude", "codex", "opencode"];
@@ -99,6 +101,59 @@ fn agents(server: &Server, key: &str) -> Vec<Value> {
     result
 }
 
+/// Only connected panes contribute to a background session's agent tree.
+fn agent_tree(server: &Server, workspace: &str, agents: &[Value]) -> Value {
+    use graffitty_protocol::pane_id::address;
+    use std::collections::{BTreeMap, BTreeSet};
+    let mut links = BTreeSet::new();
+    let mut nodes = BTreeMap::new();
+    if agents.is_empty() { return json!({"nodes":[],"edges":[]}); }
+    if let Some(graph) = server.graphs.get(workspace) {
+        for edge in graph.edges.values() {
+            if let (Some(from), Some(to)) = (edge["from"].as_str(), edge["to"].as_str()) {
+                links.insert((from.to_owned(), to.to_owned()));
+            }
+        }
+    }
+    for pane in server.sessions.values().filter(|p| p.workspace == workspace && !p.exited) {
+        if let Some(parent) = pane.spawned_by {
+            links.insert((address(parent), address(pane.id)));
+        }
+    }
+    for pane in server.chromiums.values().filter(|p| p.workspace == workspace && p.id != p.owner) {
+        links.insert((address(pane.owner), address(pane.id)));
+    }
+    if !links.is_empty() {
+        let keys: BTreeSet<_> = links.iter().flat_map(|(a,b)| [a.as_str(), b.as_str()]).collect();
+        let summaries: BTreeMap<_,_> = agents.iter().filter_map(|a| Some((a["pane"].as_u64()?, a))).collect();
+        for pane in server.sessions.values().filter(|p| p.workspace == workspace && !p.exited) {
+            let key = address(pane.id);
+            if !keys.contains(key.as_str()) || server.filetrees.active.contains_key(&pane.id) { continue; }
+            let rect = server.workspace_state.pane_rect(workspace, pane.tab, &key).unwrap_or(pane.rect);
+            let node = if let Some(agent) = summaries.get(&pane.id) {
+                let provider = if AGENT_APPS.contains(&agent["provider"].as_str().unwrap_or("")) {
+                    &agent["provider"]
+                } else { &agent["program"]["app"] };
+                json!({"key":key,"kind":"agent","provider":provider,"title":agent["title"],"rect":rect})
+            } else {
+                json!({"key":key,"kind":"terminal","title":if pane.pinned_title.is_empty() { &key } else { &pane.pinned_title },
+                    "app":server.foreground_apps.get(&pane.id).and_then(|app| app["id"].as_str()).unwrap_or(""),"rect":rect})
+            };
+            nodes.insert(key, node);
+        }
+        for pane in server.chromiums.values().filter(|p| p.workspace == workspace) {
+            let key = address(pane.id);
+            if keys.contains(key.as_str()) {
+                let rect = server.workspace_state.pane_rect(workspace, pane.tab, &key).unwrap_or_default();
+                nodes.insert(key.clone(), json!({"key":key,"kind":"chromium","title":pane.title(),"rect":rect}));
+            }
+        }
+    }
+    let edges: Vec<_> = links.into_iter().filter(|(a,b)| nodes.contains_key(a) && nodes.contains_key(b))
+        .map(|(from,to)| json!({"from":from,"to":to})).collect();
+    json!({"nodes":nodes.into_values().collect::<Vec<_>>(),"edges":edges})
+}
+
 fn agent_summary(pane: u64, value: &Value, title: &str) -> Option<Value> {
     if graffitty_workspace_core::graph::is_custom_node(value) { return None; }
     let provider = value["provider"].as_str().unwrap_or("");
@@ -114,7 +169,7 @@ fn agent_summary(pane: u64, value: &Value, title: &str) -> Option<Value> {
         "title": title, "program": program}))
 }
 
-/// A title without animated leading glyphs (spinners, stars); its `%N`
+/// A title without animated leading glyphs (spinners, stars); its `tN`
 /// fallback means "no title".
 fn turn_title(title: &str, pane: u64) -> String {
     if title == format!("t{pane}") { return String::new(); }

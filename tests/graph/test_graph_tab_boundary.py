@@ -18,6 +18,35 @@ from test_session_transfer import Peer
 
 
 class GraphTabBoundaryTests(unittest.TestCase):
+    def test_background_session_catalog_carries_connected_agents(self):
+        with tempfile.TemporaryDirectory(prefix="gft-away-agents-") as folder:
+            directory = Path(folder)
+            env = {k: v for k, v in os.environ.items() if not k.startswith("GRAFFITTY_")}
+            for kind in ("CONFIG", "STATE", "CACHE", "DATA"):
+                env[f"XDG_{kind}_HOME"] = str(directory / kind.lower())
+            with PrivateServer(env, directory, "/bin/sh") as owner:
+                local = json.loads(owner.descriptor.read_text())["local"]
+                source = Peer(local, "source", new=True)
+                viewer = Peer(local, "viewer", new=True)
+                try:
+                    first = source.topology["panes"][0]["id"]
+                    second = source.action("create", first, kind="pane")["created"]
+                    for pane in (first, second):
+                        reply = source.action("rpc", pane, method="agent.event", params={
+                            "provider": "codex", "event": "SessionStart", "session_id": f"fixture-{pane}"})
+                        self.assertNotIn("error", reply)
+                    link = {"from": f"t{first}", "to": f"t{second}"}
+                    reply = source.action("rpc", first, method="graph.connect", params={**link, "read": True})
+                    self.assertNotIn("error", reply)
+                    catalog = viewer.until(lambda m: m.get("type") == "session_list" and any(
+                        link in session["agent_tree"]["edges"] for session in m["sessions"]))
+                    session = next(s for s in catalog["sessions"] if link in s["agent_tree"]["edges"])
+                    self.assertEqual({n["key"] for n in session["agent_tree"]["nodes"] if n["kind"] == "agent"},
+                                     set(link.values()))
+                finally:
+                    viewer.socket.close()
+                    source.socket.close()
+
     def test_reject_cross_tab_links_and_move_complete_component(self):
         with tempfile.TemporaryDirectory(prefix="gft-graph-tabs-") as folder:
             directory = Path(folder)

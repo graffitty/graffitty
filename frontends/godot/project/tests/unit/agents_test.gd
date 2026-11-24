@@ -178,6 +178,17 @@ func test_agents_in_other_sessions_and_servers_are_listed() -> void:
 	expect(by_key["t3"].status == "blocked", "Summary status maps like a shown agent's")
 	expect(by_key["t1"].at == 1800000000 and by_key["t3"].at == 1800000300, "Visible and unshown sessions both use the server's transition time")
 	expect(by_key.has("t4") and by_key["t4"].provider == "codex" and by_key["t4"].title == "Refactor", "OSC-reported agents use their program app and message")
+	peer.available_sessions[0].agent_tree = {
+		"nodes": [{"key":"t3","kind":"agent","provider":"claude"}, {"key":"t4","kind":"agent","provider":"codex"}],
+		"edges": [{"from":"t3","to":"t4"}]}
+	controller.refresh()
+	expect(controller.rows.size() == 2, "A linked background agent appears under its root")
+	var child: Dictionary = controller.trees[by_key["t3"].id][0]
+	expect(child.row_id == by_key["t4"].id and child.status == "working", "The background child retains identity and status")
+	expect(controller._away[child.away_id].session == "$1", "Selecting the child targets its own session")
+	peer.available_sessions[0].agent_tree.edges.clear()
+	controller.refresh()
+	expect(controller.rows.size() == 3, "Disconnecting the wire restores separate rows while away")
 	peer.url = "shared://local"
 	controller.refresh()
 	var local_row: Dictionary = controller.rows.filter(func(row): return row.key == "t3")[0]

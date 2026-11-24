@@ -68,7 +68,7 @@ export default class Agents extends View {
       .id(`sub-${key}`)
       .pl(20).pr(8).h(26).flex_none().items_center().gap(0).text_size(12).rounded(8)
       .hover((s) => s.bg(HOVER))
-      .on_click(() => run("FocusPane", { host: sub.host_id, key: sub.key }))
+      .on_click(() => sub.away_id ? run("FocusAgent", { id: sub.away_id }) : run("FocusPane", { host: sub.host_id, key: sub.key }))
       .children(sub.lines.map((l) => div().self_start().mt(-4).w(9).h(17).mr(4).flex_none()
         .when(Boolean(l), (el) => el.border_l(1.5).border_color(t.input))
         .when(l === "└" || l === "├", (el) => el.border_b(1.5).rounded_bl(6))))
@@ -144,7 +144,7 @@ export default class Agents extends View {
       .id(`ag-sub-${row.id}|${sub.key}`).h(26).px(4).flex_none().items_center().gap(2)
       .hover((s) => s.bg(HOVER))
       .tooltip(compactTitle(sub.row_id ? sub : row, sub.title))
-      .on_click(() => run("FocusPane", { host: sub.host_id, key: sub.key }))
+      .on_click(() => sub.away_id ? run("FocusAgent", { id: sub.away_id }) : run("FocusPane", { host: sub.host_id, key: sub.key }))
       .child(div().flex_1().min_w(0).whitespace_nowrap().text_right().text_size(12).text_color(t.idle).child(String(number)))
       .child(h_flex().w(14).flex_none().items_center().justify_center().child(this.status(t, sub.status, true)));
   }

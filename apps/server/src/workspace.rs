@@ -76,6 +76,10 @@ impl Store {
             .map(|v| v.snapshot().clone())
             .unwrap_or_default()
     }
+    pub fn pane_rect(&self, workspace: &str, tab: u64, key: &str) -> Option<[f64; 4]> {
+        let tab = self.workspaces.get(workspace)?.snapshot().layout.tabs.get(&tab)?;
+        Some(tab.window(key)?.rect.map(f64::from))
+    }
     pub fn revision(&self, workspace: &str) -> u64 {
         self.workspaces.get(workspace).map_or(0, |v| v.snapshot().revision)
     }

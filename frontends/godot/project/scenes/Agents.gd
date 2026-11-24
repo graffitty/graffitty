@@ -93,17 +93,26 @@ func refresh_body() -> void:
 					"attention": application.agent_attention.attention(key),
 					"looking": shown, "focused": focused}
 		host_trees.append([host, ids_by_key])
-	_add_away(input, remotes, sessions)
+	var background_trees := _add_away(input, remotes, sessions)
 	var result: Dictionary = _core.observe(input.values(), int(Time.get_unix_time_from_system()))
 	var next: Array = result.get("rows", [])
+	var by_id := {}
 	for row in next:
+		by_id[row.id] = row
 		row["remote"] = remotes.get(row.id, "")
 		row["session"] = sessions.get(row.id, "")
 	var next_trees := _build_trees(host_trees, next)
+	for root_id in background_trees:
+		for sub in background_trees[root_id]:
+			if sub.kind == "agent" and by_id.has(sub.away_id):
+				sub.row_id = sub.away_id
+				sub.merge(by_id[sub.row_id], true)
+		next_trees[root_id] = background_trees[root_id]
 	var hidden: Dictionary = {}
 	for id in next_trees:
 		for sub in next_trees[id]:
-			if sub.kind == "agent" and sub.has("row_id"): hidden[sub.row_id] = true
+			if sub.kind == "agent" and sub.has("row_id"):
+				hidden[sub.row_id] = true
 	next = next.filter(func(row): return not hidden.has(row.id))
 	if next != rows or next_trees != trees:
 		rows = next
@@ -115,7 +124,8 @@ func refresh_body() -> void:
 ## Agents in every other session of every connected server, from the session
 ## descriptors' server-owned agent summaries. Shown views win: their rows carry
 ## live titles and looking/focused state.
-func _add_away(input: Dictionary, remotes: Dictionary, sessions: Dictionary) -> void:
+func _add_away(input: Dictionary, remotes: Dictionary, sessions: Dictionary) -> Dictionary:
+	var background_trees := {}
 	_away.clear()
 	for group in preload("res://scenes/session/SessionsList.gd").collect(application.hosts, []):
 		var peer: Node = group.get("peer")
@@ -139,6 +149,19 @@ func _add_away(input: Dictionary, remotes: Dictionary, sessions: Dictionary) -> 
 					"provider": str(agent.get("provider", "")), "status": str(agent.get("status", "")),
 					"program": program, "status_history": agent.get("status_history", []),
 					"attention": application.agent_attention.project_attention(agent.get("attention")), "looking": false, "focused": false}
+
+			var topology: Dictionary = value.get("agent_tree", {})
+			if topology.get("edges", []).is_empty(): continue
+			for tree in _core.tree(topology):
+				var root_id := JSON.stringify([peer.url, peer.epoch, PaneAddress.id(tree.root)])
+				if not _away.has(root_id): continue
+				for sub in tree.rows:
+					var pane := PaneAddress.id(sub.key)
+					sub.away_id = JSON.stringify([peer.url, peer.epoch, pane])
+					_away[sub.away_id] = {"host": group.host, "peer": peer, "session": str(value.id), "pane": pane}
+					if input.has(sub.away_id): sub.title = input[sub.away_id].title
+				background_trees[root_id] = tree.rows
+	return background_trees
 
 ## Server-owned session label (manual or automatic name), falling back to its ID.
 static func session_label(connection: Object) -> String:
