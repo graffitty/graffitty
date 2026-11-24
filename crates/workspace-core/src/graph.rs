@@ -30,6 +30,31 @@ pub fn connected_component<'a>(start: &str, edges: impl IntoIterator<Item = &'a 
     }
 }
 
+/// Whether a discovery-only Codex poll verified a success after the previous sample.
+/// A rollout cursor can predate the first turn or successful checkpoint.
+pub fn discovered_codex_success(before: &Value, after: &Value) -> bool {
+    if after["provider"] != "codex" || after["integrated"] == true || after["status"] != "idle"
+        || !after["pid"].is_u64() || !after["session_id"].is_string()
+        || ["provider", "pid", "session_id", "started", "transcript_path"].iter().any(|key| before[*key] != after[*key])
+        || before["rollout_scan"].is_object() {
+        return false;
+    }
+    let turn = &after["observed_turn"];
+    let previous = &before["observed_turn"];
+    if let Some(status) = turn["status"].as_str() {
+        if status != "completed" || !turn["id"].is_string() { return false; }
+        if previous["status"] == "completed" && previous["id"] == turn["id"] { return false; }
+        if let Some(cursor) = previous["rollout_offset"].as_u64() {
+            return turn["completion_checkpoint"].as_u64().is_some_and(|end| end > cursor);
+        }
+        // A daemon poll returns an explicit null when its thread has no turns.
+        if before.get("observed_turn").is_some() { return true; }
+    }
+    let checkpoint = after["completion_checkpoint"].as_u64();
+    matches!(before["status"].as_str(), Some("busy" | "waiting"))
+        || before["completion_checkpoint"].as_u64().zip(checkpoint).is_some_and(|(old, new)| new > old)
+}
+
 /// The same complete incoming message is presented to native and inbox agents.
 /// Callers must pass a recipient-visible event (for example from graph.take).
 pub fn message_prompt(event: &Value) -> String {
@@ -395,11 +420,6 @@ impl Graph {
         found.remove("status_at");
         let stopped_without_completion = stopped_without_success && found.contains_key("status") && state["provider"] == "codex"
             && (!had_turn_baseline || turn_changed || previous["status"] == "busy" || previous["status"] == "waiting");
-        // A short discovery-only turn can start and finish between idle polls.
-        let completed_between_polls = turn_changed && had_turn_baseline && state["provider"] == "codex"
-            && state["session_id"].is_string() && state["pid"].is_u64() && node["integrated"] != true
-            && previous["status"] == "idle" && found.get("status").and_then(Value::as_str) == Some("idle")
-            && turn["status"] == "completed";
         node.as_object_mut().unwrap().extend(found);
         if current_prompt && turn["status"] == "completed" && state["status"] == "idle" {
             node.as_object_mut().unwrap().remove("codex_prompt_turn");
@@ -407,8 +427,11 @@ impl Graph {
         if stopped_without_completion {
             if current_prompt { node.as_object_mut().unwrap().remove("codex_prompt_turn"); }
             node.as_object_mut().unwrap().remove("attention");
-        } else if completed_between_polls {
+        } else if discovered_codex_success(&previous, node) {
             attention::issue(node, graffitty_protocol::agent_attention::AttentionKind::Completed);
+        } else if node["provider"] == "codex" && node["integrated"] != true && node["status"] == "idle"
+            && turn["status"] == "completed" && matches!(previous["status"].as_str(), Some("busy" | "waiting")) {
+            node.as_object_mut().unwrap().remove("attention");
         } else {
             attention::update(node, string(&previous, "status"), replaced);
         }

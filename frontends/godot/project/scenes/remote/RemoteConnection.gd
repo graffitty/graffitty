@@ -564,7 +564,6 @@ func _receive(message: Dictionary) -> void:
 				local_ids = {}
 				subscriptions.clear()
 				_subscribed.clear()
-				stream_quality.clear()
 				chromium_viewports.clear()
 				_shown_session = ""
 				topology_received_revision = -1

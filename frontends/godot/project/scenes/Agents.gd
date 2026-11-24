@@ -50,6 +50,16 @@ func refresh_body() -> void:
 	_owners.clear()
 	var host_trees: Array = []
 	var catalog_views := {}
+	var groups := preload("res://scenes/session/SessionsList.gd").collect(application.hosts, [])
+	var membership := {}
+	for group in groups:
+		if not group.connected: continue
+		var peer: Node = group.peer
+		var destinations := {}
+		for session in application.agent_attention.catalog_for(peer):
+			for agent in session.get("agents", []):
+				if agent is Dictionary: destinations[int(agent.get("pane", -1))] = session.id
+		membership[[peer.url, peer.epoch]] = destinations
 	for host in application.hosts:
 		if not is_instance_valid(host) or host.is_queued_for_deletion(): continue
 		var looking: bool = application.agent_attention.in_view.call(host)
@@ -57,6 +67,7 @@ func refresh_body() -> void:
 		var backend: Variant = host.get("session_backend")
 		var transport: Node = backend.connection if backend != null and backend.is_remote else null
 		var ids_by_key: Dictionary = {}
+		var stale_keys := {}
 		for tab in host.workspace_layout.tabs:
 			for key in Layout.keys(tab.tree):
 				if not host.is_terminal_pane(key): continue
@@ -64,10 +75,20 @@ func refresh_body() -> void:
 				var shown: bool = key in visible_keys
 				var focused: bool = looking and key == host.pane_focus
 				var connection: Node = application.agent_api.graph.remote_owners.get(key)
+				var local_id := PaneAddress.id(key)
+				var peer: Node = transport.owners.get(local_id) if is_instance_valid(transport) and "owners" in transport else transport
+				if is_instance_valid(peer):
+					var destinations: Variant = membership.get([peer.url, peer.epoch])
+					var destination: String = destinations.get(peer.wire_id(local_id), "") if destinations is Dictionary else ""
+					if (destinations is Dictionary and not peer.connected) or (not destination.is_empty() and not peer.session_view_ready(destination)):
+						stale_keys[key] = true
+						continue
+					# The graph cache is shared across windows. Resolve selection through
+					# this layout's own transport and attachment.
+					if is_instance_valid(connection):
+						if connection.url != peer.url or connection.epoch != peer.epoch or connection.workspace != peer.workspace: node = {}
+						connection = peer
 				if node.is_empty() or not is_instance_valid(connection):
-					if not is_instance_valid(transport): continue
-					var local_id := PaneAddress.id(key)
-					var peer: Node = transport.owners.get(local_id) if "owners" in transport else transport
 					if not is_instance_valid(peer) or not peer.connected or not peer.session_view_ready(peer.workspace): continue
 					var identity := [peer.url, peer.epoch, peer.workspace, peer.wire_id(local_id)]
 					var prior: Dictionary = catalog_views.get(identity, {})
@@ -93,8 +114,8 @@ func refresh_body() -> void:
 					"status_history": node.get("status_history", []),
 					"attention": application.agent_attention.project_attention(node.get("attention")),
 					"looking": shown, "focused": focused}
-		host_trees.append([host, ids_by_key])
-	var background_trees := _add_away(input, remotes, sessions, catalog_views)
+		host_trees.append([host, ids_by_key, stale_keys])
+	var background_trees := _add_away(input, remotes, sessions, catalog_views, groups)
 	var next_trees := _build_trees(host_trees)
 	next_trees.merge(background_trees, true)
 	for id in next_trees:
@@ -131,10 +152,10 @@ func refresh_body() -> void:
 ## Agents in every other session of every connected server, from the session
 ## descriptors' server-owned agent summaries. Shown views win: their rows carry
 ## live titles and looking/focused state.
-func _add_away(input: Dictionary, remotes: Dictionary, sessions: Dictionary, catalog_views: Dictionary) -> Dictionary:
+func _add_away(input: Dictionary, remotes: Dictionary, sessions: Dictionary, catalog_views: Dictionary, groups: Array) -> Dictionary:
 	var background_trees := {}
 	_away.clear()
-	for group in preload("res://scenes/session/SessionsList.gd").collect(application.hosts, []):
+	for group in groups:
 		var peer: Node = group.get("peer")
 		if not group.connected or not is_instance_valid(peer) or not is_instance_valid(group.get("host")): continue
 		# The peer publishes other sessions' agents through its live catalog.
@@ -208,6 +229,7 @@ func _build_trees(host_trees: Array) -> Dictionary:
 		for tab in host.workspace_layout.tabs:
 			for window in Layout.windows(tab.tree):
 				var key: String = window.pane
+				if pair[2].has(key): continue
 				var rect: Rect2 = window.get("rect", Rect2())
 				var entry := {"key": key, "kind": "terminal", "title": host.pane_title(key), "provider": "", "app": "", "status": "",
 					"rect": [rect.position.x, rect.position.y, rect.size.x, rect.size.y]}
@@ -335,9 +357,9 @@ func _focus_away(target: Dictionary) -> void:
 			push_warning("Could not switch to session " + target.session)
 			return
 	var deadline := Time.get_ticks_msec() + 5000
-	while is_instance_valid(host) and is_instance_valid(peer) and Time.get_ticks_msec() < deadline:
+	while is_instance_valid(host) and is_instance_valid(peer) and peer.connected and Time.get_ticks_msec() < deadline:
 		var key := PaneAddress.key((peer.local_id(target.pane) if peer.has_method("local_id") else target.pane))
-		if host.workspace_layout.containing(key) >= 0:
+		if peer.session_view_ready(target.session) and host.workspace_layout.containing(key) >= 0:
 			if host.is_inside_tree():
 				host.get_window().show()
 				host.get_window().grab_focus()

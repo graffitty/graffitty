@@ -303,6 +303,28 @@ class OpenPeer extends ClosingPeer:
 	func get_ready_state() -> int: return WebSocketPeer.STATE_OPEN
 
 
+class HandshakePeer extends OpenPeer:
+	var sent: Array = []
+	func send_text(text: String) -> int:
+		sent.append(JSON.parse_string(text))
+		return OK
+
+func test_reconnect_advertises_configured_stream_limits() -> void:
+	var connection := Connection.new()
+	connection.url = "ipc://test"
+	connection.enabled = true
+	var limits := {"max_height": 360.0, "fps": 30.0, "bitrate_kbps": 2000.0}
+	connection.stream_quality = limits.duplicate()
+	for epoch in ["initial", "initial", "replacement"]:
+		var socket := HandshakePeer.new()
+		socket.packets.clear()
+		connection.socket = socket
+		connection._process(0.0)
+		expect(socket.sent.front().chromium_stream == limits, "Every new socket advertises the configured stream budget: %s" % str(socket.sent.front().chromium_stream))
+		connection._receive({"type": "ready", "version": Connection.Protocol.VERSION, "epoch": epoch})
+		connection._network_failed("Connection lost")
+	connection.free()
+
 func test_local_session_close_stays_attached_while_another_session_lives() -> void:
 	var connection := Connection.new()
 	var peer := OpenPeer.new()

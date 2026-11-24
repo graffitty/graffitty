@@ -380,6 +380,103 @@ fn scan_rollout(path: &Path, baseline: Option<&Value>, mut expired: impl FnMut()
     Ok(state)
 }
 
+/// Read only the completed Codex turn selected by discovery. Daemon discovery
+/// selects by native turn ID; local discovery also supplies the exact record end.
+fn completed_codex_output(path: &Path, target: &Value) -> Result<Value> {
+    let requested_id = target["turn_id"].as_str();
+    let checkpoint = target["checkpoint"].as_u64();
+    if checkpoint.is_none() && requested_id.is_none() { return Err("Missing completed turn identity".into()); }
+    let mut file = fs::File::open(path)?;
+    let size = file.metadata()?.len();
+    let end = checkpoint.unwrap_or(size);
+    if end > size { return Err("Rollout truncated before completion".into()); }
+    if checkpoint.is_some() {
+        let last = end.checked_sub(1).ok_or("Empty Codex checkpoint")?;
+        file.seek(SeekFrom::Start(last))?;
+        let mut byte = [0];
+        file.read_exact(&mut byte)?;
+        if byte != *b"\n" { return Err("Incomplete Codex completion record".into()); }
+    }
+
+    let mut completion = None;
+    let mut native_id = None;
+    let mut text = None;
+    reverse_records(&mut file, end, |record_end, record| {
+        let payload = &record["payload"];
+        let event = (record["type"] == "event_msg").then(|| payload["type"].as_str()).flatten();
+        let terminal = matches!(event, Some("task_complete" | "turn_complete"));
+        if checkpoint.is_some_and(|end| record_end < end) && (completion.is_none() || terminal) {
+            return Err("No assistant output within the selected Codex turn".into());
+        }
+        if checkpoint == Some(record_end) && (!terminal || !payload["error"].is_null()) {
+            return Err("Checkpoint is not a successful Codex completion".into());
+        }
+        if terminal {
+            let id = payload["turn_id"].as_str();
+            let selected = payload["error"].is_null() && checkpoint.is_none_or(|n| n == record_end)
+                && requested_id.zip(id).is_none_or(|(wanted, actual)| wanted == actual);
+            completion = selected.then_some(record_end);
+            native_id = id.map(str::to_owned);
+            text = payload["last_agent_message"].as_str().filter(|s| !s.is_empty()).map(str::to_owned);
+        }
+        let Some(completion_end) = completion else { return Ok(None); };
+        if record["type"] == "response_item" && payload["role"] == "assistant" && text.is_none() {
+            let message = payload["content"].as_array().into_iter().flatten()
+                .filter_map(|part| part["text"].as_str()).collect::<Vec<_>>().join("\n");
+            if !message.is_empty() { text = Some(message); }
+        }
+        let start = matches!(event, Some("task_started" | "turn_started" | "user_message"));
+        let id_from_record = || payload["turn_id"].as_str().map(str::to_owned)
+            .unwrap_or_else(|| format!("record-{record_end}"));
+        let named_context = record["type"] == "turn_context" && payload["turn_id"].is_string();
+        let standalone = terminal && requested_id.is_some_and(|id| id == format!("record-{record_end}"));
+        let actual_id = native_id.clone().or_else(|| (start || named_context || standalone).then(id_from_record));
+        if let Some(message) = &text && requested_id.is_none_or(|wanted| actual_id.as_deref() == Some(wanted)) {
+            return Ok(Some(json!({"last_message":message,"completion_checkpoint":completion_end,"turn_id":actual_id,"size":size})));
+        }
+        // A user message can follow its task_started. Keep looking for the native
+        // start ID only when the answer for this turn has already been captured.
+        if matches!(event, Some("error" | "turn_aborted" | "task_started" | "turn_started"))
+            || event == Some("user_message") && (text.is_none() || payload["turn_id"].is_string()) {
+            completion = None;
+        }
+        Ok(None)
+    })?.ok_or_else(|| "No assistant output for the selected Codex completion".into())
+}
+
+/// Visit complete JSONL records backwards without collecting the entire transcript.
+/// The supplied offset is exclusive; an unfinished final record is skipped.
+fn reverse_records(file: &mut fs::File, mut position: u64,
+    mut visit: impl FnMut(u64, Value) -> Result<Option<Value>>) -> Result<Option<Value>> {
+    let mut block = vec![0; 128 * 1024];
+    let mut line = Vec::new();
+    let mut record_end = None;
+    let mut oversized = false;
+    while position > 0 {
+        let count = position.min(block.len() as u64) as usize;
+        position -= count as u64;
+        file.seek(SeekFrom::Start(position))?;
+        file.read_exact(&mut block[..count])?;
+        for (i, &byte) in block[..count].iter().enumerate().rev() {
+            let at = position + i as u64;
+            if byte != b'\n' && record_end.is_some() && !oversized {
+                if line.len() == 1024 * 1024 { oversized = true; } else { line.push(byte); }
+            }
+            if byte != b'\n' && at != 0 { continue; }
+            if let Some(end) = record_end && !oversized {
+                line.reverse();
+                if let Ok(record) = serde_json::from_slice(&line) && let Some(found) = visit(end, record)? {
+                    return Ok(Some(found));
+                }
+            }
+            record_end = Some(at + 1);
+            line.clear();
+            oversized = false;
+        }
+    }
+    Ok(None)
+}
+
 /// Bounded raw JSONL plus normalized assistant text. Never parse a partial last record.
 pub fn transcript(path: &Path, offset: Option<u64>) -> Result<Value> {
     let mut f = fs::File::open(path)?;
@@ -570,6 +667,9 @@ pub fn worker(request: &str) -> Result<Value> {
             &v["target"], v["text"].as_str().ok_or("Missing text")?,
             v["event_id"].as_str().ok_or("Missing event ID")?,
         ),
+        "codex_completion" => completed_codex_output(
+            Path::new(v["path"].as_str().ok_or("Missing transcript path")?), &v["target"],
+        ),
         "read" => transcript(
             Path::new(v["path"].as_str().ok_or("Missing transcript path")?),
             integer(&v["offset"]).and_then(|n| u64::try_from(n).ok()),
@@ -662,6 +762,45 @@ mod codex_discovery_tests {
     }
 
     #[test]
+    fn completion_read_tracks_the_selected_turn_across_scanner_yields_and_later_drafts() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("rollout.jsonl");
+        let mut file = fs::File::create(&path).unwrap();
+        let lifecycle = |payload: Value| json!({"type":"event_msg","payload":payload});
+        let assistant = |text: &str| json!({"type":"response_item","payload":{"role":"assistant","content":[{"type":"output_text","text":text}]}});
+        let event = |kind: &str, id: &str| lifecycle(json!({"type":kind,"turn_id":id}));
+        writeln!(file, "{}", event("task_started", "a")).unwrap();
+        let baseline = codex_lifecycle(&path, None).unwrap();
+        // A spans several transcript preview windows. Its terminal record omits
+        // the native ID and embeds no answer, requiring its own assistant item.
+        let answer = "a".repeat(128 * 1024 + 1);
+        writeln!(file, "{}", assistant(&answer)).unwrap();
+        writeln!(file, "{}", json!({"type":"response_item","payload":{"type":"function_call_output","output":"x".repeat(1024*1024)}})).unwrap();
+        writeln!(file, "{}", lifecycle(json!({"type":"task_complete"}))).unwrap();
+        let checkpoint = file.metadata().unwrap().len();
+        writeln!(file, "{}", event("task_started", "b")).unwrap();
+        writeln!(file, "{}", assistant("unfinished B")).unwrap();
+        let mut completed = baseline;
+        for _ in 0..32 {
+            completed = scan_rollout(&path, completed.get("observed_turn"), || true).unwrap();
+            if completed["observed_turn"]["status"] == "completed" { break; }
+        }
+        assert_eq!(completed["completion_checkpoint"], checkpoint);
+        for target in [json!({"turn_id":"a","checkpoint":checkpoint}), json!({"turn_id":"a"}), json!({"checkpoint":checkpoint})] {
+            let output = completed_codex_output(&path, &target).unwrap();
+            assert_eq!(output["last_message"], answer);
+            assert_eq!(output["completion_checkpoint"], checkpoint);
+        }
+        assert!(completed_codex_output(&path, &json!({"turn_id":"b","checkpoint":checkpoint})).is_err());
+        assert!(completed_codex_output(&path, &json!({"turn_id":"b"})).is_err());
+        assert!(completed_codex_output(&path, &json!({"checkpoint":checkpoint - 1})).is_err());
+        writeln!(file, "{}", event("task_complete", "b")).unwrap();
+        let b = completed_codex_output(&path, &json!({"turn_id":"b"})).unwrap();
+        assert_eq!(b["last_message"], "unfinished B");
+        assert_eq!(completed_codex_output(&path, &json!({"turn_id":"a"})).unwrap()["last_message"], answer);
+    }
+
+    #[test]
     fn rollout_deadlines_advance_past_output_and_preserve_a_partial_failure() {
         let dir = tempfile::tempdir().unwrap();
         let path = dir.path().join("rollout.jsonl");
@@ -734,6 +873,41 @@ mod codex_discovery_tests {
         assert_eq!(attached["failed_turns"], json!([]));
         let live = scan_rollout(&path, attached.get("observed_turn"), || true).unwrap();
         assert_eq!(live["failed_turns"][0]["error"]["message"], "new failure");
+    }
+
+    #[test]
+    fn first_success_after_a_live_rollout_cursor_is_new_to_discovery() {
+        use graffitty_workspace_core::graph::{Graph, discovered_codex_success};
+        for interrupted in [false, true] {
+            let directory = tempfile::tempdir().unwrap();
+            let path = directory.path().join("rollout.jsonl");
+            let mut file = fs::File::create(&path).unwrap();
+            writeln!(file, "{}", json!({"type":"session_meta"})).unwrap();
+            if interrupted {
+                for event in ["task_started", "turn_aborted"] {
+                    writeln!(file, "{}", json!({"type":"event_msg","payload":{"type":event,"turn_id":"previous"}})).unwrap();
+                }
+            }
+            let mut graph = Graph::default();
+            graph.add(1, "Codex".into());
+            let sample = |baseline: Option<&Value>| {
+                let mut node = json!({"provider":"codex","status":"unknown","pid":10,"session_id":"session","transcript_path":path});
+                node.as_object_mut().unwrap().extend(codex_lifecycle(&path, baseline).unwrap().as_object().unwrap().clone());
+                node
+            };
+            graph.observe_agent(1, &sample(None));
+            let before = graph.nodes["t1"].clone();
+            assert_eq!(before["status"], if interrupted { "idle" } else { "unknown" });
+            assert!(before["attention"].is_null());
+            for event in ["task_started", "task_complete"] {
+                writeln!(file, "{}", json!({"type":"event_msg","payload":{"type":event,"turn_id":"first-success"}})).unwrap();
+            }
+            graph.observe_agent(1, &sample(before.get("observed_turn")));
+            let after = &graph.nodes["t1"];
+            assert_eq!(after["attention"]["kind"], "completed");
+            assert!(discovered_codex_success(&before, after));
+            assert!(!discovered_codex_success(after, after));
+        }
     }
 
     #[test]

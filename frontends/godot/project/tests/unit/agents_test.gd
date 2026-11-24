@@ -30,7 +30,7 @@ class Graph extends RefCounted:
 	var edges := {}
 
 class API extends RefCounted:
-	var graph := Graph.new()
+	var graph: Object = Graph.new()
 
 class Application extends Node:
 	var agents: Node
@@ -320,6 +320,77 @@ func test_split_catalog_delivery_adds_moves_and_removes_background_agents() -> v
 		second.free()
 		fresh.free()
 		delayed.free()
+
+
+class SwitchPeer extends "res://scenes/remote/RemoteConnection.gd":
+	var switch_to: Callable
+	func request_action(kind: String, values: Dictionary = {}, _timeout_msec: int = 10000) -> Dictionary:
+		switch_to.call(kind, values.name)
+		return {"type":"ack"}
+
+
+func test_transferred_agent_in_retained_layout_uses_connected_destination() -> void:
+	for reversed in [false, true]:
+		var app := Application.new()
+		var graph := preload("res://scenes/AgentGraph.gd").new()
+		app.agent_api.graph = graph
+		var old_host := SessionHost.new()
+		var live_host := SessionHost.new()
+		var old := SwitchPeer.new()
+		var live := SwitchPeer.new()
+		old_host.session_backend.connection = old
+		live_host.session_backend.connection = live
+		var tab := {"id":1, "tree":{"windows":[{"pane":"t2", "shown":true}]}}
+		old_host.workspace_layout.tabs = [tab]
+		old_host.workspace_layout.active = 1
+		old_host.pane_focus = "t2"
+		app.hosts = [live_host, old_host] if reversed else [old_host, live_host]
+		for peer in [old, live]:
+			peer.url = "test://transfer"
+			peer.epoch = "epoch"
+			peer.connected = true
+		old.workspace = "$1"
+		live.workspace = "$3"
+		var busy := {"node":"t2","pane":2,"provider":"pi","status":"busy","activity_revision":4}
+		old.topology = {"workspace":"$1", "tabs":[], "graph":{"nodes":[busy]}}
+		graph.import_remote(old, old.topology.graph)
+		var panel := preload("res://scenes/Agents.gd").new()
+		panel.application = app
+		panel._sounds = {"enabled":false}
+		app.agents = panel
+		app.agent_attention.in_view = func(h): return h == old_host
+		app.agent_attention.refresh()
+		old._receive({"type":"session_list","revision":4,"sessions":[{"id":"$1","agents":[busy]}],"stops_when_empty":false})
+		var done := busy.merged({"status":"idle","activity_revision":6,"attention":{"event":"moved","kind":"completed","seen":false}}, true)
+		live._receive({"type":"session_list","revision":6,"sessions":[{"id":"$1","agents":[]},{"id":"$2","agents":[done]}],"stops_when_empty":false})
+		expect(panel.rows.size() == 1 and panel.rows[0].session == "2", "A still-connected stale layout yields to the transfer")
+		old.connected = false
+		app.agent_attention.refresh()
+		expect(panel.rows.size() == 1 and panel.rows[0].status == "done" and not panel.rows[0].focused,
+			"The cached former layout cannot own or focus the moved result")
+		expect(app.agent_attention.marker(["t2"]).count == 1, "The moved completion stays unread")
+		var switches := []
+		live.switch_to = func(kind, session):
+			switches.append([kind, session])
+			live.workspace = session
+			live.topology.workspace = session
+			live.server_fonts.ready = true
+			live_host.workspace_layout.tabs = [tab]
+		for action in ["focus", "next", "previous"]:
+			live.workspace = "$3"
+			live_host.workspace_layout.tabs = []
+			live_host.revealed = ""
+			if action == "focus": panel.focus(panel.rows[0].id)
+			else: panel.step(1 if action == "next" else -1)
+			expect(live_host.revealed == "t2" and old_host.revealed.is_empty(), "Moved pane opens in the connected window: " + action)
+		expect(switches == [["session_switch","$2"], ["session_switch","$2"], ["session_switch","$2"]], "All three actions switch to the latest catalog destination")
+		panel.free()
+		graph.free()
+		app.free()
+		old_host.free()
+		live_host.free()
+		old.free()
+		live.free()
 
 
 func test_agents_in_other_sessions_and_servers_are_listed() -> void:

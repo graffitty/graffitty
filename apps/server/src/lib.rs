@@ -280,9 +280,28 @@ fn scan_registration(node: &Value) -> Value {
     json!([node["provider"], node["pid"], node["started"], node["session_id"], node["transport"]])
 }
 
+fn scan_baseline(root: &mut Value, node: &Value) {
+    for field in ["observed_turn", "rollout_scan"] {
+        if let Some(value) = node.get(field) {
+            // A null observed_turn identifies a sampled daemon thread with zero turns.
+            root["session_id"] = node["session_id"].clone();
+            root[field] = value.clone();
+        }
+    }
+}
+
 #[cfg(test)]
 mod scan_tests {
     use super::*;
+
+    #[test]
+    fn empty_sample_is_distinct_from_first_attachment() {
+        let mut root = json!({});
+        scan_baseline(&mut root, &json!({"session_id":"a"}));
+        assert!(root.get("observed_turn").is_none());
+        scan_baseline(&mut root, &json!({"session_id":"a","observed_turn":null}));
+        assert_eq!(root, json!({"session_id":"a","observed_turn":null}));
+    }
 
     #[test]
     fn scan_follows_registration_across_status_changes_only() {
@@ -653,12 +672,7 @@ impl Server {
                 if shell.is_none() && (node["pid"].is_null() || node["status"] == "offline") { return None; }
                 let mut root = json!({"node":key,"pid":shell,"agent_pid":node["pid"],"started":node["started"],
                     "provider_home":node["provider_home"],"launch_context":node["launch_context"]});
-                for field in ["observed_turn", "rollout_scan"] {
-                    if let Some(value) = node.get(field).filter(|value| !value.is_null()) {
-                        root["session_id"] = node["session_id"].clone();
-                        root[field] = value.clone();
-                    }
-                }
+                scan_baseline(&mut root, node);
                 registrations.insert(key, scan_registration(node));
                 Some(root)
             }).collect();
