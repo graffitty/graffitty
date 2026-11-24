@@ -16,6 +16,7 @@ port = 7183
 ```
 
 - `127.0.0.1` accepts local connections and SSH tunnels only.
+- For a phone or tablet on the same Wi-Fi, use the host computer’s LAN IP for both the bind address and the server address on the mobile device.
 - For Tailscale, run `tailscale ip -4` and use that computer's address.
 - `enabled = true` starts sharing automatically.
 

@@ -25,7 +25,7 @@ class HostRemoteSettingsTests(unittest.TestCase):
             with socket.socket() as probe:
                 probe.bind(("127.0.0.1", 0))
                 port = probe.getsockname()[1]
-            with socket.socket() as occupied, PrivateServer(env, root, "/bin/sh") as server:
+            with socket.socket() as occupied, PrivateServer(env, root, None if os.name == "nt" else "/bin/sh") as server:
                 occupied.bind(("127.0.0.1", 0))
                 occupied.listen()
                 env["GRAFFITTY_TEST_TAKEN_PORT"] = str(occupied.getsockname()[1])

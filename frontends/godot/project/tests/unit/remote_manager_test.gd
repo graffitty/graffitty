@@ -303,6 +303,55 @@ func test_auth_failure_retains_masked_password_for_editing() -> void:
 	manager.free()
 
 
+class RecordedDesktopConnection extends Node:
+	var attempted: Array[Dictionary] = []
+	func open_remote_server(_client: Node, entry: Dictionary, _new_window: bool) -> Node:
+		attempted.append(entry.duplicate())
+		return null
+
+
+func test_desktop_retry_and_shared_editor_bind_prefill_to_normalized_server() -> void:
+	var desktop := preload("res://scenes/remote/DesktopServers.gd").new()
+	var application := RecordedDesktopConnection.new()
+	desktop.application = application
+	Engine.get_main_loop().root.add_child(desktop)
+	var original := settings()
+	original.erase("token")
+	desktop._connect(original, "previous attempt", true)
+	desktop._load_editor(original)
+	expect(desktop.editor.token.secret and desktop.editor.token.text == "previous attempt", "Desktop retry reopens the attempted password masked")
+	desktop.editor.endpoint.text = "127.0.0.1:1"
+	expect(desktop.editor.password_for_submission() == "previous attempt", "Equivalent spelling preserves the password")
+	desktop.editor.endpoint.text = "127.0.0.1:2"
+	desktop._save(true)
+	expect(application.attempted.size() == 1 and desktop.editor.token.text.is_empty(), "Desktop rejects a prefilled password for a different normalized address")
+	desktop.editor.token.text = "replacement"
+	desktop.editor.token.text_changed.emit("replacement")
+	desktop._save(true)
+	expect(application.attempted.size() == 2 and application.attempted[1].url == "ws://127.0.0.1:2" and application.attempted[1].token == "replacement", "Desktop sends the newly typed password to the edited address")
+	desktop.free()
+	application.free()
+
+
+func test_mobile_changed_address_cannot_reuse_original_password() -> void:
+	var manager := remembered_manager()
+	var original := settings()
+	var key: String = manager._connection_key(original)
+	var first: Node = manager.open_connection(original)
+	manager._authentication_failed("rejected", key, first)
+	manager._edit_connection(key)
+	manager.endpoint.text = "127.0.0.1:2"
+	manager._submit_connection()
+	expect(manager.token.text.is_empty() and manager.transports.is_empty(), "Mobile submission clears a foreign prefill before connecting or replacing the entry")
+	manager.token.text = "replacement"
+	manager.token.text_changed.emit("replacement")
+	manager._submit_connection()
+	var renamed := "ws://127.0.0.1:2"
+	expect(manager.transports.has(renamed) and manager.transports[renamed].token == "replacement", "Mobile sends the replacement to the edited address")
+	manager.federation.free()
+	manager.free()
+
+
 func test_restore_without_remembered_password_requires_sign_in() -> void:
 	var manager := remembered_manager()
 	var input := settings()

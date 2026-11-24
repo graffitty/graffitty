@@ -668,7 +668,7 @@ func _new_connection() -> void:
 	label.clear()
 	editor.server_alias.clear()
 	endpoint.clear()
-	token.clear()
+	editor.prefill_password("")
 	remember.button_pressed = true
 	form_status.text = ""
 	dialog.title = "Add server"
@@ -683,9 +683,10 @@ func _edit_connection(key: String) -> void:
 	label.text = str(pending_settings.get("name", ""))
 	editor.server_alias.text = str(pending_settings.get("alias", ""))
 	endpoint.text = str(pending_settings.url)
-	token.text = session_passwords.get(key, "")
-	if token.text.is_empty() and bool(pending_settings.get("remember", true)):
-		token.text = str(Authentication.password(endpoint.text, str(pending_settings.get("credential_id", ""))).get("password", ""))
+	var password: String = session_passwords.get(key, "")
+	if password.is_empty() and bool(pending_settings.get("remember", true)):
+		password = str(Authentication.password(endpoint.text, str(pending_settings.get("credential_id", ""))).get("password", ""))
+	editor.prefill_password(password)
 	remember.button_pressed = bool(pending_settings.get("remember", false))
 	form_status.text = "Enter the current password to reconnect. Your server address is already filled in."
 	dialog.title = "Edit server"
@@ -693,7 +694,8 @@ func _edit_connection(key: String) -> void:
 
 func _submit_connection() -> void:
 	var address := endpoint.text.strip_edges()
-	if token.text.is_empty():
+	var password: String = editor.password_for_submission()
+	if password.is_empty():
 		form_status.text = "Enter the current password shown on the computer."
 		dialog.scroll.ensure_control_visible.call_deferred(form_status)
 		return
@@ -721,7 +723,7 @@ func _submit_connection() -> void:
 	if not editing_key.is_empty() and editing_key != key:
 		_remove_server(editing_key)
 	_remember_entry(settings, "disconnected", "Ready to connect")
-	settings.token = token.text
+	settings.token = password
 	token.clear()
 	pending_settings = {}
 	editing_key = ""

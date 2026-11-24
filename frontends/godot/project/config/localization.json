@@ -3185,18 +3185,18 @@
       "sv": "Tar bort nedladdade typsnitt. Installerade och medföljande typsnitt behålls.",
       "da": "Fjerner downloadede skrifttyper. Installerede og medfølgende skrifttyper beholdes."
     },
-    "On the computer, open Sessions → Remote Access. Copy its server address and use the password shown there.": {
-      "en-US": "On the computer, open Sessions → Remote Access. Copy its server address and use the password shown there.",
-      "fr": "Sur l’ordinateur, ouvrez Sessions → Accès à distance. Copiez l’adresse du serveur et utilisez le mot de passe affiché.",
-      "pt-BR": "No computador, abra Sessões → Acesso remoto. Copie o endereço do servidor e use a senha exibida.",
-      "es": "En el equipo, abre Sesiones → Acceso remoto. Copia la dirección del servidor y usa la contraseña que aparece.",
-      "it": "Sul computer, apri Sessioni → Accesso remoto. Copia l’indirizzo del server e usa la password mostrata.",
-      "ko": "컴퓨터에서 세션 → 원격 접속을 여세요. 서버 주소를 복사하고 표시된 비밀번호를 사용하세요.",
-      "ja": "コンピューターで「セッション → リモートアクセス」を開き、サーバーアドレスと表示されたパスワードを使ってください。",
-      "de": "Öffne auf dem Computer Sitzungen → Fernzugriff. Kopiere die Serveradresse und verwende das angezeigte Passwort.",
-      "nb": "Åpne Økter → Fjerntilgang på datamaskinen. Kopier serveradressen og bruk passordet som vises.",
-      "sv": "Öppna Sessioner → Fjärråtkomst på datorn. Kopiera serveradressen och använd lösenordet som visas.",
-      "da": "Åbn Sessioner → Fjernadgang på computeren. Kopiér serveradressen, og brug den viste adgangskode."
+    "Enable sharing on the computer under Sessions → Remote Access Settings. Enter its network address and password here.": {
+      "en-US": "Enable sharing on the computer under Sessions → Remote Access Settings. Enter its network address and password here.",
+      "fr": "Sur l’ordinateur, activez le partage dans Sessions → Paramètres d’accès à distance. Saisissez ici son adresse réseau et son mot de passe.",
+      "pt-BR": "No computador, ative o compartilhamento em Sessões → Configurações de acesso remoto. Digite aqui o endereço de rede e a senha do computador.",
+      "es": "En el ordenador, activa el acceso compartido en Sesiones → Configuración de acceso remoto. Introduce aquí su dirección de red y contraseña.",
+      "it": "Sul computer, attiva la condivisione in Sessioni → Impostazioni accesso remoto. Inserisci qui il suo indirizzo di rete e la password.",
+      "ko": "컴퓨터에서 세션 → 원격 접속 설정을 열어 공유를 켜세요. 여기에 그 컴퓨터의 네트워크 주소와 비밀번호를 입력하세요.",
+      "ja": "コンピューターの「セッション → リモートアクセス設定」で共有を有効にし、そのネットワークアドレスとパスワードをここに入力してください。",
+      "de": "Aktiviere auf dem Computer die Freigabe unter Sitzungen → Fernzugriff-Einstellungen. Gib hier seine Netzwerkadresse und sein Passwort ein.",
+      "nb": "Slå på deling på datamaskinen under Økter → Innstillinger for fjerntilgang. Skriv inn nettverksadressen og passordet her.",
+      "sv": "Aktivera delning på datorn under Sessioner → Inställningar för fjärråtkomst. Ange datorns nätverksadress och lösenord här.",
+      "da": "Slå deling til på computeren under Sessioner → Indstillinger for fjernadgang. Indtast computerens netværksadresse og adgangskode her."
     },
     "No saved servers yet.": {
       "en-US": "No saved servers yet.",

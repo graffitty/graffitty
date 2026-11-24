@@ -22,6 +22,7 @@ var connect_all := Button.new()
 var keep_manager_open := false
 var _pending_connections: Array[Dictionary] = []
 var _connecting_queue := false
+var _attempted_passwords: Dictionary[String, String] = {}
 var cards: Array[Dictionary] = []
 
 func _init() -> void:
@@ -187,13 +188,20 @@ func _refresh_status() -> void:
 
 func _edit(entry: Dictionary) -> void:
 	if not visible: popup_centered_clamped(Vector2i(Vector2(840, 620) * content_scale_factor), 0.9)
-	editing = entry.duplicate(true)
+	_load_editor(entry)
 	open_when_ready = false
 	chooser.hide()
 	form.title = "Add server" if editing.is_empty() else "Edit server / password"
 	form.show()
-	editor.load_settings(editing)
 	editor.endpoint.grab_focus()
+
+func _load_editor(entry: Dictionary) -> void:
+	editing = entry.duplicate(true)
+	editor.load_settings(editing)
+	if not editing.is_empty():
+		var url: String = editing.url
+		var retry: String = _attempted_passwords[url] if _attempted_passwords.has(url) else _password(editing)
+		editor.prefill_password(retry)
 
 func _cancel_edit() -> void:
 	editor.token.clear()
@@ -212,8 +220,11 @@ func _input(event: InputEvent) -> void:
 func _password(settings: Dictionary) -> String:
 	var connected := _connected_client(settings)
 	if connected != null: return str(connected.connection.token)
+	if _attempted_passwords.has(settings.url): return _attempted_passwords[settings.url]
+	if is_instance_valid(client) and client.settings.get("url") == settings.url and not client.connection.token.is_empty():
+		return str(client.connection.token)
 	if settings.get("remember", false):
-		var result := Authentication.password(settings.url)
+		var result := Authentication.password(settings.url, str(settings.get("credential_id", "")))
 		if result.has("error"): status.text = str(result.error)
 		return str(result.get("password", ""))
 	return ""
@@ -224,8 +235,7 @@ func _save(in_new_window: bool) -> void:
 	if not address_error.is_empty():
 		editor.form_status.text = address_error
 		return
-	var password: String = editor.token.text
-	if password.is_empty(): password = _password(settings)
+	var password: String = editor.password_for_submission()
 	if password.is_empty():
 		editor.form_status.text = "Enter the current password shown on the computer."
 		return
@@ -238,6 +248,7 @@ func _save(in_new_window: bool) -> void:
 		if not error.is_empty():
 			editor.form_status.text = error
 			return
+	if not editing.is_empty() and editing.url != settings.url: _attempted_passwords.erase(editing.url)
 	selected = settings.duplicate(true)
 	_cancel_edit()
 	_refresh_list()
@@ -311,6 +322,7 @@ func connect_server(source: Node, url: String) -> void:
 	present(source)
 
 func _connect(settings: Dictionary, password: String, in_new_window: bool) -> void:
+	_attempted_passwords[settings.url] = password
 	var connection_settings := settings.duplicate(true)
 	connection_settings.token = password
 	var next: Node = application.open_remote_server(client, connection_settings, in_new_window)
@@ -347,6 +359,7 @@ func _forget() -> void:
 	if not error.is_empty():
 		status.text = error
 		return
+	_attempted_passwords.erase(selected.url)
 	for candidate in get_tree().get_nodes_in_group("shared_presentations"):
 		if not candidate.federated and candidate.settings.get("url") == selected.url:
 			candidate.settings.transient = true

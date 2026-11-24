@@ -809,7 +809,9 @@ and verify the list stays open. Connect the second and verify automatic entry.
 Android Back or the visible iOS Back control returns to Servers. Further status
 and topology updates leave it open. Disconnect and reconnect one server; the
 transition back to all connected opens the workspace again. After a failed
-sign-in, Edit server retains the masked password for correction. Connect all
+sign-in, Edit server retains the masked password for correction. An equivalent
+address spelling keeps the password. Changing to a different server requires a
+password entered for that address on mobile and desktop. Connect all
 skips active transports; Touch to start explicitly opens a connected workspace.
 
 A saved connection contains server identity and authentication preferences only.
