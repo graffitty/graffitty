@@ -1,8 +1,8 @@
 //! Native providers without lifecycle hooks are observed by the owner. Transcript
 //! reads run through Workers, never in the PTY actor, and retain process identity.
-use graffitty_workspace_core::graph::Graph;
+use graffitty_workspace_core::graph::{Graph, OutcomeRoutes};
 use serde_json::{Value, json};
-use std::collections::{BTreeMap, HashMap, HashSet, VecDeque};
+use std::collections::{HashMap, HashSet, VecDeque};
 use std::time::{Duration, Instant};
 
 #[derive(Default)]
@@ -17,7 +17,7 @@ struct Pending {
     workspace: String,
     id: u64,
     identity: Value,
-    routes: BTreeMap<String, u64>,
+    routes: OutcomeRoutes,
     outcome: Outcome,
     run_id: String,
     launched: bool,
@@ -34,8 +34,10 @@ fn identity(node: &Value) -> Value {
 }
 impl Pending {
     fn matches(&self, graph: &Graph) -> bool {
+        let failed = matches!(self.outcome, Outcome::Failed(_));
         graph.nodes.get(&format!("t{}", self.id)).is_some_and(|node|
-            identity(node) == self.identity && (matches!(self.outcome, Outcome::Failed(_)) || node["integrated"] != true))
+            identity(node) == self.identity && (failed || node["integrated"] != true))
+            && graph.has_outcome_route(self.id, failed, &self.routes)
     }
 }
 impl Completions {
@@ -457,6 +459,63 @@ mod tests {
             assert!(jobs.pending.is_empty());
             assert_eq!(graphs["main"].queues["t2"].len(),texts.len());
         }
+    }
+
+    #[test]
+    fn revoked_read_releases_the_next_error_and_ignores_late_worker_replies() {
+        for timing in ["before_launch", "in_flight", "awaiting_record"] {
+            let (mut jobs, mut graphs, before) = fixture();
+            let graph = graphs.get_mut("main").unwrap();
+            graph.dispatch(1,"graph.connect",&json!({"from":"t1","to":"t2","from_port":"error"})).unwrap();
+            jobs.observe_turns("main",1,&before,graph,vec![
+                (json!({"id":"A","status":"completed"}),String::new()),
+                (json!({"id":"B","status":"failed","error":{"message":"quota"}}),String::new()),
+            ]);
+            let (key, _) = jobs.requests().pop().unwrap();
+            if timing != "before_launch" { jobs.launched(&key); }
+            if timing == "awaiting_record" {
+                jobs.finish(&key,&json!({"status":"awaiting_record"}),&mut graphs);
+                assert!(jobs.pending[0].1.retry_at.is_some());
+            }
+            let graph = graphs.get_mut("main").unwrap();
+            let edge = graph.edges.values().find(|edge| edge["turn_completed"] == true).unwrap().clone();
+            graph.dispatch(1,"graph.disconnect",&edge).unwrap();
+            graph.dispatch(1,"graph.connect",&json!({"from":"t1","to":"t2","from_port":"turn_completed"})).unwrap();
+            jobs.advance(&mut graphs);
+            assert!(jobs.pending.is_empty() && jobs.requests().is_empty(), "{timing}");
+            for reply in [json!({"status":"awaiting_record"}),json!({"turn_id":"A","last_message":"old","completion_checkpoint":42,"size":42})] {
+                jobs.finish(&key,&reply,&mut graphs);
+                jobs.advance(&mut graphs);
+            }
+            let events = &graphs["main"].queues["t2"];
+            assert_eq!(events.len(),1,"{timing}");
+            assert_eq!(events[0]["text"],"quota");
+        }
+    }
+
+    #[test]
+    fn a_read_keeps_its_place_while_one_captured_recipient_remains() {
+        let (mut jobs, mut graphs, before) = fixture();
+        let graph = graphs.get_mut("main").unwrap();
+        graph.add(3, "Other recipient".into());
+        graph.dispatch(3,"agent.event",&json!({"event":"SessionStart","provider":"codex"})).unwrap();
+        graph.dispatch(1,"graph.connect",&json!({"from":"t1","to":"t3","from_port":"turn_completed"})).unwrap();
+        graph.dispatch(1,"graph.connect",&json!({"from":"t1","to":"t2","from_port":"error"})).unwrap();
+        jobs.observe_turns("main",1,&before,graph,vec![
+            (json!({"id":"A","status":"completed"}),String::new()),
+            (json!({"id":"B","status":"failed","error":{"message":"quota"}}),String::new()),
+        ]);
+        let (key, _) = jobs.requests().pop().unwrap();
+        jobs.launched(&key);
+        let edge = graph.edges.values().find(|edge| edge["turn_completed"] == true && edge["to"] == "t2").unwrap().clone();
+        graph.dispatch(1,"graph.disconnect",&edge).unwrap();
+        jobs.advance(&mut graphs);
+        assert_eq!(jobs.pending.len(),2);
+        assert!(graphs["main"].queues.values().all(Vec::is_empty));
+        jobs.finish(&key,&json!({"turn_id":"A","last_message":"answer","completion_checkpoint":42,"size":42}),&mut graphs);
+        jobs.advance(&mut graphs);
+        assert_eq!(graphs["main"].queues["t3"][0]["text"],"answer");
+        assert_eq!(graphs["main"].queues["t2"][0]["text"],"quota");
     }
 
     #[test]

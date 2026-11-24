@@ -5,6 +5,53 @@ use super::*;
 mod lifecycle;
 
 #[test]
+fn delayed_outcomes_follow_the_same_receiver_inbox_as_already_queued_events() {
+    for receiver in ["new_session", "discovered_replacement", "resume"] {
+        for deliver_first in [true, false] {
+            let mut graph = Graph::default();
+            for id in 1..=3 {
+                graph.add(id, format!("Terminal {id}"));
+                let provider = if receiver == "resume" && id == 2 { "adapter" } else { "codex" };
+                graph.dispatch(id, "agent.event", &json!({"event":"SessionStart","provider":provider,
+                    "pid":id,"session_id":format!("s{id}"),"transport":"inbox"})).unwrap();
+                if provider == "adapter" {
+                    graph.dispatch(id, "agent.register", &json!({"inputs":[{"id":"in"}],"outputs":[]})).unwrap();
+                }
+            }
+            for id in [2,3] {
+                for output in ["turn_completed", "error"] {
+                    graph.dispatch(1, "graph.connect", &json!({"from":"t1","from_port":output,"to":format!("t{id}")})).unwrap();
+                }
+            }
+            let completed = graph.outcome_routes(1, false);
+            let failed = graph.outcome_routes(1, true);
+            assert_eq!((completed.len(), failed.len()), (2,2));
+            let deliver = |g: &mut Graph| {
+                g.discovered_completion(1, "Answer A", 245, "", &completed).unwrap();
+                g.discovered_failure(1, &json!({"id":"B","error":{"message":"B failed"}}), "", &failed).unwrap();
+            };
+            if deliver_first { deliver(&mut graph); }
+            let mut moved = Graph::default();
+            graph.transfer_nodes_to(&HashSet::from([1,2,3]), &mut moved);
+            if receiver == "discovered_replacement" {
+                moved.observe_agent(2, &json!({"provider":"claude","pid":42,"status":"busy"}));
+            } else {
+                let provider = if receiver == "resume" { "adapter" } else { "codex" };
+                moved.dispatch(2, "agent.event", &json!({"event":"SessionStart","provider":provider,
+                    "pid":42,"session_id":"replacement","resume_inbox":receiver == "resume"})).unwrap();
+            }
+            if !deliver_first { deliver(&mut moved); }
+            for id in [2,3] {
+                let events = moved.dispatch(id, "graph.take", &json!({})).unwrap();
+                let texts: Vec<_> = events["events"].as_array().unwrap().iter().map(|e| string(e,"text")).collect();
+                let wanted = if id == 3 || receiver == "resume" { vec!["Answer A","B failed"] } else { vec![] };
+                assert_eq!(texts, wanted, "{receiver} / {deliver_first} / {id}");
+            }
+        }
+    }
+}
+
+#[test]
 fn delayed_completion_uses_only_continuously_connected_wires() {
     let mut graph = Graph::default();
     for id in 1..=4 {

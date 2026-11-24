@@ -93,7 +93,15 @@ impl NodeSettings {
         Ok(())
     }
 }
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct OutcomeRoute {
+    wire_revision: u64,
+    inbox_generation: u64,
+}
+pub type OutcomeRoutes = BTreeMap<String, OutcomeRoute>;
+
 pub struct Graph {
+    inbox_generations: HashMap<String, u64>,
     activity_clock: ActivityClock,
     settings: NodeSettings,
     pub nodes: BTreeMap<String, Value>,
@@ -225,6 +233,7 @@ impl Graph {
         Self {
             activity_clock,
             owner_wiring: None,
+            inbox_generations: HashMap::new(),
             nodes: BTreeMap::new(), edges: BTreeMap::new(), queues: BTreeMap::new(),
             receipts: Vec::new(), runs: HashMap::new(), run_limits: HashMap::new(),
             default_run_limit: settings.run_messages, journal: crate::graph_journal::Journal::with_limits(settings.delivery_history, settings.delivery_transitions),
@@ -270,6 +279,7 @@ impl Graph {
         exposed
     }
     fn clear_queue(&mut self, key: &str) {
+        *self.inbox_generations.entry(key.to_owned()).or_default() += 1;
         let removed = self.queues.remove(key).unwrap_or_default();
         if !removed.is_empty() { self.notification_revision = self.notification_revision.wrapping_add(1); }
         for event in removed {
@@ -278,27 +288,45 @@ impl Graph {
     }
 
     /// A delayed outcome may use only wires active at observation and delivery.
-    pub fn outcome_routes(&self, id: u64, failed: bool) -> BTreeMap<String, u64> {
+    pub fn outcome_routes(&self, id: u64, failed: bool) -> OutcomeRoutes {
         self.outcome_edges(&format!("t{id}"), failed.then_some("error"), None)
-            .map(|(key, edge)| (key.clone(), edge["revision"].as_u64().unwrap())).collect()
+            .map(|(key, edge)| (key.clone(), self.outcome_route(edge))).collect()
     }
 
-    fn outcome_edges<'a>(&'a self, key: &'a str, port: Option<&'a str>, routes: Option<&'a BTreeMap<String, u64>>)
+    fn outcome_route(&self, edge: &Value) -> OutcomeRoute {
+        OutcomeRoute {
+            wire_revision: edge["revision"].as_u64().unwrap(),
+            inbox_generation: self.inbox_generations.get(string(edge, "to")).copied().unwrap_or(0),
+        }
+    }
+
+    fn eligible_outcome(&self, source: &str, port: Option<&str>, edge: &Value, at: f64) -> bool {
+        let output = match port {
+            Some(port) => edge["from_port"] == port && edge["send"] == true,
+            None => edge["turn_completed"] == true,
+        };
+        output && edge["from"] == source && edge["muted"] != true && !expired(edge, at)
+    }
+
+    pub fn has_outcome_route(&self, id: u64, failed: bool, routes: &OutcomeRoutes) -> bool {
+        let key = format!("t{id}");
+        let at = now();
+        routes.iter().any(|(wire, captured)| self.edges.get(wire).is_some_and(|edge|
+            self.eligible_outcome(&key, failed.then_some("error"), edge, at) && *captured == self.outcome_route(edge)))
+    }
+
+    fn outcome_edges<'a>(&'a self, key: &'a str, port: Option<&'a str>, routes: Option<&'a OutcomeRoutes>)
         -> impl Iterator<Item = (&'a String, &'a Value)> {
         let at = now();
         self.edges.iter().filter(move |(id, edge)| {
-            let output = match port {
-                Some(port) => edge["from_port"] == port && edge["send"] == true,
-                None => edge["turn_completed"] == true,
-            };
-            output && edge["from"] == key && edge["muted"] != true && !expired(edge, at)
-                && routes.is_none_or(|routes| routes.get(*id).is_some_and(|revision| edge["revision"] == *revision))
+            self.eligible_outcome(key, port, edge, at)
+                && routes.is_none_or(|routes| routes.get(*id).is_some_and(|route| *route == self.outcome_route(edge)))
         })
     }
 
     /// A native discovery worker can finish reading a completed turn after a
     /// newer turn has started. Route its output without changing live status.
-    pub fn discovered_completion(&mut self, id: u64, text: &str, checkpoint: u64, run_id: &str, routes: &BTreeMap<String, u64>) -> Result<()> {
+    pub fn discovered_completion(&mut self, id: u64, text: &str, checkpoint: u64, run_id: &str, routes: &OutcomeRoutes) -> Result<()> {
         let key = format!("t{id}");
         let node = self.nodes.get(&key).ok_or("Unknown agent")?;
         let run_id = if self.runs.contains_key(run_id) { run_id } else { "" };
@@ -308,7 +336,7 @@ impl Graph {
         self.enqueue_completion(&key, &params, signature, Some(checkpoint), Some(routes))
     }
 
-    fn enqueue_completion(&mut self, key: &str, params: &Value, signature: String, checkpoint: Option<u64>, routes: Option<&BTreeMap<String, u64>>) -> Result<()> {
+    fn enqueue_completion(&mut self, key: &str, params: &Value, signature: String, checkpoint: Option<u64>, routes: Option<&OutcomeRoutes>) -> Result<()> {
         if self.seen.get(key) == Some(&signature) {
             return Ok(());
         }
@@ -329,7 +357,7 @@ impl Graph {
 
     /// Lifecycle outputs use ordinary message delivery, without granting Read.
     /// Their trigger is owner-observed state, not an agent's graph.send call.
-    fn enqueue_lifecycle(&mut self, key: &str, output: &str, fields: &Value, run: Value, routes: Option<&BTreeMap<String, u64>>) -> Result<()> {
+    fn enqueue_lifecycle(&mut self, key: &str, output: &str, fields: &Value, run: Value, routes: Option<&OutcomeRoutes>) -> Result<()> {
         if is_custom_node(&self.nodes[key]) { return Ok(()); }
         let mut params = fields.clone();
         params["kind"] = json!(format!("agent.{output}"));
@@ -372,7 +400,7 @@ impl Graph {
         successes
     }
 
-    pub fn discovered_failure(&mut self, id: u64, turn: &Value, run_id: &str, routes: &BTreeMap<String,u64>) -> Result<()> {
+    pub fn discovered_failure(&mut self, id: u64, turn: &Value, run_id: &str, routes: &OutcomeRoutes) -> Result<()> {
         let key = format!("t{id}");
         if !self.nodes.contains_key(&key) { return Err("Unknown agent".into()); }
         let run = self.runs.get_key_value(run_id).map(|(id, _)| id.clone());
@@ -559,6 +587,7 @@ impl Graph {
         self.codex_turn_runs.remove(&key);
         self.timed_out_status.remove(&key);
         self.clear_queue(&key);
+        self.inbox_generations.remove(&key);
         self.contexts.remove(&key);
         self.edges.retain(|_, e| e["from"] != key && e["to"] != key);
         self.revoke();
@@ -579,6 +608,7 @@ impl Graph {
                 target.activity_clock.advance(&mut node);
                 target.nodes.insert(key.clone(), node);
             }
+            if let Some(generation) = self.inbox_generations.remove(key) { target.inbox_generations.insert(key.clone(), generation); }
             if let Some(turns) = self.codex_turn_runs.remove(key) { target.codex_turn_runs.insert(key.clone(), turns); }
             if let Some(status) = self.timed_out_status.remove(key) { target.timed_out_status.insert(key.clone(), status); }
             if let Some(context) = self.contexts.remove(key) { target.contexts.insert(key.clone(), context); }
