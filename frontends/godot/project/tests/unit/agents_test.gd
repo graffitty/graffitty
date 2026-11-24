@@ -364,7 +364,7 @@ func test_split_catalog_delivery_adds_moves_and_removes_background_agents() -> v
 		app.agent_attention.refresh()
 		var deliver := func(peer, revision, sessions):
 			peer._receive({"type":"session_list", "revision":revision, "sessions":sessions, "stops_when_empty":false})
-		var busy := {"pane":7,"provider":"pi","status":"busy","activity_revision":4}
+		var busy := {"pane":7,"provider":"pi","status":"busy","activity_revision":4,"attention":null}
 		var done := busy.merged({"status":"idle","activity_revision":6,"attention":{"event":"finished","kind":"completed","seen":false}}, true)
 		var origin := [{"id":"$1","agents":[busy]}]
 		var moved := [{"id":"$1","agents":[]},{"id":"$2","agents":[done]}]
@@ -419,7 +419,7 @@ func test_transferred_agent_in_retained_layout_uses_connected_destination() -> v
 			peer.connected = true
 		old.workspace = "$1"
 		live.workspace = "$3"
-		var busy := {"node":"t2","pane":2,"provider":"pi","status":"busy","activity_revision":4}
+		var busy := {"node":"t2","pane":2,"provider":"pi","status":"busy","activity_revision":4,"attention":null}
 		old.topology = {"workspace":"$1", "tabs":[], "panes":[], "graph":{"nodes":[busy]}}
 		graph.import_remote(old, old.topology.graph)
 		var panel := preload("res://scenes/Agents.gd").new()

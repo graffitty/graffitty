@@ -94,6 +94,59 @@ class AgentReceiptTests(unittest.TestCase):
             finally:
                 client.close()
 
+    def test_osc_clear_preserves_a_read_until_the_interrupted_receipt_retries(self):
+        with (
+            tempfile.TemporaryDirectory(prefix="gft-osc-", dir="/tmp" if os.name == "posix" else None) as scratch,
+            patch.dict(os.environ, {"GRAFFITTY_SCENE_EVIDENCE": scratch}),
+            Owner(network=True) as owner,
+        ):
+            clients = []
+            try:
+                for name in ("viewer", "observer"):
+                    clients.append(Client(owner, name))
+                    clients[-1].until(lambda state: state.get("connected") and state.get("presented"))
+                viewer, observer = clients
+
+                def report(state):
+                    owner.output(f"\x1b]7501;state={state}:app=pi\x07".encode())
+
+                report("working")
+                viewer.until(lambda state: state.get("status") == "working")
+                report("idle")
+                completion = viewer.until(lambda state: state.get("marker") == "completed"
+                    and (state.get("attention") or {}).get("event"))
+                event = completion["attention"]["event"]
+
+                def catalog_row(state):
+                    return next((row for session in state.get("sessions", []) for row in session["agents"]
+                                 if (row.get("attention") or {}).get("event") == event), {})
+
+                viewer.command(viewed=True, hold=True)
+                viewer.until(lambda state: event in state.get("held", []))
+                viewer.command(viewed=False)
+                viewer.until(lambda state: state.get("control", {}).get("viewed") is False)
+                report("clear")
+                for client in clients:
+                    state = client.until(lambda state: bool(catalog_row(state)) and catalog_row(state)["program"] is None
+                        and (state.get("attention") or {}).get("event") == event)
+                    self.assertFalse(state["attention"]["seen"])
+                    self.assertEqual(state["marker"], "completed" if client is observer else "")
+
+                viewer.command(release=True, hold=False, reject_held=True)
+                viewer.until(lambda state: event in state.get("rejected", []))
+                report("idle")
+                for client in clients:
+                    state = client.until(lambda state: (catalog_row(state).get("program") or {}).get("state") == "idle"
+                        and catalog_row(state)["attention"]["seen"] and (state.get("attention") or {}).get("seen"))
+                    self.assertEqual(state["attention"]["event"], event)
+                    self.assertEqual(state["marker"], "")
+                self.assertIn(event, viewer.state()["sent"])
+            finally:
+                for client in clients:
+                    client.close()
+            for client in clients:
+                self.assertFalse(failed(client.process.returncode, client.output()), client.output())
+
     def test_mobile_read_clears_desktop_and_stale_receipt_keeps_new_completion(self):
         # Owner and both clients have independent storage; no installed app or
         # user server is touched. OSC exercises an agent without provider hooks.

@@ -114,7 +114,7 @@ func test_reauthenticated_socket_restores_the_previous_session() -> void:
 	connection.epoch = "same-server"
 	connection._receive({"type": "ready", "version": Connection.Protocol.VERSION, "epoch": "same-server"})
 	expect(connection.workspace.is_empty() and connection.preferred_session == "$4", "Authentication retains the destination without claiming the new socket is attached")
-	connection._receive({"type": "session_list", "revision": 1, "sessions": [{"id": "$4"}], "stops_when_empty": false})
+	connection._receive({"type": "session_list", "revision": 1, "sessions": [{"id": "$4", "agents": []}], "stops_when_empty": false})
 	expect(peer.sent.any(func(message): return message.get("type") == "session_switch" and message.get("name") == "$4"), "Session discovery explicitly reattaches the previous session")
 	connection.free()
 
@@ -144,12 +144,12 @@ func test_session_close_prediction_uses_server_policy_and_inventory() -> void:
 	var connection := Connection.new()
 	connection.connected = true
 	expect(connection.session_close_stops_server("$4") == null, "An unpublished catalog gives no shutdown prediction")
-	connection._receive({"type": "session_list", "revision": 2, "sessions": [{"id": "$4"}], "stops_when_empty": true})
+	connection._receive({"type": "session_list", "revision": 2, "sessions": [{"id": "$4", "agents": []}], "stops_when_empty": true})
 	expect(connection.session_close_stops_server("$4") == true, "The final private session stops the server")
 	expect(connection.session_close_stops_server("$5") == null, "An unknown target gives no shutdown prediction")
-	connection._receive({"type": "session_list", "revision": 3, "sessions": [{"id": "$4"}, {"id": "$5"}], "stops_when_empty": true})
+	connection._receive({"type": "session_list", "revision": 3, "sessions": [{"id": "$4", "agents": []}, {"id": "$5", "agents": []}], "stops_when_empty": true})
 	expect(connection.session_close_stops_server("$4") == false, "A sibling session keeps the private server running")
-	connection._receive({"type": "session_list", "revision": 4, "sessions": [{"id": "$4"}], "stops_when_empty": false})
+	connection._receive({"type": "session_list", "revision": 4, "sessions": [{"id": "$4", "agents": []}], "stops_when_empty": false})
 	expect(connection.session_close_stops_server("$4") == false, "Remote access keeps the server running without sessions")
 	connection.free()
 

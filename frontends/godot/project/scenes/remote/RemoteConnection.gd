@@ -531,6 +531,39 @@ func _clear_resources() -> void:
 		resources_received.emit(int(pane.id), {"status": "disconnected"}, 1.0)
 
 
+static func _valid_session_id(id: String) -> bool:
+	if not id.begins_with("$"): return false
+	var digits := id.substr(1)
+	if digits.is_empty() or not digits.lstrip("0123456789").is_empty(): return false
+	if digits.length() > 1 and digits.begins_with("0"): return false
+	return digits.length() < 20 or (digits.length() == 20 and digits <= "18446744073709551615")
+
+
+## A catalog can settle unconfirmed reads, so its agent membership must be complete.
+static func _valid_session_list(message: Dictionary) -> bool:
+	if not message.get("revision") is int or message.revision < 0: return false
+	if not message.get("sessions") is Array or not message.get("stops_when_empty") is bool: return false
+	var sessions := {}
+	var panes := {}
+	for session in message.sessions:
+		if not session is Dictionary or not session.get("id") is String or not session.get("agents") is Array: return false
+		var id: String = session.id
+		if not _valid_session_id(id) or sessions.has(id): return false
+		sessions[id] = true
+		for agent in session.agents:
+			if not agent is Dictionary or not agent.get("pane") is int: return false
+			var pane: int = agent.pane
+			if pane <= 0 or pane >= PaneAddress.CHROMIUM_BASE or panes.has(pane): return false
+			if not agent.get("activity_revision") is int or agent.activity_revision < 0 or not agent.has("attention"): return false
+			var attention: Variant = agent.attention
+			if attention != null:
+				if not attention is Dictionary or attention.size() != 3: return false
+				if not attention.get("event") is String or attention.event.is_empty(): return false
+				if attention.get("kind") not in ["completed","waiting"] or not attention.get("seen") is bool: return false
+			panes[pane] = true
+	return true
+
+
 func _receive(message: Dictionary) -> void:
 	if not connected and message.get("type") not in ["auth_challenge", "auth_wait", "auth_code_required", "ready"]:
 		_auth_error("Unexpected message before authentication")
@@ -605,6 +638,7 @@ func _receive(message: Dictionary) -> void:
 				frontend_generation += 1
 				socket.send_text(JSON.stringify({"type": "frontend_register", "generation": frontend_generation}))
 		"session_list":
+			if not _valid_session_list(message) or message.revision < catalog_revision: return
 			catalog_revision = int(message.revision)
 			available_sessions = message.sessions
 			stops_when_empty = message.stops_when_empty == true

@@ -132,6 +132,10 @@ impl CatalogTitle {
     }
 }
 
+fn agent_app<'a>(provider: &'a Value, program: &'a Value) -> Option<&'a str> {
+    [provider.as_str(), program["app"].as_str()].into_iter().flatten().find(|app| AGENT_APPS.contains(app))
+}
+
 /// Only connected panes contribute to a background session's agent tree.
 fn agent_tree(server: &Server, workspace: &str, agents: &[Value]) -> Value {
     use graffitty_protocol::pane_id::address;
@@ -165,10 +169,8 @@ fn agent_tree(server: &Server, workspace: &str, agents: &[Value]) -> Value {
             let key = address(pane.id);
             if !keys.contains(key.as_str()) || server.filetrees.active.contains_key(&pane.id) { continue; }
             let rect = server.workspace_state.pane_rect(workspace, pane.tab, &key).unwrap_or(pane.rect);
-            let node = if let Some(agent) = summaries.get(&pane.id) {
-                let provider = if AGENT_APPS.contains(&agent["provider"].as_str().unwrap_or("")) {
-                    &agent["provider"]
-                } else { &agent["program"]["app"] };
+            let node = if let Some((agent, provider)) = summaries.get(&pane.id)
+                .and_then(|agent| agent_app(&agent["provider"], &agent["program"]).map(|provider| (agent, provider))) {
                 json!({"key":key,"kind":"agent","provider":provider,"title":agent["title"],"rect":rect})
             } else {
                 let title = CatalogTitle::sample(&mut titles, pane.id, pane.title(), !pane.pinned_title.is_empty(), now);
@@ -198,8 +200,9 @@ fn agent_summary(pane: u64, value: &Value, title: &str) -> Option<Value> {
         "state": p["state"], "app": p.get("app").cloned().unwrap_or(json!("")),
         "title": p.get("title").cloned().unwrap_or(json!("")), "msg": p.get("msg").cloned().unwrap_or(json!("")),
     }));
-    let app = program.as_ref().and_then(|p| p["app"].as_str()).unwrap_or("");
-    if !AGENT_APPS.contains(&provider) && !AGENT_APPS.contains(&app) { return None; }
+    // OSC clear removes the program identity while a completion can still await its receipt.
+    if agent_app(&value["provider"], &value["program_status"]).is_none()
+        && value["attention"]["seen"].as_bool() != Some(false) { return None; }
     Some(json!({"pane": pane, "provider": provider, "status": value["status"],
         "attention": value["attention"], "activity_revision": value["activity_revision"].as_u64().unwrap_or(0),
         "status_history": value["status_history"].as_array().and_then(|h| h.last()).into_iter().collect::<Vec<_>>(),
@@ -419,6 +422,28 @@ mod tests {
         }
         assert!(super::agent_summary(1, &json!({"provider":"shell","status":"idle"}), "Shell").is_none());
         assert!(super::agent_summary(1, &json!({"kind":"custom","provider":"custom","status":"waiting"}), "Node").is_none());
+    }
+
+    #[test]
+    fn cleared_osc_program_keeps_only_its_outstanding_receipt_in_the_catalog() {
+        let mut graph = graffitty_workspace_core::graph::Graph::default();
+        graph.add(7, "Shell".into());
+        for state in ["working", "idle"] {
+            graph.observe_program_status(7, Some(&json!({"app":"pi","state":state})));
+        }
+        let event = graph.nodes["t7"]["attention"].clone();
+        graph.observe_program_status(7, None);
+        let summary = super::agent_summary(7, &graph.nodes["t7"], "Shell").unwrap();
+        assert_eq!(summary["attention"], event);
+        assert_eq!(summary["activity_revision"], graph.nodes["t7"]["activity_revision"]);
+        assert!(super::agent_app(&summary["provider"], &summary["program"]).is_none());
+        graph.observe_program_status(7, Some(&json!({"app":"pi","state":"idle"})));
+        let restored = super::agent_summary(7, &graph.nodes["t7"], "Shell").unwrap();
+        assert_eq!(restored["attention"], event);
+        assert_eq!(super::agent_app(&restored["provider"], &restored["program"]), Some("pi"));
+        graph.observe_program_status(7, None);
+        graph.dispatch(7, "agent.seen", &json!({"event":event["event"]})).unwrap();
+        assert!(super::agent_summary(7, &graph.nodes["t7"], "Shell").is_none());
     }
 
     #[test]

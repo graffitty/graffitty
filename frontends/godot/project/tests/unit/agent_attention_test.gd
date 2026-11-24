@@ -220,6 +220,66 @@ func test_complete_inventory_settles_superseded_reads_after_the_last_view_detach
 		for item in [controller,host,peer,recovered]: item.free()
 
 
+func test_malformed_wire_catalog_preserves_last_good_inventory_and_pending_read() -> void:
+	var app := Application.new()
+	var controller := CapturedAttention.new()
+	var host := RemoteHost.new()
+	var peer := preload("res://scenes/remote/RemoteConnection.gd").new()
+	var decoder: RefCounted = ClassDB.instantiate("RemoteClientCore")
+	peer.url = "test://catalog-shapes"
+	peer.epoch = "epoch"
+	peer.workspace = "$0"
+	peer.topology.workspace = "$0"
+	peer.connected = true
+	peer.server_fonts.ready = true
+	host.session_backend.connection = peer
+	host.workspace_layout.active = 1
+	host.workspace_layout.tabs.assign([_tab(1, ["t1"])])
+	controller.application = app
+	controller.in_view = func(h): return h.in_view
+	app.hosts = [host]
+	var event := {"event":"original","kind":"completed","seen":false}
+	var agent := {"pane":1,"provider":"pi","status":"idle","activity_revision":10,"attention":event}
+	var sessions := [{"id":"$0","agents":[agent]},{"id":"$18446744073709551615","agents":[]}]
+	var packet := func(revision,summaries):
+		var value := {"type":"session_list","revision":revision,"sessions":summaries,"stops_when_empty":false}
+		peer._receive(decoder.decode_message(JSON.stringify(value).to_utf8_buffer()).message)
+	packet.call(50,sessions)
+	controller.refresh()
+	expect(controller.calls.size() == 1, "The decoded catalog yields one receipt while the pane is shown")
+	app.hosts = []
+	controller.refresh()
+	host.in_view = false
+	var publications := []
+	peer.sessions_changed.connect(func(): publications.append(peer.catalog_revision))
+	for malformed in [
+		[{"id":"$0"}], [{"id":"$0","agents":null}], [{"id":"$0","agents":{}}], [null],
+		[{"id":null,"agents":[]}], [{"id":"$18446744073709551616","agents":[]}],
+		[{"id":"$0","agents":[]},{"id":"$0","agents":[]}],
+		[{"id":"$0","agents":[null]}], [{"id":"$0","agents":[{"status":"idle"}]}],
+		[{"id":"$0","agents":[agent.merged({"pane":"1"},true)]}],
+		[{"id":"$0","agents":[agent.merged({"pane":0},true)]}],
+		[{"id":"$0","agents":[agent.merged({"pane":1.5},true)]}],
+		[{"id":"$0","agents":[agent.merged({"pane":PaneAddress.CHROMIUM_BASE+1},true)]}],
+		[{"id":"$0","agents":[agent]},{"id":"$1","agents":[agent]}],
+		[{"id":"$0","agents":[agent.merged({"attention":{}},true)]}],
+	]:
+		packet.call(80,malformed)
+	expect(publications.is_empty() and peer.catalog_revision == 50 and peer.available_sessions == sessions,
+		"Malformed inventories preserve every valid row and leave the accepted revision intact")
+	app.hosts = [host]
+	packet.call(51,sessions)
+	expect(controller.calls.size() == 2 and controller.marker(host,["t1"]).count == 0,
+		"The next complete catalog restores the same unread UUID and retries it offscreen")
+	packet.call(52,[{"id":"$0","agents":[]}])
+	expect(publications == [51,52] and not controller.project_attention(event,peer).seen,
+		"An explicit empty agent inventory authoritatively removes the pane")
+	app.hosts = []
+	controller.refresh()
+	expect(controller._remote_cores.is_empty(),"The confirmed removal releases the detached epoch")
+	for item in [controller,host,peer]: item.free()
+
+
 class PannedView extends "res://scenes/WorkspaceView.gd":
 	func viewport_content_rect() -> Rect2: return Rect2(0, 36, 1280, 684)
 
