@@ -332,7 +332,7 @@ fn scan_rollout(path: &Path, baseline: Option<&Value>, mut expired: impl FnMut()
     let mut reader = BufReader::with_capacity(128 * 1024, file.take(end - offset));
     let mut position = offset;
     let mut line = Vec::new();
-    let mut failures = Vec::new();
+    let mut outcomes = Vec::new();
     while position < end {
         let chunk = reader.fill_buf()?;
         if chunk.is_empty() { break; }
@@ -344,12 +344,14 @@ fn scan_rollout(path: &Path, baseline: Option<&Value>, mut expired: impl FnMut()
         reader.consume(used);
         if newline.is_some() {
             if !skip && let Ok(record) = serde_json::from_slice::<Value>(&line) && record["type"] == "event_msg" {
-                let was_failed = turn["status"] == "failed";
+                let prior_id = turn["id"].clone();
+                let prior_status = turn["status"].clone();
                 if update_local_turn(&mut turn, &record["payload"], position) {
                     turn["at"] = record["timestamp"].clone();
                     if turn["status"] == "completed" { turn["completion_checkpoint"] = json!(position); }
-                    if !attaching && turn["status"] == "failed" && !was_failed {
-                        failures.push(turn.clone());
+                    if !attaching && matches!(turn["status"].as_str(), Some("completed" | "failed"))
+                        && (turn["id"] != prior_id || turn["status"] != prior_status) {
+                        outcomes.push(turn.clone());
                     }
                 }
             }
@@ -371,13 +373,32 @@ fn scan_rollout(path: &Path, baseline: Option<&Value>, mut expired: impl FnMut()
     turn["rollout_offset"] = json!(offset);
     if skip { turn["skip_record"] = json!(true); }
     else { turn.as_object_mut().unwrap().remove("skip_record"); }
-    let mut state = json!({"observed_turn":turn,"rollout_scan":null,"failed_turns":failures});
+    let mut state = json!({"observed_turn":turn,"rollout_scan":null,"turn_outcomes":outcomes});
     if turn["completion_checkpoint"].is_u64() { state["completion_checkpoint"] = turn["completion_checkpoint"].clone(); }
     if turn["status"].is_string() {
         state["status"] = json!(if turn["status"] == "inProgress" { "busy" } else { "idle" });
         if !turn["at"].is_null() { state["status_at"] = turn["at"].clone(); }
     }
     Ok(state)
+}
+
+#[derive(Debug)]
+struct MissingCompletionRecord;
+
+impl std::fmt::Display for MissingCompletionRecord {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str("No assistant output for the selected Codex completion")
+    }
+}
+impl std::error::Error for MissingCompletionRecord {}
+
+fn codex_completion_response(path: &Path, target: &Value) -> Result<Value> {
+    match completed_codex_output(path, target) {
+        Err(error) if target["turn_id"].is_string() && target["checkpoint"].is_null()
+            && (error.is::<MissingCompletionRecord>() || error.downcast_ref::<std::io::Error>()
+                .is_some_and(|e| e.kind() == std::io::ErrorKind::NotFound)) => Ok(json!({"status":"awaiting_record"})),
+        other => other,
+    }
 }
 
 /// Read only the completed Codex turn selected by discovery. Daemon discovery
@@ -441,7 +462,7 @@ fn completed_codex_output(path: &Path, target: &Value) -> Result<Value> {
             completion = None;
         }
         Ok(None)
-    })?.ok_or_else(|| "No assistant output for the selected Codex completion".into())
+    })?.ok_or_else(|| MissingCompletionRecord.into())
 }
 
 /// Visit complete JSONL records backwards without collecting the entire transcript.
@@ -667,7 +688,7 @@ pub fn worker(request: &str) -> Result<Value> {
             &v["target"], v["text"].as_str().ok_or("Missing text")?,
             v["event_id"].as_str().ok_or("Missing event ID")?,
         ),
-        "codex_completion" => completed_codex_output(
+        "codex_completion" => codex_completion_response(
             Path::new(v["path"].as_str().ok_or("Missing transcript path")?), &v["target"],
         ),
         "read" => transcript(
@@ -762,6 +783,24 @@ mod codex_discovery_tests {
     }
 
     #[test]
+    fn daemon_read_waits_for_the_matching_record_before_returning_its_offset() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("rollout.jsonl");
+        let target = json!({"turn_id":"A","checkpoint":null});
+        assert_eq!(codex_completion_response(&path, &target).unwrap()["status"], "awaiting_record");
+        let mut file = fs::File::create(&path).unwrap();
+        let completed = json!({"type":"event_msg","payload":{"type":"task_complete","turn_id":"A","last_agent_message":"Answer A"}});
+        write!(file, "{completed}").unwrap();
+        assert_eq!(codex_completion_response(&path, &target).unwrap()["status"], "awaiting_record");
+        writeln!(file).unwrap();
+        let end = file.metadata().unwrap().len();
+        writeln!(file, "{}", json!({"type":"event_msg","payload":{"type":"task_started","turn_id":"B"}})).unwrap();
+        let output = codex_completion_response(&path, &target).unwrap();
+        assert_eq!(output["last_message"], "Answer A");
+        assert_eq!(output["completion_checkpoint"], end);
+    }
+
+    #[test]
     fn completion_read_tracks_the_selected_turn_across_scanner_yields_and_later_drafts() {
         let dir = tempfile::tempdir().unwrap();
         let path = dir.path().join("rollout.jsonl");
@@ -828,8 +867,8 @@ mod codex_discovery_tests {
         writeln!(file).unwrap();
         let failed = codex_lifecycle(&path, Some(&observed)).unwrap();
         assert_eq!(failed["status"], "idle");
-        assert_eq!(failed["failed_turns"][0]["id"], "live");
-        assert_eq!(codex_lifecycle(&path, failed.get("observed_turn")).unwrap()["failed_turns"], json!([]));
+        assert_eq!(failed["turn_outcomes"][0]["id"], "live");
+        assert_eq!(codex_lifecycle(&path, failed.get("observed_turn")).unwrap()["turn_outcomes"], json!([]));
     }
 
     #[test]
@@ -870,9 +909,9 @@ mod codex_discovery_tests {
         assert!(second["rollout_scan"]["rollout_offset"].as_u64() > first["rollout_scan"]["rollout_offset"].as_u64());
         let attached = scan_rollout(&path, second.get("rollout_scan"), || true).unwrap();
         assert_eq!(attached["observed_turn"]["id"], "new");
-        assert_eq!(attached["failed_turns"], json!([]));
+        assert_eq!(attached["turn_outcomes"], json!([]));
         let live = scan_rollout(&path, attached.get("observed_turn"), || true).unwrap();
-        assert_eq!(live["failed_turns"][0]["error"]["message"], "new failure");
+        assert_eq!(live["turn_outcomes"][0]["error"]["message"], "new failure");
     }
 
     #[test]
@@ -947,6 +986,37 @@ mod codex_discovery_tests {
         fs::remove_file(path).unwrap();
     }
     #[test]
+    fn local_scan_keeps_every_success_before_a_later_turn_starts() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("rollout.jsonl");
+        let mut file = fs::File::create(&path).unwrap();
+        let mut append = |event: Value| writeln!(file, "{}", json!({"type":"event_msg","payload":event})).unwrap();
+        append(json!({"type":"task_started","turn_id":"a"}));
+        let before = codex_lifecycle(&path, None).unwrap();
+        assert_eq!(before["turn_outcomes"], json!([]));
+        for turn in ["a","b"] {
+            if turn != "a" { append(json!({"type":"task_started","turn_id":turn})); }
+            append(json!({"type":"task_complete","turn_id":turn,"last_agent_message":format!("Answer {turn}")}));
+        }
+        let idle = codex_lifecycle(&path, before.get("observed_turn")).unwrap();
+        assert_eq!(idle["status"], "idle");
+        append(json!({"type":"task_started","turn_id":"c"}));
+        let after = codex_lifecycle(&path, before.get("observed_turn")).unwrap();
+        assert_eq!(after["status"], "busy");
+        assert_eq!(idle["turn_outcomes"], after["turn_outcomes"]);
+        let successes = after["turn_outcomes"].as_array().unwrap();
+        assert_eq!(successes.len(), 2);
+        for (turn, result) in ["a","b"].into_iter().zip(successes) {
+            assert_eq!(result["id"], turn);
+            let read = codex_completion_response(&path, &json!({"turn_id":turn,"checkpoint":result["completion_checkpoint"]})).unwrap();
+            assert_eq!(read["last_message"], format!("Answer {turn}"));
+            assert_eq!(read["completion_checkpoint"], result["completion_checkpoint"]);
+        }
+        assert_eq!(codex_lifecycle(&path, after.get("observed_turn")).unwrap()["turn_outcomes"], json!([]));
+        assert_eq!(codex_lifecycle(&path, None).unwrap()["turn_outcomes"], json!([]));
+    }
+
+    #[test]
     fn local_codex_quota_failures_survive_fast_retries_without_success_checkpoints() {
         let dir = tempfile::tempdir().unwrap();
         let sessions = dir.path().join("sessions");
@@ -968,16 +1038,16 @@ mod codex_discovery_tests {
         let first = scan(&baseline);
         assert_eq!(first["status"], "idle");
         assert_eq!(first["observed_turn"]["status"], "failed");
-        assert_eq!(first["failed_turns"][0]["error"]["message"], "Quota exceeded");
+        assert_eq!(first["turn_outcomes"][0]["error"]["message"], "Quota exceeded");
         assert!(completed_checkpoint(&transcript(&path, None).unwrap()).is_none());
         append(&mut file, start("b"));
         append(&mut file, failure("b"));
         append(&mut file, start("c"));
         let retry = scan(&first);
         assert_eq!(retry["status"], "busy");
-        assert_eq!(retry["failed_turns"].as_array().unwrap().len(), 1);
-        assert_eq!(retry["failed_turns"][0]["id"], "b");
-        assert_eq!(scan(&retry)["failed_turns"], json!([]));
+        assert_eq!(retry["turn_outcomes"].as_array().unwrap().len(), 1);
+        assert_eq!(retry["turn_outcomes"][0]["id"], "b");
+        assert_eq!(scan(&retry)["turn_outcomes"], json!([]));
         append(&mut file, json!({"type":"task_complete","turn_id":"c","last_agent_message":"Done"}));
         let done = scan(&retry);
         assert_eq!(done["observed_turn"]["status"], "completed");
@@ -1000,18 +1070,18 @@ mod codex_discovery_tests {
         append(json!({"type":"task_complete","turn_id":"a"}));
         let failed = codex_lifecycle(&path, baseline.get("observed_turn")).unwrap();
         assert_eq!(failed["observed_turn"]["status"], "failed");
-        assert_eq!(failed["failed_turns"].as_array().unwrap().len(), 1);
+        assert_eq!(failed["turn_outcomes"].as_array().unwrap().len(), 1);
         assert!(completed_checkpoint(&transcript(&path, None).unwrap()).is_none());
         let reattached = codex_lifecycle(&path, None).unwrap();
         assert_eq!(reattached["observed_turn"]["status"], "failed");
-        assert_eq!(reattached["failed_turns"], json!([]));
+        assert_eq!(reattached["turn_outcomes"], json!([]));
         append(json!({"type":"task_started","turn_id":"b"}));
         append(json!({"type":"stream_error","message":"retrying"}));
         append(json!({"type":"turn_aborted","turn_id":"b","reason":"interrupted"}));
         let aborted = codex_lifecycle(&path, failed.get("observed_turn")).unwrap();
         assert_eq!(aborted["status"], "idle");
         assert_eq!(aborted["observed_turn"]["status"], "interrupted");
-        assert_eq!(aborted["failed_turns"], json!([]));
+        assert_eq!(aborted["turn_outcomes"], json!([]));
     }
 
     #[test]

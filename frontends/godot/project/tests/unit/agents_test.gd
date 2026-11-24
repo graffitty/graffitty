@@ -361,8 +361,20 @@ func test_transferred_agent_in_retained_layout_uses_connected_destination() -> v
 		app.agent_attention.in_view = func(h): return h == old_host
 		app.agent_attention.refresh()
 		old._receive({"type":"session_list","revision":4,"sessions":[{"id":"$1","agents":[busy]}],"stops_when_empty":false})
-		var done := busy.merged({"status":"idle","activity_revision":6,"attention":{"event":"moved","kind":"completed","seen":false}}, true)
-		live._receive({"type":"session_list","revision":6,"sessions":[{"id":"$1","agents":[]},{"id":"$2","agents":[done]}],"stops_when_empty":false})
+		old.server_fonts.ready = true
+		var former_id: String = panel.rows[0].id
+		live._receive({"type":"session_list","revision":5,"sessions":[{"id":"$1","agents":[]}],"stops_when_empty":false})
+		expect(panel.rows.is_empty() and not panel._owners.has(former_id), "A complete removal hides a still-connected window's cached row")
+		panel.focus(former_id)
+		panel.step(1)
+		expect(old_host.revealed.is_empty(), "Neither the old row ID nor keyboard navigation selects the closed pane")
+		var replacement := busy.merged({"activity_revision":7, "provider":"claude"}, true)
+		old.topology.graph.nodes = [replacement]
+		graph.import_remote(old, old.topology.graph)
+		app.agent_attention.refresh()
+		expect(panel.rows.size() == 1 and panel.rows[0].provider == "claude", "A new graph-first agent can reuse the closed pane ID")
+		var done := replacement.merged({"status":"idle","activity_revision":8,"attention":{"event":"moved","kind":"completed","seen":false}}, true)
+		live._receive({"type":"session_list","revision":9,"sessions":[{"id":"$1","agents":[]},{"id":"$2","agents":[done]}],"stops_when_empty":false})
 		expect(panel.rows.size() == 1 and panel.rows[0].session == "2", "A still-connected stale layout yields to the transfer")
 		old.connected = false
 		app.agent_attention.refresh()
@@ -384,6 +396,10 @@ func test_transferred_agent_in_retained_layout_uses_connected_destination() -> v
 			else: panel.step(1 if action == "next" else -1)
 			expect(live_host.revealed == "t2" and old_host.revealed.is_empty(), "Moved pane opens in the connected window: " + action)
 		expect(switches == [["session_switch","$2"], ["session_switch","$2"], ["session_switch","$2"]], "All three actions switch to the latest catalog destination")
+		old.topology.graph = {}
+		graph.import_remote(old, {})
+		live._receive({"type":"session_list","revision":10,"sessions":[{"id":"$2","agents":[]}],"stops_when_empty":false})
+		expect(panel.rows.is_empty() and app.agent_attention.marker(["t2"]).count == 0, "Confirmed closure clears the previously unread completion")
 		panel.free()
 		graph.free()
 		app.free()

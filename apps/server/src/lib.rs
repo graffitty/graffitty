@@ -332,7 +332,7 @@ impl Server {
             "stops_when_empty": self.stops_when_empty(),
         });
         if self.catalog_snapshot != snapshot {
-            self.catalog_revision += 1;
+            self.catalog_revision = self.activity_clock.next();
             self.save_owner_state()?;
             self.catalog_snapshot = snapshot.clone();
         }
@@ -540,8 +540,12 @@ impl Server {
                             && !graffitty_workspace_core::graph::is_custom_node(&previous) {
                             self.checkpoint_lifecycle.observe(id, state);
                         }
-                        graph.observe_agent(id, state);
-                        self.completions.observe(&session.workspace, id, &previous, &graph.nodes[key]);
+                        let successes = graph.observe_agent(id, state);
+                        if state["turn_outcomes"].is_array() {
+                            self.completions.observe_turns(&session.workspace, id, &previous, &graph.nodes[key], successes);
+                        } else {
+                            self.completions.observe(&session.workspace, id, &previous, &graph.nodes[key]);
+                        }
                     }
                 }
             } else if key.starts_with("completion:") {
@@ -616,6 +620,7 @@ impl Server {
                 );
             }
         }
+        self.completions.retain_current(&self.graphs);
         for (key, request) in self.completions.requests() {
             if self.workers.start(&self.cli, key.clone(), request, json!({})) {
                 self.completions.launched(&key);
@@ -676,7 +681,7 @@ impl Server {
                 registrations.insert(key, scan_registration(node));
                 Some(root)
             }).collect();
-            if !roots.is_empty() {
+            if !roots.is_empty() && self.completions.ready_for_scan() {
                 self.workers.start(&self.cli, "scan".into(), json!({"op":"scan","roots":roots}), Value::Object(registrations));
             }
             let mut targets: HashMap<String, Vec<Value>> = HashMap::new();
@@ -3048,7 +3053,7 @@ fn owner_state_adopt(server: &mut Server, adopted: Vec<holder_link::Adopted>, pr
         adopted.into_iter().for_each(holder_link::Holders::discard);
         return;
     };
-    server.activity_clock.resume_after(previous.activity_revision);
+    server.activity_clock.resume_after(previous.activity_revision.max(previous.catalog_revision));
     server.catalog_revision = previous.catalog_revision;
     server.next = server.next.max(previous.next);
     server.next_chromium = server.next_chromium.max(previous.next_chromium);

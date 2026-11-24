@@ -15,6 +15,20 @@ use std::{
 use std::{fs, process::Command};
 use tungstenite::{Message, WebSocket};
 
+#[derive(Debug)]
+struct RpcError(Value);
+impl std::fmt::Display for RpcError {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result { self.0.fmt(f) }
+}
+impl std::error::Error for RpcError {}
+
+impl RpcError {
+    fn before_first_turn(&self, id: &str) -> bool {
+        self.0["code"] == -32600 && self.0["message"].as_str().is_some_and(|message|
+            message == format!("thread {id} is not materialized yet; thread/turns/list is unavailable before first user message"))
+    }
+}
+
 pub struct Rpc {
     socket: WebSocket<UnixStream>,
     id: u64,
@@ -61,7 +75,7 @@ impl Rpc {
                 let response: Value = serde_json::from_str(&text)?;
                 if response["id"] == self.id {
                     if let Some(error) = response.get("error") {
-                        return Err(error.to_string().into());
+                        return Err(RpcError(error.clone()).into());
                     }
                     return Ok(response["result"].clone());
                 }
@@ -137,18 +151,25 @@ fn turn_updates(rpc: &mut Rpc, thread_id: &str, baseline: Option<&Value>) -> Res
     let mut cursor = Value::Null;
     let mut pages = HashSet::new();
     let mut latest = Value::Null;
-    let mut failures = vec![];
+    let mut outcomes = vec![];
     'pages: loop {
         let mut params = json!({"threadId":thread_id,"sortDirection":"desc","itemsView":"summary",
             "limit":if baseline.is_some() { 16 } else { 1 }});
-        if !cursor.is_null() { params["cursor"] = cursor; }
-        let page = rpc.call("thread/turns/list", params)?;
+        if !cursor.is_null() { params["cursor"] = cursor.clone(); }
+        let page = match rpc.call("thread/turns/list", params) {
+            Ok(page) => page,
+            Err(error) if cursor.is_null() && baseline.is_none_or(Value::is_null)
+                && error.downcast_ref::<RpcError>().is_some_and(|e| e.before_first_turn(thread_id)) =>
+                return Ok((Value::Null, vec![])),
+            Err(error) => return Err(error),
+        };
         for turn in page["data"].as_array().ok_or("Missing turn summaries")? {
             let summary = json!({"id":turn["id"],"status":turn["status"],"error":turn["error"]});
             if latest.is_null() { latest = summary.clone(); }
             let prior = baseline.filter(|old| old["id"] == turn["id"]);
-            if turn["status"] == "failed" && baseline.is_some() && prior.is_none_or(|old| old["status"] != "failed") {
-                failures.push(summary);
+            if matches!(turn["status"].as_str(), Some("completed" | "failed")) && baseline.is_some()
+                && prior.is_none_or(|old| old["status"] != turn["status"]) {
+                outcomes.push(summary);
             }
             if baseline.is_none() || prior.is_some() { break 'pages; }
         }
@@ -156,8 +177,8 @@ fn turn_updates(rpc: &mut Rpc, thread_id: &str, baseline: Option<&Value>) -> Res
         if cursor.is_null() { break; }
         if !pages.insert(cursor.to_string()) { return Err("Codex turn pagination did not advance".into()); }
     }
-    failures.reverse();
-    Ok((latest, failures))
+    outcomes.reverse();
+    Ok((latest, outcomes))
 }
 
 /// All loaded root threads with their configured TUI listener origins. Metadata only.
@@ -188,9 +209,9 @@ pub fn inventory(rpc: &mut Rpc, baselines: &HashMap<&str, &Value>) -> Result<Vec
                         let mut record = json!({"thread":thread,"port":port});
                         if thread["path"].is_string() {
                             match turn_updates(rpc, id, baselines.get(id).copied()) {
-                                Ok((latest, failures)) => {
+                                Ok((latest, outcomes)) => {
                                     record["turn"] = latest;
-                                    record["failed_turns"] = json!(failures);
+                                    record["turn_outcomes"] = json!(outcomes);
                                 }
                                 Err(error) => record["turn_error"] = json!(error.to_string()),
                             }
@@ -249,7 +270,7 @@ pub fn select(records: &[Value], ports: &HashSet<u16>, home: &Path) -> Result<Va
         "queue_error":null,"discovery_note":record["turn_error"]});
     if let Some(turn) = record.get("turn") {
         state["observed_turn"] = turn.clone();
-        if let Some(failures) = record.get("failed_turns") { state["failed_turns"] = failures.clone(); }
+        if let Some(outcomes) = record.get("turn_outcomes") { state["turn_outcomes"] = outcomes.clone(); }
     }
     Ok(state)
 }
@@ -302,6 +323,16 @@ mod tests {
             assert!(!same_binding(&found, &changed));
         }
     }
+    #[test]
+    fn pre_message_error_identifies_only_the_requested_empty_thread() {
+        let msg = "thread a is not materialized yet; thread/turns/list is unavailable before first user message";
+        let empty = RpcError(json!({"code":-32600,"message":msg}));
+        assert!(empty.before_first_turn("a"));
+        assert!(!empty.before_first_turn("b"));
+        assert!(!RpcError(json!({"code":-32600,"message":"invalid request"})).before_first_turn("a"));
+        assert!(!RpcError(json!({"code":-32603,"message":msg})).before_first_turn("a"));
+    }
+
     #[test]
     fn unix_port_ownership_and_origin_are_exact() {
         let inodes = HashSet::from(["42".to_owned()]);
@@ -386,7 +417,7 @@ mod tests {
                 ),
                 (
                     "thread/turns/list",
-                    json!({"data":[{"id":"retry","status":"inProgress","items":[]}],"nextCursor":"older"}),
+                    json!({"data":[{"id":"retry","status":"inProgress","items":[]},{"id":"b","status":"completed"},{"id":"a","status":"completed"}],"nextCursor":"older"}),
                 ),
                 (
                     "thread/turns/list",
@@ -396,6 +427,7 @@ mod tests {
                     "thread/read",
                     json!({"thread":{"id":child,"parentThreadId":main}}),
                 ),
+                ("thread/turns/list", json!({"data":[{"id":"retry","status":"inProgress"}],"nextCursor":null})),
             ];
             let mut turn_pages = 0;
             for (method, result) in exchanges {
@@ -434,7 +466,10 @@ mod tests {
         assert_eq!(records.len(), 1);
         let state = select(&records, &HashSet::from([54726]), Path::new("/codex")).unwrap();
         assert_eq!(state["observed_turn"]["status"], "inProgress");
-        assert_eq!(state["failed_turns"], json!([{"id":"failed-turn","status":"failed","error":{"message":"Rate limit exceeded"}}]));
+        assert_eq!(state["turn_outcomes"], json!([{"id":"failed-turn","status":"failed","error":{"message":"Rate limit exceeded"}},
+            {"id":"a","status":"completed","error":null},{"id":"b","status":"completed","error":null}]));
+        let (_, unchanged) = turn_updates(&mut rpc, "11111111-1111-4111-8111-111111111111", state.get("observed_turn")).unwrap();
+        assert!(unchanged.is_empty());
         assert!(state["observed_turn"].get("items").is_none());
         assert_eq!(
             select(&records, &HashSet::from([54726]), Path::new("/codex")).unwrap()["status"],

@@ -159,7 +159,7 @@ fn integrated_codex_quota_failure_and_retry_update_status_and_wires_once() {
     assert_eq!(graph.nodes["t1"]["status"], "busy", "a repeated failed poll cannot undo retry");
     scan["status"] = json!("busy");
     scan["observed_turn"] = json!({"id":"turn-c","status":"inProgress"});
-    scan["failed_turns"] = json!([{"id":"turn-b","status":"failed","error":{"message":"Retry failed"}}]);
+    scan["turn_outcomes"] = json!([{"id":"turn-b","status":"failed","error":{"message":"Retry failed"}}]);
     graph.observe_agent(1, &scan);
     graph.observe_agent(1, &scan);
     assert_eq!(graph.nodes["t1"]["status"], "busy");
@@ -253,7 +253,7 @@ fn delayed_codex_failures_charge_the_routed_turn_even_after_a_retry() {
     graph.observe_agent(1, &scan);
     let b = prompt(&mut graph, "b");
     scan["observed_turn"] = json!({"id":"b","status":"inProgress"});
-    scan["failed_turns"] = json!([{"id":"a","error":{"message":"failed A"}}, {"id":"unrouted","error":{"message":"manual turn"}}]);
+    scan["turn_outcomes"] = json!([{"id":"a","status":"failed","error":{"message":"failed A"}}, {"id":"unrouted","status":"failed","error":{"message":"manual turn"}}]);
     graph.observe_agent(1, &scan);
     assert_eq!(graph.queues["t2"][0]["run_id"], a);
     assert_eq!(graph.queues["t2"][0]["payload"]["turn_id"], "a");
@@ -262,7 +262,7 @@ fn delayed_codex_failures_charge_the_routed_turn_even_after_a_retry() {
     assert_eq!((graph.runs[&a], graph.runs[&b]), (2, 1));
     scan["observed_turn"]["status"] = json!("failed");
     scan["status"] = json!("idle");
-    scan["failed_turns"] = json!([]);
+    scan["turn_outcomes"] = json!([]);
     graph.observe_agent(1, &scan);
     assert_eq!(graph.queues["t2"][2]["run_id"], b);
     assert_eq!((graph.runs[&a], graph.runs[&b]), (2, 2));

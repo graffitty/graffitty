@@ -676,7 +676,8 @@ fn queue_acceptance_remains_pending_until_the_receiver_starts() {
 fn automatic_session_references_follow_current_read_permission() {
     let mut g = graph();
     g.nodes.get_mut("t1").unwrap()["session_id"] = json!("source-session");
-    g.nodes.get_mut("t1").unwrap()["transcript_path"] = json!("/private/transcript.jsonl");
+    let path = std::env::current_exe().unwrap();
+    g.nodes.get_mut("t1").unwrap()["transcript_path"] = json!(path);
     g.dispatch(
         1,
         "agent.register",
@@ -694,12 +695,14 @@ fn automatic_session_references_follow_current_read_permission() {
     .unwrap();
     assert_eq!(
         g.dispatch(2, "graph.take", &json!({})).unwrap()["events"][0]["sessions"][0]["path"],
-        "/private/transcript.jsonl"
+        json!(path)
     );
+    assert_eq!(g.queues["t2"][0]["sessions"][0]["checkpoint"]["byte_offset"], std::fs::metadata(&path).unwrap().len());
     g.dispatch(1, "graph.disconnect", &read_edge).unwrap();
     let event = g.dispatch(2, "graph.take", &json!({})).unwrap()["events"][0].clone();
     assert_eq!(event["sessions"][0]["id"], "source-session");
     assert!(event["sessions"][0].get("path").is_none());
+    assert!(event["sessions"][0].get("checkpoint").is_none());
     g.dispatch(
         2,
         "graph.connect",
@@ -740,11 +743,11 @@ fn a_rejected_completion_is_visible_in_delivery_history() {
     .unwrap();
     g.default_run_limit = 1;
     let params = json!({"run_id":"limited","text":"done"});
-    g.enqueue_completion("t1", &params, "first".into())
+    g.enqueue_completion("t1", &params, "first".into(), None)
         .unwrap();
     assert_eq!(g.queues["t2"][0]["kind"], "turn.completed");
     assert!(
-        g.enqueue_completion("t1", &params, "second".into())
+        g.enqueue_completion("t1", &params, "second".into(), None)
             .is_err()
     );
     assert_eq!(

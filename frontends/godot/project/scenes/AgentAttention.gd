@@ -81,6 +81,7 @@ func refresh() -> void:
 	var visible := PackedStringArray()
 	var graph: Object = application.agent_api.graph
 	var nodes: Dictionary = graph.nodes.duplicate()
+	var previous_owners := _receipt_owners
 	_receipt_owners = graph.remote_owners.duplicate()
 	# A shared graph row can still belong to the previous attachment. Remote
 	# snapshots below carry the peer and epoch that actually supplied the row.
@@ -119,7 +120,7 @@ func refresh() -> void:
 		var scope := [peer.url, peer.epoch]
 		connected_scopes[scope] = true
 		if int(peer.catalog_revision) >= int(_catalogs.get(scope, {}).get("revision", -1)):
-			_catalogs[scope] = {"revision": peer.catalog_revision, "sessions": peer.available_sessions}
+			_catalogs[scope] = _catalog_snapshot(peer)
 	for scope in _catalogs.keys():
 		if not connected_scopes.has(scope): _catalogs.erase(scope)
 	var displayed_events := {}
@@ -137,7 +138,9 @@ func refresh() -> void:
 		else:
 			for key in graph.nodes:
 				if graph.remote_owners.get(key) == peer: view_nodes[key] = graph.nodes[key]
+		var catalog: Dictionary = _catalogs.get([peer.url, peer.epoch], {})
 		for key in view_nodes:
+			if outside_catalog(catalog, peer.wire_id(PaneAddress.id(key)), snapshot_session, view_nodes[key]): continue
 			_merge_activity(key, view_nodes[key], peer, snapshot_session, nodes, scopes, visible_views)
 		if peer.connected:
 			if peer.session_view_ready(peer.workspace):
@@ -146,7 +149,7 @@ func refresh() -> void:
 					for row in session.get("agents", []):
 						var key := PaneAddress.key(peer.local_id(int(row.pane)))
 						if _newer(row, view_nodes.get(key, {})): view_nodes[key] = row
-			for session in catalog_for(peer):
+			for session in catalog.sessions:
 				for summary in session.get("agents", []):
 					var pane := int(summary.get("pane", -1))
 					if pane < 0: continue
@@ -163,6 +166,15 @@ func refresh() -> void:
 			var event: Variant = row.get("attention")
 			if event is Dictionary and (snapshot_session == peer.workspace or peer.connected):
 				displayed_events[[key, peer.url, peer.epoch, peer.workspace, event.event]] = true
+	# A retained layout can outlive both the closed pane and its graph row.
+	# Explicitly retire its previous event when the complete inventory omits it.
+	for key in _activity_scopes:
+		if nodes.has(key): continue
+		var scope: Array = _activity_scopes[key]
+		var peer: Node = previous_owners.get(key)
+		if not is_instance_valid(peer) or [peer.url, peer.epoch] != scope.slice(0, 2): continue
+		var catalog: Dictionary = _catalogs.get([peer.url, peer.epoch], {})
+		if outside_catalog(catalog, peer.wire_id(PaneAddress.id(key)), scope[2], _activity[key]): nodes[key] = {}
 	for key in scopes:
 		if scopes[key] == _activity_scopes.get(key) and _newer(_activity[key], nodes[key]):
 			nodes[key] = _activity[key]
@@ -178,8 +190,24 @@ func refresh() -> void:
 		application.agents.refresh()
 
 
-func catalog_for(peer: Node) -> Array:
-	return _catalogs.get([peer.url, peer.epoch], {}).get("sessions", peer.available_sessions)
+static func _catalog_snapshot(peer: Node) -> Dictionary:
+	var destinations := {}
+	for session in peer.available_sessions:
+		for agent in session.get("agents", []):
+			if agent is Dictionary: destinations[int(agent.get("pane", -1))] = session.id
+	return {"revision": peer.catalog_revision, "sessions": peer.available_sessions, "destinations": destinations}
+
+
+func catalog_snapshot(peer: Node) -> Dictionary:
+	var known: Dictionary = _catalogs.get([peer.url, peer.epoch], {})
+	return known if not known.is_empty() else _catalog_snapshot(peer)
+
+
+## A newer graph can report an agent before its catalog arrives. Otherwise the
+## complete inventory decides whether the pane still belongs to this session.
+static func outside_catalog(catalog: Dictionary, pane: int, session: String, node: Dictionary) -> bool:
+	return not catalog.is_empty() and int(node.get("activity_revision", 0)) <= int(catalog.revision) \
+		and catalog.destinations.get(pane, "") != session
 
 
 static func _newer(candidate: Dictionary, current: Dictionary) -> bool:

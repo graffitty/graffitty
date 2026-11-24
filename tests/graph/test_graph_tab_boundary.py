@@ -50,6 +50,18 @@ class GraphTabBoundaryTests(unittest.TestCase):
                         for descriptor in message["sessions"] for node in descriptor["agent_tree"]["nodes"]))
                     self.assertTrue(any(node["key"] == child and node["kind"] == "terminal"
                                         for descriptor in catalog["sessions"] for node in descriptor["agent_tree"]["nodes"]))
+                    prior_activity = next(agent["activity_revision"] for entry in catalog["sessions"]
+                                          for agent in entry["agents"] if agent["pane"] == second)
+                    self.assertLess(prior_activity, catalog["revision"])
+                    source.action("close", second)
+                    closed = viewer.until(lambda message: message.get("type") == "session_list"
+                        and all(agent["pane"] != second for entry in message["sessions"] for agent in entry["agents"]))
+                    self.assertGreater(closed["revision"], catalog["revision"])
+                    source.action("rpc", first, method="agent.event", params={
+                        "provider":"codex", "event":"UserPromptSubmit", "session_id":f"fixture-{first}"})
+                    source.sync()
+                    active = next(node for node in source.topology["graph"]["nodes"] if node["node"] == f"t{first}")
+                    self.assertGreater(active["activity_revision"], closed["revision"])
                 finally:
                     viewer.socket.close()
                     source.socket.close()

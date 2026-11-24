@@ -55,11 +55,7 @@ func refresh_body() -> void:
 	for group in groups:
 		if not group.connected: continue
 		var peer: Node = group.peer
-		var destinations := {}
-		for session in application.agent_attention.catalog_for(peer):
-			for agent in session.get("agents", []):
-				if agent is Dictionary: destinations[int(agent.get("pane", -1))] = session.id
-		membership[[peer.url, peer.epoch]] = destinations
+		membership[[peer.url, peer.epoch]] = application.agent_attention.catalog_snapshot(peer)
 	for host in application.hosts:
 		if not is_instance_valid(host) or host.is_queued_for_deletion(): continue
 		var looking: bool = application.agent_attention.in_view.call(host)
@@ -78,9 +74,13 @@ func refresh_body() -> void:
 				var local_id := PaneAddress.id(key)
 				var peer: Node = transport.owners.get(local_id) if is_instance_valid(transport) and "owners" in transport else transport
 				if is_instance_valid(peer):
-					var destinations: Variant = membership.get([peer.url, peer.epoch])
-					var destination: String = destinations.get(peer.wire_id(local_id), "") if destinations is Dictionary else ""
-					if (destinations is Dictionary and not peer.connected) or (not destination.is_empty() and not peer.session_view_ready(destination)):
+					var catalog: Dictionary = membership.get([peer.url, peer.epoch], {})
+					var pane: int = peer.wire_id(local_id)
+					if not catalog.is_empty() and not peer.connected:
+						stale_keys[key] = true
+						continue
+					if application.agent_attention.outside_catalog(catalog, pane, peer.workspace, node): continue
+					if not catalog.is_empty() and catalog.destinations.has(pane) and not peer.session_view_ready(peer.workspace):
 						stale_keys[key] = true
 						continue
 					# The graph cache is shared across windows. Resolve selection through
@@ -159,7 +159,7 @@ func _add_away(input: Dictionary, remotes: Dictionary, sessions: Dictionary, cat
 		var peer: Node = group.get("peer")
 		if not group.connected or not is_instance_valid(peer) or not is_instance_valid(group.get("host")): continue
 		# The peer publishes other sessions' agents through its live catalog.
-		for value in application.agent_attention.catalog_for(peer):
+		for value in application.agent_attention.catalog_snapshot(peer).sessions:
 			if not value is Dictionary: continue
 			var label := preload("res://scenes/session/SessionLabel.gd").name_of(value)
 			for agent in value.get("agents", []):
@@ -255,6 +255,7 @@ func _build_trees(host_trees: Array) -> Dictionary:
 					if filetree_owner >= 0:
 						continue
 					elif provider in ["pi", "claude", "codex", "opencode"]:
+						if not ids_by_key.has(key): continue
 						entry.kind = "agent"
 						entry.provider = provider
 						entry.status = {"busy": "working", "waiting": "blocked", "error": "blocked", "offline": "offline"}.get(status, "idle")

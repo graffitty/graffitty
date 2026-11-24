@@ -260,7 +260,10 @@ impl Graph {
             && !self.can_read(string(event,"source"), string(event,"target")) {
             if let Some(sessions) = exposed["sessions"].as_array_mut() {
                 for session in sessions {
-                    if let Some(session) = session.as_object_mut() { session.remove("path"); }
+                    if let Some(session) = session.as_object_mut() {
+                        session.remove("path");
+                        session.remove("checkpoint");
+                    }
                 }
             }
         }
@@ -276,17 +279,17 @@ impl Graph {
 
     /// A native discovery worker can finish reading a completed turn after a
     /// newer turn has started. Route its output without changing live status.
-    pub fn discovered_completion(&mut self, id: u64, text: &str, checkpoint: &str, run_id: &str) -> Result<()> {
+    pub fn discovered_completion(&mut self, id: u64, text: &str, checkpoint: u64, run_id: &str) -> Result<()> {
         let key = format!("t{id}");
         let node = self.nodes.get(&key).ok_or("Unknown agent")?;
         let run_id = if self.runs.contains_key(run_id) { run_id } else { "" };
         let params = json!({"text":text,"session_id":node["session_id"],"run_id":run_id});
         let signature = format!("{}:{checkpoint}:{text}", node["session_id"]);
         self.expire();
-        self.enqueue_completion(&key, &params, signature)
+        self.enqueue_completion(&key, &params, signature, Some(checkpoint))
     }
 
-    fn enqueue_completion(&mut self, key: &str, params: &Value, signature: String) -> Result<()> {
+    fn enqueue_completion(&mut self, key: &str, params: &Value, signature: String, checkpoint: Option<u64>) -> Result<()> {
         if self.seen.get(key) == Some(&signature) {
             return Ok(());
         }
@@ -296,7 +299,7 @@ impl Graph {
                 && edge["muted"] != true && !expired(edge, now())
         }).cloned().collect();
         for edge in edges {
-            if let Err(error) = self.enqueue(&edge, params, None, true) {
+            if let Err(error) = self.enqueue(&edge, params, None, true, checkpoint) {
                 let event = json!({"event_id":uuid(),"source":edge["from"],"target":edge["to"],"source_port":edge["from_port"],"target_port":edge["to_port"],"run_id":params["run_id"],"type":"turn.completed"});
                 let status = format!("failed: {error}");
                 self.journal.record(&event, &status, false);
@@ -327,7 +330,7 @@ impl Graph {
                 && edge["muted"] != true && !expired(edge, now())
         }).cloned().collect();
         for edge in edges {
-            if let Err(error) = self.enqueue(&edge, &params, None, false) {
+            if let Err(error) = self.enqueue(&edge, &params, None, false, None) {
                 let event = json!({"event_id":uuid(),"source":key,"target":edge["to"],
                     "source_port":output,"target_port":edge["to_port"],"run_id":params["run_id"],"type":"message"});
                 self.journal.record(&event, &format!("failed: {error}"), false);
@@ -344,10 +347,11 @@ impl Graph {
     }
     /// Apply owner-side process discovery. Live integrated agents retain their
     /// hook status; discovery still records process exits and replacements.
-    pub fn observe_agent(&mut self, id: u64, state: &Value) {
+    pub fn observe_agent(&mut self, id: u64, state: &Value) -> Vec<(Value, String)> {
+        let mut successes = Vec::new();
         let key = format!("t{id}");
-        let Some(node) = self.nodes.get(&key) else { return; };
-        if is_custom_node(node) { return; }
+        let Some(node) = self.nodes.get(&key) else { return successes; };
+        if is_custom_node(node) { return successes; }
         let previous = node.clone();
         let replaced = attention::identity_replaced(node, state);
         let was_waiting = node["status"] == "waiting";
@@ -360,7 +364,7 @@ impl Graph {
             // but allow a subsequently launched real provider to replace it.
             if !["codex", "claude", "opencode", "pi"].contains(&string(state, "provider"))
                 || state["pid"].as_i64().is_none_or(|pid| Some(pid) == node["pid"].as_i64()) {
-                return;
+                return successes;
             }
             self.clear_queue(&key);
         }
@@ -371,9 +375,9 @@ impl Graph {
                 node.as_object_mut().unwrap().remove(field);
             }
         }
-        let Some(found) = state.as_object() else { return; };
+        let Some(found) = state.as_object() else { return successes; };
         let mut found = found.clone();
-        let failures = found.remove("failed_turns").unwrap_or(Value::Null);
+        let outcomes = found.remove("turn_outcomes").unwrap_or(Value::Null);
         let turn = &state["observed_turn"];
         let prompt_turn = node["codex_prompt_turn"].as_str();
         let current_prompt = prompt_turn.is_some() && turn["id"].as_str() == prompt_turn;
@@ -445,19 +449,28 @@ impl Graph {
         // Establish a baseline on attachment; do not replay a historical error.
         // Comparing status too catches a turn seen running before it failed.
         if turn_changed {
-            for failure in failures.as_array().into_iter().flatten().filter(|f| turn["status"] != "failed" || f["id"] != turn["id"])
-                .chain(std::iter::once(turn).filter(|t| t["status"] == "failed")) {
+            let mut reported: Vec<&Value> = outcomes.as_array().into_iter().flatten().collect();
+            if turn["status"] == "failed" && !reported.iter().any(|outcome| outcome["id"] == turn["id"]) {
+                reported.push(turn);
+            }
+            for outcome in reported {
                 let run = self.codex_turn_runs.get_mut(&key).and_then(|turns| {
-                    let index = turns.iter().position(|(turn_id, _)| turn_id == string(failure, "id"))?;
+                    let index = turns.iter().position(|(turn_id, _)| turn_id == string(outcome, "id"))?;
                     turns.remove(index).map(|(_, run)| run)
                 }).filter(|run| self.runs.contains_key(run));
-                let _ = self.enqueue_lifecycle(&key, "error", &json!({
-                    "text":failure["error"]["message"], "outcome":"error",
-                    "payload":{"error":failure["error"],"turn_id":failure["id"]}
-                }), json!(run));
+                if outcome["status"] == "completed" {
+                    if self.nodes[&key]["integrated"] != true {
+                        successes.push((outcome.clone(), run.unwrap_or_default()));
+                    }
+                } else if outcome["status"] == "failed" {
+                    let _ = self.enqueue_lifecycle(&key, "error", &json!({
+                        "text":outcome["error"]["message"], "outcome":"error",
+                        "payload":{"error":outcome["error"],"turn_id":outcome["id"]}
+                    }), json!(run));
+                }
             }
         }
-        // The scan includes failures between its previous and current turn.
+        // The scan includes outcomes between its previous and current turn.
         // Drop reconciled turns, preserving newer hooks that beat this scan.
         if let Some(turns) = self.codex_turn_runs.get_mut(&key) {
             if let Some(index) = turns.iter().position(|(id, _)| id == string(turn, "id")) {
@@ -465,6 +478,7 @@ impl Graph {
                 turns.drain(..index + usize::from(finished));
             }
         }
+        successes
     }
     /// Apply the terminal's OSC 7501 root record (`None` once cleared). Every
     /// node keeps the record as `program_status`. A node without lifecycle hooks
@@ -739,6 +753,7 @@ impl Graph {
         params: &Value,
         content: Option<&Value>,
         turn: bool,
+        checkpoint: Option<u64>,
     ) -> Result<Value> {
         if expired(edge, now()) {
             return Err(STOP_TIME_ERROR.into());
@@ -787,7 +802,9 @@ impl Graph {
                     }
                     if !path.is_empty() && self.can_read(string(edge,"from"),target) {
                         reference["path"] = json!(path);
-                        if let Ok(metadata) = std::fs::metadata(path) { reference["checkpoint"] = json!({"byte_offset":metadata.len()}); }
+                        if let Some(end) = checkpoint.or_else(|| std::fs::metadata(path).ok().map(|m| m.len())) {
+                            reference["checkpoint"] = json!({"byte_offset":end});
+                        }
                     }
                     event["sessions"] = json!([reference]);
                 }
@@ -1081,7 +1098,7 @@ impl Graph {
                     let signature = format!("{}:{}:{}", p["session_id"], p["completion_id"], p["text"]);
                     let mut completion = p.clone();
                     completion["run_id"] = self.nodes[&key]["run_id"].clone();
-                    self.enqueue_completion(&key, &completion, signature)?;
+                    self.enqueue_completion(&key, &completion, signature, None)?;
                 }
                 let adjacent = self.adjacent(&key);
                 // Lifecycle/status updates advance the snapshot revision but
@@ -1295,7 +1312,7 @@ impl Graph {
                 }
                 let mut events = vec![];
                 for edge in edges {
-                    events.push(self.enqueue(&edge, &params, content.as_ref(), false)?);
+                    events.push(self.enqueue(&edge, &params, content.as_ref(), false, None)?);
                 }
                 if method == "graph.send" {
                     Ok(events.remove(0))

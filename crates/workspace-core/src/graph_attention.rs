@@ -32,7 +32,7 @@ impl ActivityClock {
         self.0.fetch_max(revision, std::sync::atomic::Ordering::Relaxed);
     }
 
-    pub(super) fn next(&self) -> u64 {
+    pub fn next(&self) -> u64 {
         self.0.fetch_add(1, std::sync::atomic::Ordering::Relaxed) + 1
     }
 

@@ -23,6 +23,8 @@ Graph nodes and session catalog entries carry the same `activity_revision`. One
 sequence per server epoch orders activity across pane ID reuse, workspace moves,
 and live owner restarts. Each full `session_list` catalog also carries a server
 `revision` that advances when its contents change and survives owner handover.
+Catalog and activity revisions share the same sequence. An omitted agent stays
+closed unless a later graph update reports it again.
 Across windows, the latest catalog for the server epoch determines membership
 and the session to open when selecting a background agent.
 The client uses the newer revision for the panel and tab marker. A visible window
@@ -49,7 +51,7 @@ A connection from A's output to B's input determines what B receives or can read
 - **Turn completed is not approval.** Check the result before acting on it.
 - Waiting and Error do not grant transcript access.
 - A recorded Codex quota failure emits Error once, including when a retry starts between discovery polls. The failed turn leaves no unread completion. Reattaching restores the recorded status without replaying old failures.
-- For a discovered Codex completion, the wire reads the answer for the completed turn. Local discovery records its byte offset, and daemon discovery identifies it by native turn ID. A later draft can already be present when the worker reads the file.
+- For a discovered Codex completion, the wire reads the answer for the completed turn. Local discovery records its byte offset, and daemon discovery identifies it by native turn ID. With Read permission, the queued session reference exposes the byte offset at the end of that completion. When daemon metadata arrives before the rollout record, the owner retries the matching turn up to eight times and delivers completions for that pane in order.
 - Local Codex sessions use the rollout’s turn records. A token-count update at 100% usage supplies no turn outcome. An older client that records only a turn start leaves discovery waiting for the next lifecycle record. A plain completion from a client that omitted its failure details is indistinguishable from success.
 - An expired Claude login enters Waiting. The terminal report and the authentication hook share one Waiting notification per transition. The failure hook also emits Error.
 - An interrupted turn emits neither completion nor failure.

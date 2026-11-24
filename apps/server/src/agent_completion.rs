@@ -2,11 +2,12 @@
 //! reads run through Workers, never in the PTY actor, and retain process identity.
 use graffitty_workspace_core::graph::Graph;
 use serde_json::{Value, json};
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet, VecDeque};
+use std::time::{Duration, Instant};
 
 #[derive(Default)]
 pub struct Completions {
-    pending: HashMap<String, Pending>,
+    pending: VecDeque<(String, Pending)>,
 }
 struct Pending {
     workspace: String,
@@ -16,6 +17,8 @@ struct Pending {
     target: Option<Value>,
     run_id: String,
     launched: bool,
+    retries: u8,
+    retry_at: Option<Instant>,
 }
 fn identity(node: &Value) -> Value {
     json!([
@@ -25,7 +28,21 @@ fn identity(node: &Value) -> Value {
         node["transcript_path"]
     ])
 }
+impl Pending {
+    fn matches(&self, graph: &Graph) -> bool {
+        graph.nodes.get(&format!("t{}", self.id)).is_some_and(|node|
+            identity(node) == self.identity && node["integrated"] != true)
+    }
+}
 impl Completions {
+    /// Once a scan advances its cursor, every completion in it must be kept.
+    /// Apply backpressure before taking the next sample.
+    pub fn ready_for_scan(&self) -> bool { self.pending.len() < 1024 }
+
+    pub fn retain_current(&mut self, graphs: &HashMap<String, Graph>) {
+        self.pending.retain(|(_, p)| graphs.get(&p.workspace).is_some_and(|graph| p.matches(graph)));
+    }
+
     pub fn observe(&mut self, workspace: &str, id: u64, before: &Value, after: &Value) {
         let successful = match after["provider"].as_str() {
             Some("codex") => graffitty_workspace_core::graph::discovered_codex_success(before, after),
@@ -39,9 +56,6 @@ impl Completions {
         if !successful || after["integrated"] == true || identity(before) != identity(after) {
             return;
         }
-        let Some(path) = after["transcript_path"].as_str().filter(|p| !p.is_empty()) else {
-            return;
-        };
         let target = if after["provider"] == "codex" {
             let turn = &after["observed_turn"];
             let id = turn["id"].as_str().filter(|_| turn["status"] == "completed");
@@ -55,10 +69,22 @@ impl Completions {
             if id.is_none() && checkpoint.is_none() { return; }
             Some(json!({"turn_id":id,"checkpoint":checkpoint}))
         } else { None };
-        if self.pending.len() >= 1024 {
-            return;
+        self.enqueue(workspace, id, after, target, after["run_id"].as_str().unwrap_or(""));
+    }
+
+    pub fn observe_turns(&mut self, workspace: &str, id: u64, before: &Value, after: &Value, successes: Vec<(Value, String)>) {
+        if after["integrated"] == true || identity(before) != identity(after) { return; }
+        for (turn, run) in successes {
+            let target = json!({"turn_id":turn["id"],"checkpoint":turn["completion_checkpoint"]});
+            self.enqueue(workspace, id, after, Some(target), &run);
         }
-        self.pending.insert(
+    }
+
+    fn enqueue(&mut self, workspace: &str, id: u64, after: &Value, target: Option<Value>, run_id: &str) {
+        let Some(path) = after["transcript_path"].as_str().filter(|p| !p.is_empty()) else {
+            return;
+        };
+        self.pending.push_back((
             format!("completion:{}", uuid::Uuid::new_v4().simple()),
             Pending {
                 workspace: workspace.into(),
@@ -66,15 +92,19 @@ impl Completions {
                 identity: identity(after),
                 path: path.into(),
                 target,
-                run_id: after["run_id"].as_str().unwrap_or("").into(),
+                run_id: run_id.into(),
                 launched: false,
+                retries: 0,
+                retry_at: None,
             },
-        );
+        ));
     }
     pub fn requests(&self) -> Vec<(String, Value)> {
+        let now = Instant::now();
+        let mut panes = HashSet::new();
         self.pending
             .iter()
-            .filter(|(_, p)| !p.launched)
+            .filter(|(_, p)| panes.insert((&p.workspace, p.id)) && !p.launched && p.retry_at.is_none_or(|at| at <= now))
             .map(|(key, p)| {
                 let request = match &p.target {
                     Some(target) => json!({"op":"codex_completion","path":p.path,"target":target}),
@@ -85,26 +115,31 @@ impl Completions {
             .collect()
     }
     pub fn launched(&mut self, key: &str) {
-        if let Some(pending) = self.pending.get_mut(key) {
+        if let Some((_, pending)) = self.pending.iter_mut().find(|(id, _)| id == key) {
             pending.launched = true;
         }
     }
     pub fn finish(&mut self, key: &str, result: &Value, graphs: &mut HashMap<String, Graph>) {
-        let Some(pending) = self.pending.remove(key) else {
-            return;
-        };
-        if result.get("error").is_some() {
-            return;
-        }
-        let Some(graph) = graphs.get_mut(&pending.workspace) else {
-            return;
-        };
-        let Some(node) = graph.nodes.get(&format!("t{}", pending.id)) else {
-            return;
-        };
-        if identity(node) != pending.identity || node["integrated"] == true {
+        let Some(index) = self.pending.iter().position(|(id, _)| id == key) else { return; };
+        let pending = &mut self.pending[index].1;
+        let graph = graphs.get_mut(&pending.workspace);
+        if !graph.as_deref().is_some_and(|g| pending.matches(g)) {
+            self.pending.remove(index);
             return;
         }
+        // Daemon metadata may precede the terminal record on disk. Keep the
+        // original turn at the front of its pane's queue while waiting for it.
+        if result["status"] == "awaiting_record" && pending.target.as_ref().is_some_and(|target|
+            target["turn_id"].is_string() && target["checkpoint"].is_null()) && pending.retries < 8 {
+            let delay = Duration::from_millis(125 << pending.retries.min(5));
+            pending.retry_at = Some(Instant::now() + delay);
+            pending.retries += 1;
+            pending.launched = false;
+            return;
+        }
+        let (_, pending) = self.pending.remove(index).unwrap();
+        let graph = graph.unwrap();
+        if result.get("error").is_some() { return; }
         let (Some(text), Some(size)) = (result["last_message"].as_str(), result["size"].as_u64())
         else {
             return;
@@ -117,7 +152,7 @@ impl Completions {
             }
         }
         let checkpoint = result["completion_checkpoint"].as_u64().unwrap_or(size);
-        let _ = graph.discovered_completion(pending.id, text, &checkpoint.to_string(), &pending.run_id);
+        let _ = graph.discovered_completion(pending.id, text, checkpoint, &pending.run_id);
     }
 }
 
@@ -150,6 +185,69 @@ mod tests {
             before,
         )
     }
+    #[test]
+    fn delayed_daemon_record_retries_before_later_turns_and_preserves_read_boundary() {
+        let (mut jobs, mut graphs, mut before) = fixture();
+        let graph = graphs.get_mut("main").unwrap();
+        graph.dispatch(1, "graph.connect", &json!({"from":"t1","to":"t2","read":true})).unwrap();
+        before["observed_turn"] = Value::Null;
+        let node = graph.nodes.get_mut("t1").unwrap();
+        node["observed_turn"] = json!({"id":"A","status":"completed"});
+        jobs.observe("main", 1, &before, node);
+        let after_a = node.clone();
+        node["observed_turn"] = json!({"id":"B","status":"completed"});
+        jobs.observe("main", 1, &after_a, node);
+        let requests = jobs.requests();
+        assert_eq!(requests.len(), 1);
+        let (key, request) = &requests[0];
+        assert_eq!(request["target"]["turn_id"], "A");
+        jobs.launched(key);
+        jobs.finish(key, &json!({"status":"awaiting_record"}), &mut graphs);
+        assert!(jobs.requests().is_empty());
+        let a = &mut jobs.pending.front_mut().unwrap().1;
+        assert!(a.retry_at.unwrap() > Instant::now());
+        a.retry_at = None; // advance across the backoff without sleeping
+        assert_eq!(jobs.requests(), requests);
+        jobs.launched(key);
+        jobs.finish(key, &json!({"turn_id":"A","completion_checkpoint":245,"last_message":"Answer A","size":416}), &mut graphs);
+        let (key, request) = jobs.requests().pop().unwrap();
+        assert_eq!(request["target"]["turn_id"], "B");
+        jobs.launched(&key);
+        jobs.finish(&key, &json!({"turn_id":"B","completion_checkpoint":416,"last_message":"Answer B","size":450}), &mut graphs);
+        let graph = graphs.get_mut("main").unwrap();
+        let events = graph.dispatch(2, "graph.take", &json!({})).unwrap()["events"].as_array().unwrap().clone();
+        assert_eq!(events.len(), 2);
+        for (event, (answer, end)) in events.iter().zip([("Answer A",245), ("Answer B",416)]) {
+            assert_eq!(event["text"], answer);
+            assert_eq!(event["sessions"][0]["checkpoint"]["byte_offset"], end);
+            assert_eq!(event["sessions"][0]["path"], after_a["transcript_path"]);
+        }
+        assert!(jobs.requests().is_empty());
+    }
+
+    #[test]
+    fn unavailable_daemon_records_expire_and_identity_changes_cancel_backoff() {
+        for replaced in [false, true] {
+            let (mut jobs, mut graphs, before) = fixture();
+            let node = graphs.get_mut("main").unwrap().nodes.get_mut("t1").unwrap();
+            node["observed_turn"] = json!({"id":"A","status":"completed"});
+            jobs.observe("main", 1, &before, node);
+            for attempt in 0..9 {
+                let (key, _) = jobs.requests().pop().unwrap();
+                jobs.launched(&key);
+                jobs.finish(&key, &json!({"status":"awaiting_record"}), &mut graphs);
+                if replaced {
+                    graphs.get_mut("main").unwrap().nodes.get_mut("t1").unwrap()["session_id"] = json!("replacement");
+                    jobs.retain_current(&graphs);
+                    break;
+                }
+                if attempt < 8 { jobs.pending.front_mut().unwrap().1.retry_at = None; }
+            }
+            assert!(jobs.pending.is_empty());
+            assert!(graphs["main"].queues.values().all(Vec::is_empty));
+        }
+    }
+
     #[test]
     fn daemon_turn_id_survives_a_superseded_tail_and_claude_retains_its_reader() {
         let (mut jobs, mut graphs, mut before) = fixture();
@@ -190,6 +288,47 @@ mod tests {
             jobs.finish(&key, &result, &mut graphs);
             assert!(graphs["main"].queues.values().all(Vec::is_empty));
         }
+    }
+
+    #[test]
+    fn batched_successes_deliver_in_turn_order_with_the_original_runs_while_busy() {
+        let (mut completions, mut graphs, _) = fixture();
+        let graph = graphs.get_mut("main").unwrap();
+        graph.dispatch(2, "graph.connect", &json!({"from":"t2","to":"t1","send":true})).unwrap();
+        let mut runs = Vec::new();
+        for turn in ["a", "b"] {
+            let event = graph.dispatch(2, "graph.send", &json!({"to":"t1","text":"work"})).unwrap();
+            let run = event["run_id"].as_str().unwrap();
+            graph.dispatch(1, "agent.event", &json!({"provider":"codex","event":"UserPromptSubmit",
+                "turn_id":turn,"prompt":format!("[Graffitty message; run {run}]\nwork")})).unwrap();
+            runs.push(run.to_owned());
+        }
+        let node = graph.nodes.get_mut("t1").unwrap();
+        node["observed_turn"] = json!({"id":"a","status":"inProgress"});
+        let before = node.clone();
+        let mut state = before.clone();
+        state["observed_turn"] = json!({"id":"c","status":"inProgress"});
+        state["turn_outcomes"] = json!([{"id":"a","status":"completed","completion_checkpoint":245},
+            {"id":"b","status":"completed","completion_checkpoint":416}]);
+        let successes = graph.observe_agent(1, &state);
+        let after = graph.nodes["t1"].clone();
+        completions.observe_turns("main", 1, &before, &after, successes);
+        assert_eq!(after["status"], "busy");
+        state["turn_outcomes"] = json!([]);
+        let repeated = graph.observe_agent(1, &state);
+        completions.observe_turns("main", 1, &after, &graph.nodes["t1"], repeated);
+        for (turn, end) in [("a",245),("b",416)] {
+            let jobs = completions.requests();
+            assert_eq!(jobs.len(), 1);
+            assert_eq!(jobs[0].1["target"], json!({"turn_id":turn,"checkpoint":end}));
+            completions.finish(&jobs[0].0, &json!({"turn_id":turn,"last_message":format!("Answer {turn}"),"size":500,"completion_checkpoint":end}), &mut graphs);
+        }
+        assert!(completions.requests().is_empty());
+        let queue = &graphs["main"].queues["t2"];
+        assert_eq!(queue.len(), 2);
+        assert_eq!((queue[0]["text"].as_str(),queue[1]["text"].as_str()),(Some("Answer a"),Some("Answer b")));
+        assert_eq!(queue[0]["run_id"],runs[0]);
+        assert_eq!(queue[1]["run_id"],runs[1]);
     }
 
     #[test]
