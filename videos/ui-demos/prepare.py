@@ -5,7 +5,6 @@ import json
 import re
 import shutil
 import subprocess
-import tempfile
 from pathlib import Path
 
 p = argparse.ArgumentParser(description=__doc__)
@@ -74,29 +73,13 @@ if args.name == "tab-transfer":
     visible = [i for i, s in enumerate(samples) if "window" in s]
     assert visible == list(range(visible[0], visible[-1] + 1))
     dock = next(i for i, sample in enumerate(samples) if sample.get("docked"))
-    assert visible[-1] + 1 == dock
-    # The native drag preview copies the active pane until mouse-up. Synchronize
-    # the destination surface to the two captured ownership states in the edit.
-    with tempfile.TemporaryDirectory() as directory:
-        directory = Path(directory)
-        for i in range(len(samples)):
-            source = take / f"main-{i:04}.jpg"
-            if visible[0] <= i < dock:
-                source = take / "notes-only.jpg"
-            elif i >= dock:
-                source = take / "merged.jpg"
-            (directory / f"main-{i:04}.jpg").symlink_to(source)
-        encode("main", "workspace", directory=directory)
-        # During the outgoing drag Godot still paints the source session in
-        # the preview. Show the settled detached window until the live takeover.
-        for i in visible:
-            source = (
-                take / f"tab-{i:04}.jpg"
-                if samples[i]["committed"]
-                else take / "preview-only.jpg"
-            )
-            (directory / f"tab-{i:04}.jpg").symlink_to(source)
-        encode("tab", "detached", visible[0], directory=directory)
+    hover = next(i for i, sample in enumerate(samples) if sample.get("dock_hover"))
+    assert visible[-1] + 1 == hover < dock
+    assert all(sample.get("dock_hover") for sample in samples[hover:dock])
+    # Both viewports are sampled at the same time as the pointer, including
+    # the outgoing drag preview and the incoming tab-strip insertion preview.
+    encode("main", "workspace")
+    encode("tab", "detached", visible[0])
     scale = 1.08
     css = (
         base_css
@@ -111,7 +94,7 @@ if args.name == "tab-transfer":
     start = visible[0] / 30
     span = len(visible) / 30
     css += "#floating{visibility:hidden}"
-    timeline += f'tl.set("#floating",{{visibility:"visible"}},{start});tl.set("#floating",{{visibility:"hidden"}},{start + span});\n'
+    timeline += f'tl.set("#floating",{{visibility:"visible"}},{start});tl.set("#floating",{{visibility:"hidden"}},{hover}/30);\n'
     body += (
         '<div id="floating" class="window">'
         + video("detached", "detached", start, span, 2)

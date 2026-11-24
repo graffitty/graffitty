@@ -3,7 +3,7 @@ var frame := 0
 var frames: Array = []
 var first: Node
 var second: Window
-var docking := false
+var redocked := false
 
 func _initialize() -> void:
 	Background.install(self)
@@ -16,14 +16,13 @@ func capture() -> void:
 	root.get_texture().get_image().save_jpg(dir + "/main-%04d.jpg" % frame, .97)
 	var win: Window = app.drag_preview if is_instance_valid(app.drag_preview) else second
 	var entry := {"pointer": [pointer_position.x-root.position.x, pointer_position.y-root.position.y]}
-	if is_instance_valid(second) and app.drag.get("mode", -1) == app.DragMode.DOCKED:
-		docking = true
-	if docking: entry.docked = true
-	if is_instance_valid(win) and win.visible and not docking:
+	var hovering: bool = is_instance_valid(second) and app.drag.get("mode", -1) == app.DragMode.DOCKED
+	if hovering: entry.dock_hover = true
+	if redocked: entry.docked = true
+	if is_instance_valid(win) and win.visible and not hovering and not redocked:
 		win.get_texture().get_image().save_jpg(dir + "/tab-%04d.jpg" % frame, .97)
 		var pos := win.position-root.position
 		entry.window = [pos.x,pos.y]
-		entry.committed = is_instance_valid(second)
 	frames.append(entry)
 	frame += 1
 
@@ -82,8 +81,6 @@ func run_transfer(_tab: int) -> void:
 	second = detached.get_window()
 	await settled(detached)
 	await hold(35)
-	second.get_texture().get_image().save_jpg(OS.get_environment("TAKE") + "/preview-only.jpg", .97)
-	root.get_texture().get_image().save_jpg(OS.get_environment("TAKE") + "/notes-only.jpg", .97)
 	await start_drag(detached)
 	var bar: Control = first.workspace_view.tab_bar.tabs
 	var target := ScreenSpace.of(bar, Vector2(bar.size.x*.68, bar.size.y*.5))
@@ -93,12 +90,12 @@ func run_transfer(_tab: int) -> void:
 	for i in 300:
 		if first.get_tabs().size() == 2 and app.hosts.size() == 1: break
 		await process_frame
+	redocked = first.get_tabs().size() == 2 and app.hosts.size() == 1
 	await settled(first)
 	second = null
 	await hold(48)
-	root.get_texture().get_image().save_jpg(OS.get_environment("TAKE") + "/merged.jpg", .97)
 	FileAccess.open(OS.get_environment("TAKE")+"/motion.json", FileAccess.WRITE).store_string(JSON.stringify(frames))
-	quit(0 if docking and first.get_tabs().size() == 2 and app.hosts.size() == 1 else 1)
+	quit(0 if redocked else 1)
 
 func seed_preview(tab: int) -> void:
 	first.sessions[tab].term.send_text("printf '\\033[2J\\033[H\\033[38;5;117m●  Preview server\\033[0m\\n\\n  index.html     200 OK\\n  styles.css     200 OK\\n\\n'\r")
