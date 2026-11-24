@@ -265,6 +265,7 @@ func check_text_rubber_band() -> void:
 	await frames()
 	check(is_equal_approx(text.view.scroll_vertical * text.view.get_line_height(), 300.0), "A pan scrolls by the distance travelled: %s rows" % text.view.scroll_vertical)
 	text.view.scroll_vertical = text.view.get_v_scroll_bar().max_value
+	var bottom := text.view.scroll_vertical
 	touch(inside, true)
 	drag(inside, inside - Vector2(0, 65))
 	await frames()
@@ -272,6 +273,7 @@ func check_text_rubber_band() -> void:
 	check(text._bar_skin.get_global_rect().is_equal_approx(resting_track), "The bottom track stays pinned during touch overscroll")
 	touch(inside - Vector2(0, 65), false)
 	check(await settle(func(): return text.elastic.get_stretch() == 0.0 and not text._bar_skin.visible), "The bottom pull restores the native scrollbar")
+	check(is_equal_approx(text.view.scroll_vertical, bottom), "Releasing an overscroll preserves the final fractional row")
 	text.queue_free()
 	await frames()
 

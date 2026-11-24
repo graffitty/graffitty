@@ -205,8 +205,9 @@ func _set_offset(offset: float) -> void:
 	if pull != 0.0 or _bar_skin != null:
 		if _bar_skin == null: _bar_skin = preload("res://scenes/ElasticBarSkin.gd").attach(view.get_v_scroll_bar(), elastic, _clip)
 		_bar_skin.set_stretch(pull / row)
-	view.offset_top = -pull
-	view.offset_bottom = -pull
+	# Move both edges together. Resizing a wrapped TextEdit between edge
+	# updates makes Godot snap its scroll position to a whole row.
+	view.position.y = -pull
 	set_process(elastic.is_active() or _mode != Mode.NONE)
 
 
