@@ -26,6 +26,38 @@ class RemoteControllerTests(unittest.TestCase):
     def test_app_assigns_hostname_aliases_without_manual_configuration(self):
         self.run_attachments(automatic=True)
 
+    @unittest.skipUnless(shutil.which("godot"), "Godot is required")
+    def test_phone_claim_refits_idle_desktop(self):
+        with tempfile.TemporaryDirectory(prefix="gft-handoff-") as tmp:
+            directory = Path(tmp)
+            ready = directory / "ready"
+            env = {k: v for k, v in os.environ.items() if not k.startswith("GRAFFITTY_")}
+            for kind in ("CONFIG", "STATE", "CACHE", "DATA"):
+                env[f"XDG_{kind}_HOME"] = str(directory / kind.lower())
+            env["GRAFFITTY_TEST_READY"] = str(ready)
+            with PrivateServer(env, directory, None) as owner, contextlib.ExitStack() as cleanup:
+                proc = subprocess.Popen([
+                    "godot", "--headless", "--path", str(ROOT / "frontends/godot/project"),
+                    "--script", "res://tests/remote_area_handoff_smoke.gd", "--", "--no-plugin", "--no-fx",
+                ], env=env, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True)
+                cleanup.callback(proc.wait)
+                cleanup.callback(proc.kill)
+                deadline = time.monotonic() + 20
+                while not ready.exists() and proc.poll() is None and time.monotonic() < deadline:
+                    time.sleep(.05)
+                self.assertTrue(ready.exists(), "Desktop did not attach")
+                phone = Peer(json.loads(owner.descriptor.read_text())["local"], "$1")
+                cleanup.callback(phone.socket.close)
+                tab = phone.topology["tabs"][0]["id"]
+                state = phone.action("workspace_get")["workspace_state"]
+                reply = phone.action("workspace_edit", expected_revision=state["revision"], claim=True,
+                                    edit={"op": "tab", "tab": tab, "layout": state["layout"]["tabs"][str(tab)],
+                                          "settings": {"area": [0, 35, 412, 290]}})
+                self.assertEqual(reply["type"], "ack", reply)
+                output, _ = proc.communicate(timeout=20)
+                self.assertEqual(proc.returncode, 0, output)
+                self.assertIn("REMOTE_AREA_HANDOFF_PASS", output)
+
     def run_attachments(self, automatic=False):
         with contextlib.ExitStack() as stack:
             directory = Path(stack.enter_context(tempfile.TemporaryDirectory(prefix="gft-controllers-")))

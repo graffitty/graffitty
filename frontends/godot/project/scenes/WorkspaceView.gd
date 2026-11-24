@@ -605,10 +605,6 @@ func refresh() -> void:
 	# the tab strip. Wait until all workspace controls have been attached.
 	if not _initialized:
 		return
-	if not overview and host != null and host.session_backend != null:
-		var target := main_frame()
-		navigation_center = target.center
-		navigation_zoom = target.zoom
 	if (
 		_refreshing or not is_node_ready() or not is_inside_tree() or get_viewport() == null or not host.presentation_active
 		or not canvas.is_inside_tree() or host.layout_transaction or size.x < 2 or size.y < 72
@@ -617,6 +613,12 @@ func refresh() -> void:
 	if not tile_resize.is_empty() and host.workspace_layout.active != tile_resize.tab:
 		cancel_tile_resize()
 	_refreshing = true
+	var main_frame_changed := false
+	if not overview:
+		var target := main_frame()
+		main_frame_changed = not navigation_center.is_equal_approx(target.center) or not is_equal_approx(navigation_zoom, target.zoom)
+		navigation_center = target.center
+		navigation_zoom = target.zoom
 	_bind_projection_world()
 	if physics_typing and _typing_tab != host.workspace_layout.active:
 		_typing_timer.stop()
@@ -707,6 +709,10 @@ func refresh() -> void:
 	# animation loop sleeps in an inactive window. Otherwise the old X/Y
 	# scale squeezes the entire workspace into the newly sized viewport.
 	_sync_status_sources()
+	# Another client can resize Main while this window's typing camera sleeps.
+	# Project the new layout before measuring which part of it to rasterize.
+	if main_frame_changed and is_instance_valid(host.world):
+		host.world._apply_camera_fx()
 	update_raster_region()
 	_update_compact_headers()
 	_update_monitor()
