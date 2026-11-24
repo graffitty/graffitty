@@ -895,6 +895,28 @@ func _pane_screen_rect(pane: Control) -> Rect2:
 	return rect
 
 
+## Project the painted pane around its perimeter. A tilted pane can miss
+## the content rectangle even when their axis-aligned bounds overlap.
+func pane_in_content(key: String) -> bool:
+	var pane: Control = panes.get(key)
+	if not is_instance_valid(pane) or not pane.visible or pane.size.x <= 0 or pane.size.y <= 0: return false
+	var content := viewport_content_rect()
+	if not content.has_area(): return false
+	var outline := PackedVector2Array()
+	var transform := pane.get_transform()
+	for fraction: Vector2 in [Vector2.ZERO, Vector2(0.5, 0), Vector2.RIGHT, Vector2(1, 0.5),
+			Vector2.ONE, Vector2(0.5, 1), Vector2.DOWN, Vector2(0, 0.5)]:
+		var at := transform * (pane.size * fraction)
+		var point: Vector2 = host.world.sheet_window_fraction(at) * size if host.world != null and host.world.has_method("sheet_window_fraction") else at
+		if not point.is_finite(): continue
+		if content.has_point(point) and point.x > content.position.x and point.y > content.position.y: return true
+		outline.append(point)
+	if outline.size() < 3: return false
+	var clip := PackedVector2Array([content.position, Vector2(content.end.x, content.position.y),
+		content.end, Vector2(content.position.x, content.end.y)])
+	return not Geometry2D.intersect_polygons(outline, clip).is_empty()
+
+
 ## Titles compensate navigation zoom inside the sheet, so typing motion and
 ## depth of field still affect them together with the pane.
 func _presentation_settled() -> bool:
@@ -2131,7 +2153,7 @@ func _resize_cursor(point: Vector2) -> int:
 	# A held button belongs to whatever it pressed, not to the edge it crosses.
 	if _held != 0:
 		return -1
-	var key := window_at(canvas_root.get_global_transform().affine_inverse() * point)
+	var key := resize_window_at(canvas_root.get_global_transform().affine_inverse() * point)
 	return panes[key].resize_cursor(point) if key != '' else -1
 
 
@@ -2330,7 +2352,12 @@ func resize_window_at(point: Vector2, touch := false) -> String:
 	if not over.is_empty():
 		var pane: Control = panes[over]
 		return over if pane._edge_at(pane.get_transform().affine_inverse() * point, touch) != Vector2.ZERO else ""
-	if not touch: return ""
+	if not touch:
+		if not agent_links.editing: return ""
+		var focused: Control = panes.get(host.pane_focus)
+		if is_instance_valid(focused) and focused.visible and focused._edge_at(focused.get_transform().affine_inverse() * point) != Vector2.ZERO:
+			return focused.key
+		return ""
 	var closest := ""
 	var distance := INF
 	var screen := window_point(point)

@@ -124,8 +124,9 @@ impl Graph {
                 live["manifest"] = node["manifest"].clone();
             }
             // A fresh lifecycle event that arrived during restoration wins.
-            if live["status"] == "unintegrated" && live["attention"].is_null() {
+            if live["status"] == "unintegrated" && live["attention"].is_null() && !node["attention"].is_null() {
                 live["attention"] = node["attention"].clone();
+                attention::advance_revision(live);
             }
         }
         for (_, mut edge) in staged.edges {

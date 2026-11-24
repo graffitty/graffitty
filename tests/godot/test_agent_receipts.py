@@ -68,6 +68,32 @@ class Client:
 
 @unittest.skipUnless(shutil.which("godot"), "Godot is required")
 class AgentReceiptTests(unittest.TestCase):
+    def test_panning_to_offscreen_completion_acknowledges_only_when_it_enters_view(self):
+        with (
+            tempfile.TemporaryDirectory(prefix="gft-pan-", dir="/tmp" if os.name == "posix" else None) as scratch,
+            patch.dict(os.environ, {"GRAFFITTY_SCENE_EVIDENCE": scratch}),
+            Owner(network=True) as owner,
+        ):
+            client = Client(owner, "viewer")
+            try:
+                client.until(lambda state: state.get("connected") and state.get("presented"))
+                client.command(viewed=True, pan_away=True)
+                client.until(lambda state: state.get("control", {}).get("pan_away") and not state["presented"])
+                owner.output(b"\x1b]7501;state=working:app=pi\x07")
+                client.until(lambda state: state.get("status") == "working")
+                owner.output(b"\x1b]7501;state=idle:app=pi\x07")
+                unseen = client.until(lambda state: state.get("marker") == "completed"
+                    and state.get("status") == "done" and state.get("projected_event")
+                    and (state.get("attention") or {}).get("event") == state["projected_event"])
+                self.assertFalse(unseen["attention"]["seen"])
+                self.assertEqual(unseen["sent"], [])
+                event = unseen["attention"]["event"]
+                client.command(pan_away=False)
+                client.until(lambda state: state["presented"] and event in state["sent"] and
+                             state["attention"]["seen"] and state["marker"] == "" and state["status"] == "idle")
+            finally:
+                client.close()
+
     def test_mobile_read_clears_desktop_and_stale_receipt_keeps_new_completion(self):
         # Owner and both clients have independent storage; no installed app or
         # user server is touched. OSC exercises an agent without provider hooks.
@@ -94,7 +120,10 @@ class AgentReceiptTests(unittest.TestCase):
                     for client in clients:
                         client.until(lambda s: s.get("status") == "working")
                     report("idle")
-                    states = [client.until(lambda s: s.get("status") == "done") for client in clients]
+                    # The panel may already show the catalog completion while its
+                    # independently delivered graph still holds the previous turn.
+                    states = [client.until(lambda s: s.get("status") == "done" and s.get("projected_event")
+                        and (s.get("attention") or {}).get("event") == s["projected_event"]) for client in clients]
                     self.assertEqual(states[0]["attention"], states[1]["attention"])
                     for state in states:
                         self.assertEqual(state["marker"], "completed")

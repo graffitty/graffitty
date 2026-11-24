@@ -19,6 +19,10 @@ authenticated server control. The target is the server's pane ID, so the receipt
 can finish after the frontend switches sessions. The server marks only the matching current event as seen and publishes
 the receipt to every client. Duplicate or superseded receipts have no effect.
 Read receipts do not change the agent's working, waiting or idle status.
+Graph nodes and session catalog entries carry the same per-pane `activity_revision`.
+The client uses the newer revision for the panel and tab marker. A visible window
+can read only the event its own session view received. A disconnected window
+can retry its displayed event through another connection to the same server.
 
 The client projects a pending receipt immediately and retries until the server
 confirms it. The agent panel and tab badges use this same projection; focus and

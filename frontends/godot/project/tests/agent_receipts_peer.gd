@@ -9,6 +9,7 @@ var control := {}
 var viewed := false
 var published := ""
 var created_session := false
+var panned_away := false
 
 class Connection extends "res://scenes/remote/RemoteConnection.gd":
 	var hold_receipts := false
@@ -32,6 +33,8 @@ func _initialize() -> void:
 	run.call_deferred()
 
 func run() -> void:
+	# Headless startup otherwise supplies a 64-pixel window, too short to present the workspace.
+	root.size = Vector2i(1280, 720)
 	directory = OS.get_environment("GRAFFITTY_TEST_PEER_DIRECTORY")
 	var descriptor: Dictionary = JSON.parse_string(FileAccess.get_file_as_string(OS.get_environment("GRAFFITTY_TEST_REMOTE_DESCRIPTOR")))
 	client = preload("res://scenes/remote/RemoteClient.gd").new()
@@ -61,6 +64,16 @@ func run() -> void:
 			await client.connection.request_action("session_new", {"name": "elsewhere"})
 		if is_instance_valid(client.host):
 			var app: Node = client.host.application
+			var view: Control = client.host.workspace_view
+			if view != null and bool(control.get("pan_away", false)) != panned_away:
+				panned_away = bool(control.pan_away)
+				if panned_away:
+					view.overview = true
+					view.navigation_center = Vector2(5000, 5000)
+					view.navigation_zoom = 1.0
+					view._apply_navigation()
+				else:
+					view.show_main()
 			var key: String = PaneAddress.key(client.connection.local_id(int(control.wire_pane))) if control.has("wire_pane") else client.host.pane_focus
 			if viewed and control.has("wire_pane") and client.host.pane_focus != key:
 				client.host.focus_pane(key)
@@ -71,9 +84,10 @@ func run() -> void:
 			var row_status := ""
 			for row in app.agents.rows:
 				if row.key == key: row_status = row.status
+			var projected: Variant = app.agent_attention.attention(key)
 			var state := JSON.stringify({"connected": client.connection.connected,
-				"status": row_status, "marker": app.agent_attention.marker([key]).state,
-				"attention": node.get("attention"), "held": client.connection.held, "sent": client.connection.sent,
+				"presented": client.host.pane_is_presented(key), "status": row_status, "marker": app.agent_attention.marker([key]).state,
+				"attention": node.get("attention"), "projected_event": projected.event if projected is Dictionary else null, "held": client.connection.held, "sent": client.connection.sent,
 				"rejected": client.connection.rejected, "workspace": client.connection.workspace,
 				"control": control, "provider": node.get("provider"),
 				"sessions": client.connection.available_sessions})

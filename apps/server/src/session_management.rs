@@ -199,7 +199,7 @@ fn agent_summary(pane: u64, value: &Value, title: &str) -> Option<Value> {
     let app = program.as_ref().and_then(|p| p["app"].as_str()).unwrap_or("");
     if !AGENT_APPS.contains(&provider) && !AGENT_APPS.contains(&app) { return None; }
     Some(json!({"pane": pane, "provider": provider, "status": value["status"],
-        "attention": value["attention"],
+        "attention": value["attention"], "activity_revision": value["activity_revision"].as_u64().unwrap_or(0),
         "status_history": value["status_history"].as_array().and_then(|h| h.last()).into_iter().collect::<Vec<_>>(),
         "title": title, "program": program}))
 }
@@ -407,9 +407,11 @@ mod tests {
             let first = super::agent_summary(7, &graph.nodes["t7"], "Task").unwrap();
             assert_eq!(first["attention"], graph.snapshot()["nodes"][0]["attention"]);
             assert_eq!(first["attention"]["kind"], "completed");
+            assert_eq!(first["activity_revision"], graph.snapshot()["nodes"][0]["activity_revision"]);
             graph.dispatch(7, "agent.seen", &json!({"event":first["attention"]["event"]})).unwrap();
             let seen = super::agent_summary(7, &graph.nodes["t7"], "Task").unwrap();
             assert_eq!(seen["attention"]["seen"], true);
+            assert!(seen["activity_revision"].as_u64().unwrap() > first["activity_revision"].as_u64().unwrap());
             assert_eq!(seen["attention"]["event"], first["attention"]["event"]);
             assert_eq!(seen["attention"], graph.snapshot()["nodes"][0]["attention"]);
         }

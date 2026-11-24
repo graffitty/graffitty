@@ -49,22 +49,34 @@ func refresh_body() -> void:
 	var sessions: Dictionary = {}
 	_owners.clear()
 	var host_trees: Array = []
+	var catalog_views := {}
 	for host in application.hosts:
 		if not is_instance_valid(host) or host.is_queued_for_deletion(): continue
 		var looking: bool = application.agent_attention.in_view.call(host)
+		var visible_keys: Array = application.agent_attention.panes(host).visible
+		var backend: Variant = host.get("session_backend")
+		var transport: Node = backend.connection if backend != null and backend.is_remote else null
 		var ids_by_key: Dictionary = {}
 		for tab in host.workspace_layout.tabs:
-			var visible_keys := Layout.keys(tab.tree, true)
 			for key in Layout.keys(tab.tree):
 				if not host.is_terminal_pane(key): continue
 				var node: Dictionary = application.agent_api.graph.nodes.get(key, {})
-				if node.is_empty(): continue
+				var shown: bool = key in visible_keys
+				var focused: bool = looking and key == host.pane_focus
 				var connection: Node = application.agent_api.graph.remote_owners.get(key)
-				if not is_instance_valid(connection): continue
+				if node.is_empty() or not is_instance_valid(connection):
+					if not is_instance_valid(transport): continue
+					var local_id := PaneAddress.id(key)
+					var peer: Node = transport.owners.get(local_id) if "owners" in transport else transport
+					if not is_instance_valid(peer) or not peer.connected or not peer.session_view_ready(peer.workspace): continue
+					var identity := [peer.url, peer.epoch, peer.workspace, peer.wire_id(local_id)]
+					var prior: Dictionary = catalog_views.get(identity, {})
+					if prior.get("focused", false) or (prior.get("looking", false) and not focused): continue
+					catalog_views[identity] = {"key": key, "host": host, "peer": peer, "looking": shown, "focused": focused}
+					continue
+				node = application.agent_attention.activity_node(key, node)
 				# Never persist client-local remapped IDs; scope pins to the server epoch.
 				var id := JSON.stringify([connection.url, connection.epoch, connection.wire_id(PaneAddress.id(key))])
-				var shown: bool = looking and tab.id == host.workspace_layout.active and key in visible_keys
-				var focused: bool = looking and key == host.pane_focus
 				# Two views of the same server terminal are still one agent. Prefer
 				# its focused/visible owner for seen rules and subsequent selection.
 				if input.has(id) and (input[id].focused or (input[id].looking and not focused)): continue
@@ -82,7 +94,7 @@ func refresh_body() -> void:
 					"attention": application.agent_attention.attention(key),
 					"looking": shown, "focused": focused}
 		host_trees.append([host, ids_by_key])
-	var background_trees := _add_away(input, remotes, sessions)
+	var background_trees := _add_away(input, remotes, sessions, catalog_views)
 	var next_trees := _build_trees(host_trees)
 	next_trees.merge(background_trees, true)
 	for id in next_trees:
@@ -119,7 +131,7 @@ func refresh_body() -> void:
 ## Agents in every other session of every connected server, from the session
 ## descriptors' server-owned agent summaries. Shown views win: their rows carry
 ## live titles and looking/focused state.
-func _add_away(input: Dictionary, remotes: Dictionary, sessions: Dictionary) -> Dictionary:
+func _add_away(input: Dictionary, remotes: Dictionary, sessions: Dictionary, catalog_views: Dictionary) -> Dictionary:
 	var background_trees := {}
 	_away.clear()
 	for group in preload("res://scenes/session/SessionsList.gd").collect(application.hosts, []):
@@ -134,16 +146,18 @@ func _add_away(input: Dictionary, remotes: Dictionary, sessions: Dictionary) -> 
 				var pane := int(agent.get("pane", -1))
 				var id := JSON.stringify([peer.url, peer.epoch, pane])
 				if pane < 0 or input.has(id): continue
-				_away[id] = {"host": group.host, "peer": peer, "session": str(value.id), "pane": pane}
+				var view: Dictionary = catalog_views.get([peer.url, peer.epoch, value.id, pane], {})
+				_away[id] = {"host": view.get("host", group.host), "peer": view.get("peer", peer), "session": str(value.id), "pane": pane}
 				remotes[id] = "" if group.local else str(group.name)
 				sessions[id] = label if not label.is_empty() else str(value.id).trim_prefix("$")
 				var program: Variant = agent.get("program")
 				var title := str(agent.get("title", ""))
 				if title.is_empty() and program is Dictionary: title = str(program.get("msg", ""))
-				input[id] = {"id": id, "key": PaneAddress.key(pane), "title": title,
+				input[id] = {"id": id, "key": view.get("key", PaneAddress.key(pane)), "title": title,
 					"provider": str(agent.get("provider", "")), "status": str(agent.get("status", "")),
 					"program": program, "status_history": agent.get("status_history", []),
-					"attention": application.agent_attention.project_attention(agent.get("attention")), "looking": false, "focused": false}
+					"attention": application.agent_attention.project_attention(agent.get("attention")),
+					"looking": view.get("looking", false), "focused": view.get("focused", false)}
 
 			var topology: Dictionary = value.get("agent_tree", {})
 			if topology.get("edges", []).is_empty(): continue
@@ -159,7 +173,7 @@ func _add_away(input: Dictionary, remotes: Dictionary, sessions: Dictionary) -> 
 				for sub in tree.rows:
 					var pane := PaneAddress.id(sub.key)
 					sub.away_id = JSON.stringify([peer.url, peer.epoch, pane])
-					_away[sub.away_id] = {"host": group.host, "peer": peer, "session": session_id, "pane": pane}
+					_away.get_or_add(sub.away_id, {"host": group.host, "peer": peer, "session": session_id, "pane": pane})
 					if sub.kind == "agent": sub.row_id = sub.away_id
 					if input.has(sub.away_id):
 						sub.title = input[sub.away_id].title

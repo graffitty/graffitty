@@ -13,6 +13,7 @@ class Backend extends RefCounted:
 	func resize_pane(_host: Node, _key: String, rect: Rect2) -> void: sizes.append(rect)
 
 class Host extends Node:
+	var pane_focus := "t1"
 	var application := App.new()
 	var session_backend := Backend.new()
 	var workspace_layout := Layout.new()
@@ -117,6 +118,29 @@ func test_exterior_targets_choose_nearest_edge_without_stealing_other_panes_cont
 	front.hide()
 	expect(view.resize_window_at(Vector2(495, 250), true) == "t1", "Hidden panes cannot block a visible resize edge")
 	expect(view.resize_window_at(Vector2(1000, 800), true).is_empty(), "Distant background remains workspace navigation")
+
+func test_focused_outline_accepts_mouse_resize() -> void:
+	var view := fixture()
+	view.agent_links.editing = true
+	view.agent_links.tools.view = view
+	view.agent_links.tools.overlay = view.agent_links
+	view.agent_links.ports = {"t1": {}, "t2": {}}
+	var pane: Control = view.panes.t1
+	pane.scale = Vector2.ONE * 1.2
+	view.panes.t2.position.x = 650
+	for direction in [Vector2.LEFT, Vector2.RIGHT, Vector2.UP, Vector2.DOWN, Vector2(-1,-1), Vector2(1,-1), Vector2(-1,1), Vector2.ONE]:
+		var edge: Vector2 = pane.size * (Vector2.ONE + direction) * .5
+		var at: Vector2 = pane.get_transform() * (edge + direction * 8.0)
+		expect(view.resize_window_at(at) == "t1", "The visible glow accepts mouse drags on all sides and corners")
+		expect(pane._edge_at(pane.get_transform().affine_inverse() * at) == direction, "Cursor and drag use the matching resize direction")
+		expect(view.resize_window_at(pane.get_transform() * (edge + direction * 12.0)).is_empty(), "Canvas beyond the glow stays free")
+	view.host.pane_focus = "t2"
+	expect(view.resize_window_at(Vector2(94, 250)).is_empty(), "Losing focus removes the exterior mouse target")
+	view.host.pane_focus = "t1"
+	view.panes.t2.position = Vector2(10, 120)
+	expect(view.resize_window_at(Vector2(94, 250)).is_empty(), "Neighbor content keeps clicks under another pane's glow")
+	view.agent_links.editing = false
+	expect(view.resize_window_at(Vector2(586, 250)).is_empty(), "A hidden outline has no exterior grip")
 
 func test_touch_tile_dividers_are_screen_sized_without_detaching_tiles() -> void:
 	var view := fixture()

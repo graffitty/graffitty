@@ -25,6 +25,7 @@ class Host extends Node:
 	var workspace_layout := preload("res://scenes/WorkspaceLayout.gd").new()
 	var in_view := true
 	func is_terminal_pane(key: String) -> bool: return PaneAddress.id(key) > 0
+	func pane_is_presented(_key: String) -> bool: return true
 
 
 class Peer extends Node:
@@ -95,6 +96,57 @@ func test_connected_catalog_retries_cached_read_without_reading_unshown_results(
 		connected.free()
 
 
+class PannedView extends "res://scenes/WorkspaceView.gd":
+	func viewport_content_rect() -> Rect2: return Rect2(0, 36, 1280, 684)
+
+class PaneCamera extends Node:
+	var origin := Vector2.ZERO
+	func sheet_window_fraction(point: Vector2) -> Vector2:
+		return (point - origin) / Vector2(1280, 720)
+
+class PannedHost extends RemoteHost:
+	var world := PaneCamera.new()
+	var workspace_view := PannedView.new()
+	func _init() -> void:
+		workspace_view.host = self
+		workspace_view.size = Vector2(1280, 720)
+	func pane_is_presented(key: String) -> bool: return workspace_view.pane_in_content(key)
+
+func test_offscreen_completion_waits_for_the_pane_to_enter_the_content_area() -> void:
+	var app := Application.new()
+	var host := PannedHost.new()
+	var peer := Peer.new()
+	peer.connected = true
+	host.session_backend.connection = peer
+	app.hosts = [host]
+	host.workspace_layout.tabs = [_tab(1, ["t1", "t2"])]
+	host.workspace_layout.active = 1
+	var pane := Control.new()
+	pane.position = Vector2(5000, 5000)
+	pane.size = Vector2(240, 160)
+	host.workspace_view.panes.t2 = pane
+	var event := {"event": "stashed-completion", "kind": "completed", "seen": false}
+	peer.available_sessions = [{"id": "$1", "agents": [{"pane": 2, "status": "idle", "attention": event}]}]
+	var attention := CapturedAttention.new()
+	attention.application = app
+	attention.in_view = func(_host): return true
+	attention.refresh()
+	expect(attention.calls.is_empty() and attention.marker(["t2"]).count == 1, "A shown pane stashed outside the camera keeps its completion")
+	host.world.origin = Vector2(5000, 5124)
+	attention.refresh()
+	expect(attention.calls.is_empty() and attention.marker(["t2"]).count == 1, "A pane touching the content edge behind the tabs stays unread")
+	host.world.origin.y -= 1
+	attention.refresh()
+	expect(attention.calls == [{"connection": peer, "pane": 2, "event": "stashed-completion"}], "Panning part of the pane into content sends its exact receipt")
+	expect(attention.marker(["t2"]).count == 0, "The viewed completion clears its marker")
+	pane.free()
+	host.workspace_view.free()
+	host.world.free()
+	host.free()
+	peer.free()
+	attention.free()
+
+
 func test_live_completion_receipt_in_either_snapshot_order() -> void:
 	for scenario in ["catalog_first", "graph_first", "unfocused", "switching", "other_session"]:
 		var app := Application.new()
@@ -108,9 +160,13 @@ func test_live_completion_receipt_in_either_snapshot_order() -> void:
 		host.in_view = scenario != "unfocused"
 		app.hosts = [host]
 		var event := {"event":"completion", "kind":"completed", "seen":false}
-		var agent := {"pane":1, "status":"idle", "attention":event}
+		var agent := {"pane":1, "status":"idle", "attention":event, "activity_revision":2}
 		var catalog := [{"id":"$2" if scenario == "other_session" else "$1", "agents":[agent]}]
+		if scenario == "catalog_first":
+			app.agent_api.graph.nodes["t1"] = {"status":"busy","activity_revision":1}
+			app.agent_api.graph.remote_owners["t1"] = peer
 		if scenario == "graph_first":
+			peer.available_sessions = [{"id":"$1","agents":[{"pane":1,"status":"busy","activity_revision":1}]}]
 			app.agent_api.graph.nodes["t1"] = agent
 			app.agent_api.graph.remote_owners["t1"] = peer
 		else:
@@ -124,6 +180,7 @@ func test_live_completion_receipt_in_either_snapshot_order() -> void:
 		expect(attention.project_attention(event).seen == watched, "Agents panel receipt: " + scenario)
 		expect(attention.calls.size() == int(watched), "Only the presented pane sends a receipt: " + scenario)
 		if watched:
+			host.in_view = false
 			peer.available_sessions = catalog
 			app.agent_api.graph.nodes["t1"] = agent
 			app.agent_api.graph.remote_owners["t1"] = peer
@@ -132,6 +189,47 @@ func test_live_completion_receipt_in_either_snapshot_order() -> void:
 		attention.free()
 		host.free()
 		peer.free()
+
+
+class ViewPeer extends Peer:
+	var topology := {"workspace":"$1", "graph":{"nodes":[]}}
+
+
+func test_disconnected_visible_window_cannot_read_another_windows_new_graph() -> void:
+	var app := Application.new()
+	var cached := RemoteHost.new()
+	var current := RemoteHost.new()
+	var old := ViewPeer.new()
+	var new_peer := ViewPeer.new()
+	new_peer.connected = true
+	cached.session_backend.connection = old
+	current.session_backend.connection = new_peer
+	current.in_view = false
+	for host in [cached, current]:
+		host.workspace_layout.tabs.assign([_tab(1, ["t1"])])
+		host.workspace_layout.active = 1
+	app.hosts = [cached, current]
+	old.topology.graph.nodes = [{"node":"t1","status":"idle","activity_revision":2,
+		"attention":{"event":"cached", "kind":"completed","seen":false}}]
+	var newest := {"node":"t1","status":"idle","activity_revision":4,
+		"attention":{"event":"new", "kind":"completed","seen":false}}
+	new_peer.topology.graph.nodes = [newest]
+	app.agent_api.graph.nodes = {"t1":newest}
+	app.agent_api.graph.remote_owners = {"t1":new_peer}
+	var attention := CapturedAttention.new()
+	attention.application = app
+	attention.in_view = func(host): return host.in_view
+	attention.refresh()
+	expect(attention.calls.is_empty() and attention.marker(["t1"]).count == 1,
+		"A cached window cannot read a UUID that only an unfocused window received")
+	current.in_view = true
+	attention.refresh()
+	expect(attention.calls.size() == 1 and attention.calls[0].event == "new", "Showing the current view reads its own event")
+	attention.free()
+	cached.free()
+	current.free()
+	old.free()
+	new_peer.free()
 
 
 func _tab(id: int, keys: Array, shown := []) -> Dictionary:

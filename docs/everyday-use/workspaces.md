@@ -9,7 +9,7 @@ A tab groups related terminal, browser, and filetree panes.
 | Split right/below | Click the split buttons in a terminal title bar |
 | Split left/above | Right-click those buttons |
 | Resize tiles | Drag a shared border; a shared corner changes both directions |
-| Resize floating panes | Drag an edge or corner |
+| Resize floating panes | Drag an edge or corner. On the focused pane, you can grab the blue outline itself. |
 
 New panes tile inside Main and inherit the source directory.
 Each tab keeps its own tiling and [spacing](../customize/configuration-workspace.md#adjust-pane-spacing).

@@ -29,13 +29,14 @@ enum WireAction { INSPECT, PAUSE, REMOVE }
 var inspection_click := 0
 var camera_tween: Tween
 var animate_camera := true
+const SELECTION_GLOW_WIDTH := 9.0
 var selection_glow := StyleBoxFlat.new()
 
 func _ready() -> void:
 	selection_glow.draw_center = false
 	selection_glow.set_border_width_all(0)
 	selection_glow.shadow_color = Color("8ecaff", 0.85)
-	selection_glow.shadow_size = 9
+	selection_glow.shadow_size = int(SELECTION_GLOW_WIDTH)
 	selection_glow.shadow_offset = Vector2.ZERO
 	selection_glow.corner_detail = 12
 	overlay = get_parent()
@@ -467,7 +468,7 @@ func draw_selection(painter: Node2D) -> void:
 				# Draw on the sheet with the pane, so perspective and curvature
 				# transform its whole outline instead of only two opposite corners.
 				selection_glow.set_corner_radius_all(roundi(radius * pane_scale))
-				selection_glow.shadow_size = maxi(1, roundi(painter.local_width(to_screen(rect.get_center()), 9.0) * pane_scale))
+				selection_glow.shadow_size = maxi(1, roundi(painter.local_width(to_screen(rect.get_center()), SELECTION_GLOW_WIDTH) * pane_scale))
 				painter.sheet_style_box(selection_glow, rect)
 
 func draw_overlay() -> void:
@@ -813,6 +814,9 @@ func _input(event: InputEvent) -> void:
 				overlay.redraw()
 				break
 	if gesture.is_empty() and not (event.shift_pressed or event.ctrl_pressed or event.alt_pressed or event.meta_pressed) and not overlay.pane_screen_bounds.values().any(func(bounds): return bounds.has_point(at)):
+		# The focused pane's resize border is drawn over wires in the gap.
+		if view != null and not event.get_meta("direct_touch", false) and not view.resize_window_at(to_canvas(at)).is_empty():
+			return
 		var link := hit_wire(at)
 		if not link.is_empty():
 			if event.double_click:

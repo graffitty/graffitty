@@ -19,6 +19,7 @@ class Host extends Node:
 	var sessions: Dictionary = {}
 	var chromiums: Dictionary = {}
 	func is_terminal_pane(key: String) -> bool: return PaneAddress.id(key) > 0
+	func pane_is_presented(_key: String) -> bool: return true
 	func is_chromium_pane(_key: String) -> bool: return false
 	func pane_title(_key: String) -> String: return "Agent task"
 
@@ -157,6 +158,33 @@ class Backend extends RefCounted:
 
 class SessionHost extends Host:
 	var session_backend := Backend.new()
+	var revealed := ""
+	func reveal_pane(key: String) -> void: revealed = key
+
+func test_catalog_only_agent_keeps_local_focus_and_traversal() -> void:
+	var app := Application.new()
+	var host := SessionHost.new()
+	var peer := Peer.new()
+	host.session_backend.connection = peer
+	app.hosts = [host]
+	host.workspace_layout.tabs = [{"id":1, "tree":{"windows":[{"pane":"t1","shown":true},{"pane":"t8","shown":true}]}}]
+	host.workspace_layout.active = 1
+	app.agent_attention.in_view = func(h): return h == host
+	peer.available_sessions = [{"id":"$2","agents":[
+		{"pane":7,"provider":"pi","status":"idle"}, {"pane":8,"provider":"claude","status":"idle"}]}]
+	var panel := preload("res://scenes/Agents.gd").new()
+	panel.application = app
+	panel._sounds = {"enabled": false}
+	panel.refresh()
+	var focused := panel.rows.filter(func(row): return row.focused)
+	expect(focused.size() == 1 and focused[0].key == "t1", "Wire t7 highlights the locally focused t1 before graph delivery")
+	panel.step(1)
+	expect(host.revealed == "t8", "Keyboard traversal advances from the catalog-only focused pane")
+	panel.free()
+	app.free()
+	host.free()
+	peer.free()
+
 
 func test_catalog_completion_updates_panel_after_visible_receipt() -> void:
 	var app := Application.new()
@@ -170,6 +198,8 @@ func test_catalog_completion_updates_panel_after_visible_receipt() -> void:
 	app.hosts = [host]
 	host.workspace_layout.tabs = [{"id":1, "tree":{"type":"windows", "windows":[{"pane":"t1","shown":true}]}}]
 	host.workspace_layout.active = 1
+	app.agent_api.graph.nodes = {"t1":{"provider":"pi","status":"busy","activity_revision":1}}
+	app.agent_api.graph.remote_owners = {"t1":peer}
 	app.agent_attention.in_view = func(h): return h == host
 	var panel := preload("res://scenes/Agents.gd").new()
 	panel.application = app
@@ -179,14 +209,18 @@ func test_catalog_completion_updates_panel_after_visible_receipt() -> void:
 	var statuses := []
 	panel.changed.connect(func():
 		for row in panel.rows:
-			if row.key == "t7": statuses.append(row.status))
+			if row.key == "t1": statuses.append(row.status))
 	peer.available_sessions[1].agents[0].status = "idle"
+	peer.available_sessions[1].agents[0].activity_revision = 2
 	peer.available_sessions[1].agents[0].attention = {"event":"finished", "kind":"completed", "seen":false}
 	peer.sessions_changed.emit()
-	expect(app.agent_attention._queued and statuses.is_empty(), "The catalog schedules receipt projection before publishing panel rows")
-	app.agent_attention.refresh()
+	expect(app.agent_attention.calls.size() == 1, "The visible pane acknowledges the catalog before focus can move")
 	expect(statuses == ["idle"], "The panel goes directly from working to idle on catalog delivery")
 	expect(app.agent_attention.marker(["t1"]).count == 0, "The remapped visible pane keeps its tab clear")
+	app.agent_attention.in_view = func(_h): return false
+	app.agent_api.graph.nodes.t1 = peer.available_sessions[1].agents[0].duplicate()
+	app.agent_attention.refresh()
+	expect(panel.rows.filter(func(row): return row.key == "t1")[0].status == "idle", "Focus loss before graph delivery preserves the read")
 	panel.free()
 	app.free()
 	host.free()
@@ -325,6 +359,7 @@ class TreeHost extends Node:
 	var chromiums: Dictionary = {}
 	var titles: Dictionary = {}
 	var focused := ""
+	func pane_is_presented(_key: String) -> bool: return true
 	func is_terminal_pane(key: String) -> bool: return PaneAddress.id(key) > 0 and not chromiums.has(PaneAddress.id(key))
 	func is_chromium_pane(key: String) -> bool: return chromiums.has(PaneAddress.id(key))
 	func pane_title(key: String) -> String: return titles.get(key, key)

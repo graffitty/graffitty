@@ -956,7 +956,14 @@ func _edge_at(point: Vector2, touch := false) -> Vector2:
 		)
 		return touch_resize_edges(point, size, Vector2.ONE / pixels.max(Vector2(.001, .001)))
 	if not Rect2(Vector2.ZERO, size).has_point(point):
-		return Vector2.ZERO
+		var links: Control = host.workspace_view.agent_links
+		if not links.editing or not links.wire_layer.visible or host.pane_focus != key or key not in links.tools.selection():
+			return Vector2.ZERO
+		# The selected outline is painted on the sheet and scales with the pane.
+		var shadow := maxf(1.0, roundf(links.tools.SELECTION_GLOW_WIDTH * scale.x))
+		var outside := Vector2.ONE * shadow / scale.abs()
+		if not Rect2(-outside, size + outside * 2.0).has_point(point):
+			return Vector2.ZERO
 	if point.x > size.x - 16 and point.y > size.y - 16:
 		return Vector2.ONE
 	return Vector2(

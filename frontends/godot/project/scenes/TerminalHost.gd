@@ -741,6 +741,12 @@ func get_tab_menu_items() -> Array[Dictionary]:
 	return items
 
 
+## Only the active terminal is presented in a world without workspace panes.
+func pane_is_presented(key: String) -> bool:
+	if workspace_view != null: return workspace_view.pane_in_content(key)
+	return world != null and active_session_id == PaneAddress.id(key) and pane_focus == key
+
+
 ## A pane's title as the tab list shows it.
 func pane_title(key: String) -> String:
 	var id := PaneAddress.id(key)
@@ -1363,6 +1369,7 @@ func _configure_terminal_space(presenter: Node) -> void:
 		workspace_view = ui.create_terminal_space(scene)
 		if workspace_view != null:
 			layout_root.add_child(workspace_view)
+			workspace_view.navigation_changed.connect(application.agent_attention.queue_refresh)
 			workspace_view.set_anchors_and_offsets_preset(Control.PRESET_FULL_RECT)
 	_sync_world_chrome_clip()
 

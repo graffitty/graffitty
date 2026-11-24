@@ -214,3 +214,36 @@ fn codex_prompt_id_keeps_a_newer_hook_busy_during_an_older_failure_poll() {
     assert_eq!(graph.nodes["t1"]["status"], "idle");
     assert_eq!(graph.queues["t2"].len(), 2);
 }
+
+#[test]
+fn delayed_codex_failures_charge_the_routed_turn_even_after_a_retry() {
+    let mut graph = fixture("codex");
+    graph.dispatch(2, "graph.connect", &json!({"from":"t2","to":"t1","send":true})).unwrap();
+    let prompt = |graph: &mut Graph, turn: &str| {
+        let sent = graph.dispatch(2, "graph.send", &json!({"to":"t1","text":"request"})).unwrap();
+        let run = string(&sent, "run_id").to_owned();
+        let text = format!("[Graffitty message from t2; event accepted; run {run}]\nrequest");
+        graph.dispatch(1, "agent.event", &json!({"provider":"codex","event":"UserPromptSubmit",
+            "turn_id":turn,"prompt":text,"integrated":true})).unwrap();
+        run
+    };
+    let a = prompt(&mut graph, "a");
+    let mut scan = json!({"provider":"codex","session_id":"session-1","pid":1,"status":"busy",
+        "observed_turn":{"id":"a","status":"inProgress"}});
+    graph.observe_agent(1, &scan);
+    let b = prompt(&mut graph, "b");
+    scan["observed_turn"] = json!({"id":"b","status":"inProgress"});
+    scan["failed_turns"] = json!([{"id":"a","error":{"message":"failed A"}}, {"id":"unrouted","error":{"message":"manual turn"}}]);
+    graph.observe_agent(1, &scan);
+    assert_eq!(graph.queues["t2"][0]["run_id"], a);
+    assert_eq!(graph.queues["t2"][0]["payload"]["turn_id"], "a");
+    assert_ne!(graph.queues["t2"][1]["run_id"], a);
+    assert_ne!(graph.queues["t2"][1]["run_id"], b);
+    assert_eq!((graph.runs[&a], graph.runs[&b]), (2, 1));
+    scan["observed_turn"]["status"] = json!("failed");
+    scan["status"] = json!("idle");
+    scan["failed_turns"] = json!([]);
+    graph.observe_agent(1, &scan);
+    assert_eq!(graph.queues["t2"][2]["run_id"], b);
+    assert_eq!((graph.runs[&a], graph.runs[&b]), (2, 2));
+}

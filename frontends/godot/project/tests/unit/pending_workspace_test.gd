@@ -137,12 +137,14 @@ func test_layout_barrier_waits_for_prior_ack_but_not_new_geometry() -> void:
 	f.host.free(); f.transport.free()
 
 func test_graph_geometry_round_trips_and_maps_federated_endpoints() -> void:
-	var graph := {"routes": {"t1/out>t2/in": ["bend"]}, "reroutes": {"bend": {"position": Vector2(330, -20)}}}
+	var graph := {"routes": {"t1/out>t2/in": ["t1", "t1/out>t2/in"]}, "reroutes": {"t1": {"position": Vector2(330, -20)}, "t1/out>t2/in": {"position": Vector2.ZERO}}}
 	var wire := Workspace.encode_graph(graph)
 	expect(Workspace.decode_graph(wire) == graph, "Canvas positions survive the wire representation")
 	var mapped: Dictionary = Workspace.map_value(wire, func(id): return id + 100)
 	expect(mapped.routes.has("t101/out>t102/in"), "Federated graph route keys map both endpoints")
-	expect(mapped.reroutes.has("bend"), "Reroute IDs remain stable across clients")
+	expect(mapped.routes["t101/out>t102/in"] == graph.routes["t1/out>t2/in"], "Waypoints named like panes or edges keep their identities")
+	expect(mapped.reroutes == wire.reroutes, "Every waypoint still refers to the same geometry")
+	expect(Workspace.map_value(mapped, func(id): return id - 100) == wire, "Namespace translation round-trips graph geometry")
 
 func test_final_graph_commit_preserves_other_clients_different_node_move() -> void:
 	var f := fixture()

@@ -21,6 +21,18 @@ pub(super) fn identity_replaced(previous: &Value, incoming: &Value) -> bool {
     })
 }
 
+/// Catalog and topology carry this same per-pane order, even across live adoption.
+pub(super) fn advance_revision(node: &mut Value) {
+    node["activity_revision"] = json!(node["activity_revision"].as_u64().unwrap_or(0) + 1);
+}
+
+pub(super) fn record_change(node: &mut Value, previous: &Value) {
+    if ["status", "provider", "attention"].iter().any(|key| node[*key] != previous[*key])
+        || ["state", "app"].iter().any(|key| node["program_status"][*key] != previous["program_status"][*key]) {
+        advance_revision(node);
+    }
+}
+
 pub(super) fn update(node: &mut Value, previous_status: &str, replaced: bool) {
     let retained_completion = !replaced && matches!(string(node, "status"), "offline" | "unintegrated")
         && node["attention"]["kind"] == "completed";
@@ -65,6 +77,8 @@ pub(super) fn validate(value: &Value) -> Result<Option<AgentAttention>> {
 #[serde(deny_unknown_fields)]
 pub struct AttentionState {
     pub attention: Option<AgentAttention>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    activity_revision: Option<u64>,
     status: String,
     provider: Option<String>,
     kind: Option<String>,
@@ -85,6 +99,7 @@ impl Graph {
         let text = |field| node[field].as_str().map(str::to_owned);
         Some(AttentionState {
             attention: validate(&node["attention"]).expect("server-owned attention"),
+            activity_revision: node["activity_revision"].as_u64(),
             status: string(node, "status").into(), provider: text("provider"), kind: text("kind"),
             pid: node["pid"].as_u64(), started: text("started"), session_id: text("session_id"),
             integrated: node["integrated"].as_bool(), transport: text("transport"),

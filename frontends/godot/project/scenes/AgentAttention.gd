@@ -18,6 +18,8 @@ var _core: RefCounted = ClassDB.instantiate("AgentAttentionCore") if ClassDB.cla
 var _queued := false
 var _acknowledging: Dictionary = {}
 var _receipt_owners: Dictionary = {}
+var _activity: Dictionary = {}
+var _activity_scopes: Dictionary = {}
 ## Shared by tab markers and the agent list. Recordings and headless fixtures
 ## can supply their viewed host without taking native window focus.
 var in_view: Callable = host_in_view
@@ -67,7 +69,7 @@ func panes(host: Node) -> Dictionary:
 			if host.is_terminal_pane(key): live.append(key)
 		if shown and group.id == host.workspace_layout.active:
 			for key in WorkspaceLayout.keys(group.tree, true):
-				if host.is_terminal_pane(key): visible.append(key)
+				if host.is_terminal_pane(key) and host.pane_is_presented(key): visible.append(key)
 	return {"live": live, "visible": visible}
 
 
@@ -76,55 +78,103 @@ func refresh() -> void:
 	if _core == null or application == null or application.agent_api == null: return
 	var live := PackedStringArray()
 	var visible := PackedStringArray()
-	var presented := {}
-	var nodes: Dictionary = application.agent_api.graph.nodes.duplicate()
-	_receipt_owners = application.agent_api.graph.remote_owners.duplicate()
+	var graph: Object = application.agent_api.graph
+	var nodes: Dictionary = graph.nodes.duplicate()
+	_receipt_owners = graph.remote_owners.duplicate()
+	var visible_views := {}
+	var peers := {}
+	var scopes := {}
 	for host in application.hosts:
-		# unregister_host drops a closing window before it is freed.
 		if not is_instance_valid(host) or host.is_queued_for_deletion(): continue
 		var found := panes(host)
 		live.append_array(PackedStringArray(found.live))
-		visible.append_array(PackedStringArray(found.visible))
-		if found.visible.is_empty() or not "session_backend" in host: continue
-		var backend: RefCounted = host.session_backend
-		if backend == null or not backend.is_remote: continue
+		var backend: Variant = host.get("session_backend")
+		if backend == null or not backend.is_remote:
+			visible.append_array(PackedStringArray(found.visible))
+			continue
 		var connection: Node = backend.connection
 		if not is_instance_valid(connection): continue
+		for peer in connection.connections if "connections" in connection else [connection]:
+			peers[peer] = true
 		for key in found.visible:
-			var id := PaneAddress.id(key)
-			var owner: Node = connection.owners.get(id) if "owners" in connection else connection
-			if is_instance_valid(owner) and owner.connected and owner.session_view_ready(owner.workspace):
-				presented[[owner.url, owner.epoch, owner.workspace, owner.wire_id(id)]] = true
-	# A session switch removes panes from this window, not from the server.
-	# Catalog evidence keeps their receipts retryable without reopening them.
+			var owner: Node = connection.owners.get(PaneAddress.id(key)) if "owners" in connection else connection
+			if is_instance_valid(owner):
+				visible_views.get_or_add(owner, []).append(key)
+	# Parked connections can still confirm or retry a receipt after a session switch.
 	for group in preload("res://scenes/session/SessionsList.gd").collect(application.hosts, []):
-		var peer: Node = group.get("peer")
-		if not group.connected or not is_instance_valid(peer): continue
-		# Project catalog receipts before the panel draws its rows.
-		if peer.has_signal("sessions_changed") and not peer.sessions_changed.is_connected(queue_refresh):
-			peer.sessions_changed.connect(queue_refresh)
-		for session in peer.available_sessions:
-			for agent in session.get("agents", []):
-				var pane := int(agent.get("pane", -1))
-				if pane < 0: continue
-				var key := PaneAddress.key(peer.local_id(pane))
-				if not live.has(key): live.append(key)
-				var owner: Node = _receipt_owners.get(key)
-				var unavailable_owner: bool = is_instance_valid(owner) and not owner.connected and owner.url == peer.url and owner.epoch == peer.epoch and owner.wire_id(PaneAddress.id(key)) == pane
-				if not nodes.has(key) or unavailable_owner:
-					# The catalog can beat the graph for a live, displayed pane.
-					# A cached screen can only acknowledge the event it already shows.
-					if presented.has([peer.url, peer.epoch, session.id, pane]):
-						if not visible.has(key): visible.append(key)
-					elif nodes.get(key, {}).get("attention") != agent.get("attention"):
-						while visible.has(key): visible.remove_at(visible.find(key))
-					nodes[key] = {"attention": agent.get("attention"), "status": agent.get("status", "")}
-					_receipt_owners[key] = peer
+		if is_instance_valid(group.get("peer")): peers[group.peer] = true
+	var displayed_events := {}
+	for peer in peers:
+		if not is_instance_valid(peer): continue
+		if peer.has_signal("sessions_changed") and not peer.sessions_changed.is_connected(refresh):
+			peer.sessions_changed.connect(refresh)
+		var view_nodes := {}
+		var snapshot_session: String = peer.workspace
+		if "topology" in peer:
+			snapshot_session = str(peer.topology.get("workspace", ""))
+			var snapshot: Variant = peer.topology.get("graph")
+			for row in snapshot.get("nodes", []) if snapshot is Dictionary else []:
+				view_nodes[row.node] = row
+		else:
+			for key in nodes:
+				if graph.remote_owners.get(key) == peer: view_nodes[key] = graph.nodes[key]
+		for key in view_nodes:
+			_merge_activity(key, view_nodes[key], peer, snapshot_session, nodes, scopes)
+		if peer.connected:
+			for session in peer.available_sessions:
+				for summary in session.get("agents", []):
+					var pane := int(summary.get("pane", -1))
+					if pane < 0: continue
+					var key := PaneAddress.key(peer.local_id(pane))
+					if not live.has(key): live.append(key)
+					var row: Dictionary = summary.duplicate()
+					row.program_status = summary.get("program")
+					_merge_activity(key, row, peer, session.id, nodes, scopes)
+					if session.id == peer.workspace and peer.session_view_ready(session.id) and _newer(row, view_nodes.get(key, {})):
+						view_nodes[key] = row
+		# Only this window's own graph or ready catalog describes what it showed.
+		# A disconnected screen can authorize its cached UUID via another route.
+		if peer.connected and not peer.session_view_ready(peer.workspace): continue
+		for key in visible_views.get(peer, []):
+			var row: Dictionary = view_nodes.get(key, {})
+			var event: Variant = row.get("attention")
+			if event is Dictionary and (snapshot_session == peer.workspace or peer.connected):
+				displayed_events[[key, peer.url, peer.epoch, peer.workspace, event.event]] = true
+	for key in scopes:
+		if scopes[key] == _activity_scopes.get(key) and _newer(_activity[key], nodes[key]):
+			nodes[key] = _activity[key]
+		var event: Variant = nodes[key].get("attention")
+		if event is Dictionary and displayed_events.has([key] + scopes[key] + [event.event]):
+			visible.append(key)
+	_activity = nodes
+	_activity_scopes = scopes
 	if _core.observe(nodes, visible, live):
 		changed.emit()
 	_send_receipts()
 	if "agents" in application and is_instance_valid(application.agents):
 		application.agents.refresh()
+
+
+static func _newer(candidate: Dictionary, current: Dictionary) -> bool:
+	return current.is_empty() or int(candidate.get("activity_revision", 0)) > int(current.get("activity_revision", 0))
+
+
+func _merge_activity(key: String, row: Dictionary, peer: Node, session: String, nodes: Dictionary, scopes: Dictionary) -> void:
+	var current: Dictionary = nodes.get(key, {})
+	var route: Node = _receipt_owners.get(key)
+	var live_route: bool = peer.connected and (not is_instance_valid(route) or not route.connected)
+	# A live peer may replace a disconnected route at the same revision.
+	if _newer(row, current) or (int(row.get("activity_revision", 0)) == int(current.get("activity_revision", 0)) and live_route):
+		nodes[key] = row
+		_receipt_owners[key] = peer
+		scopes[key] = [peer.url, peer.epoch, session]
+	elif peer == route and not scopes.has(key) and int(row.get("activity_revision", 0)) == int(current.get("activity_revision", 0)):
+		scopes[key] = [peer.url, peer.epoch, session]
+
+
+func activity_node(key: String, node: Dictionary) -> Dictionary:
+	var current: Dictionary = _activity.get(key, {})
+	return current if not current.is_empty() and _newer(current, node) else node
 
 
 ## Both the agent panel and tab markers use the same optimistic read receipt.
