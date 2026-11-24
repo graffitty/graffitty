@@ -156,7 +156,8 @@ mod tests {
             graph.dispatch(id,"agent.event",&json!({"provider":"codex","event":"SessionStart","pid":id,"session_id":format!("s{id}")})).unwrap();
         }
         graph.dispatch(2, "graph.connect", &json!({"from":"t2","to":"t3","send":true})).unwrap();
-        let event = graph.dispatch(2, "graph.send", &json!({"to":"t3","text":"healthy delivery"})).unwrap();
+        graph.dispatch(2, "graph.send", &json!({"to":"t3","text":"healthy delivery"})).unwrap();
+        let event = graph.queues["t3"][0].clone();
         let record = json!({"workspace":"one","id":3,"event":event,"target":graph.nodes["t3"],"inbox_generation":graph.inbox_generation("t3")});
         finish_submit(&mut pending, &mut graphs, record, &json!({"queuedSubmission":{"id":"healthy-submission"}}));
         assert!(graphs["one"].native_pending(event["event_id"].as_str().unwrap()));
