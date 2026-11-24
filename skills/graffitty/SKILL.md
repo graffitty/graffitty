@@ -36,8 +36,10 @@ gft pane run --agent pi --name review --side right --cwd /path/to/repo --wire se
   --status`), then starts the agent interactively. Never use a one-shot print
   mode (`pi -p`, `claude -p`): the agent must stay watchable and steerable.
 - Children are not told your model. Pass `--model <id>` when a child should
-  match you (Codex receives it as `-m`), and `--agent-arg=<flag>` for anything
-  else, for example `--agent-arg=--no-daemon` for Codex.
+  match you (Codex receives it as `-m`). Use `--agent-arg=<flag>` for extra arguments.
+- For Codex reviewers that receive graph messages, launch with the local daemon.
+  Omit `--no-daemon`. That flag keeps the thread inside the terminal process:
+  Graffitty can read its transcript, but incoming Send deliveries fail.
 - Give each agent a name and one exact scope. Do not let children start more
   agents unless you assign that explicitly.
 - The command returns `result.pane` (`t7`), `result.spawned_by` (you), the

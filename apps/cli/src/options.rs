@@ -1143,7 +1143,7 @@ pub struct Run {
     /// Model for --agent (pass your own when a child should match you).
     #[usage(long)]
     model: Option<String>,
-    /// Extra agent arguments, repeatable (for example --agent-arg=--no-daemon).
+    /// Extra arguments passed to the agent. Repeat for each argument.
     #[usage(long = "agent-arg")]
     agent_arg: Vec<String>,
     /// Pane name shown in its title and the Agents list.
