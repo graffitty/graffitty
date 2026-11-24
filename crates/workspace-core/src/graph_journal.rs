@@ -1,6 +1,6 @@
 //! Server-owned, metadata-only delivery history. Payloads never enter snapshots.
 use serde_json::{Value, json};
-use std::collections::{BTreeMap, VecDeque};
+use std::collections::{BTreeMap, HashSet, VecDeque};
 
 const HISTORY_LIMIT: usize = 200;
 const TRANSITION_LIMIT: usize = 20;
@@ -24,6 +24,32 @@ impl Journal {
             .get(id)
             .is_some_and(|row| row["pending"] == true && row["status"] == "queued in Codex")
     }
+    /// Keep pending native submissions and queued events with their receiver.
+    /// A queued event may already have a prompt-start transition before RPC ack.
+    pub fn transfer_pending(&mut self, receivers: &HashSet<String>, queued: &HashSet<String>, target: &mut Self) -> HashSet<String> {
+        let mut moved = HashSet::new();
+        self.entries.retain(|id, entry| {
+            if entry["target"].as_str().is_some_and(|target| receivers.contains(target)) && (entry["pending"] == true || queued.contains(id)) {
+                target.entries.insert(id.clone(), entry.take());
+                moved.insert(id.clone());
+                false
+            } else { true }
+        });
+        self.finished.retain(|id| {
+            if !moved.contains(id) { return true; }
+            target.finished.push_back(id.clone());
+            false
+        });
+        target.trim();
+        moved
+    }
+
+    fn trim(&mut self) {
+        while self.finished.len() > self.history_limit {
+            self.entries.remove(&self.finished.pop_front().unwrap());
+        }
+    }
+
     pub fn started(&mut self, target: &str, prompt: &str) {
         let header = prompt.lines().next().unwrap_or("");
         if !header.starts_with("[Graffitty ") || !header.ends_with(']') {
@@ -79,9 +105,7 @@ impl Journal {
         if !pending {
             self.finished.push_back(id.into());
         }
-        while self.finished.len() > self.history_limit {
-            self.entries.remove(&self.finished.pop_front().unwrap());
-        }
+        self.trim();
     }
 
     pub fn snapshot(&self, edge: &str) -> Value {

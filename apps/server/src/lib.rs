@@ -42,6 +42,7 @@ mod shell_integration;
 mod workers;
 mod settings;
 mod agent_completion;
+mod native_delivery;
 mod agent_context;
 mod pane_claim;
 mod effects_api;
@@ -551,73 +552,11 @@ impl Server {
             } else if key.starts_with("completion:") {
                 self.completions.finish(&key, &result, &mut self.graphs);
             } else if key.starts_with("native:") {
-                if let Some(ids) = result["queued_ids"].as_array() {
-                    for record in context["records"].as_array().into_iter().flatten() {
-                        let id = record["event"]["event_id"].as_str().unwrap_or("");
-                        if self.native_pending.get(id).is_none_or(|current| current["submission_id"] != record["submission_id"]) { continue; }
-                        if !ids.contains(&record["submission_id"]) {
-                            self.native_pending.remove(id);
-                            if let Some(graph) = self.graphs.get_mut(record["workspace"].as_str().unwrap_or("")) {
-                                graph.record_delivery(&record["event"], "started or removed in Codex", false);
-                            }
-                        }
-                    }
-                }
+                native_delivery::finish_poll(&mut self.native_pending, &mut self.graphs, &context, &result);
             } else if key.starts_with("cancel:") {
-                if let Some(graph) = self.graphs.get_mut(context["workspace"].as_str().unwrap_or("")) {
-                    let status = if result.get("error").is_some() {
-                        format!("cancel failed: {}", result["error"]["message"].as_str().unwrap_or("queue error"))
-                    } else if result["deleted"] == true { "cancelled in Codex".into() }
-                    else { "already started or removed in Codex; cannot recall".into() };
-                    graph.record_delivery(&context["event"], &status, false);
-                }
+                native_delivery::finish_cancel(&mut self.graphs, &context, &result);
             } else if key.starts_with("deliver:") {
-                let Some(workspace) = context["workspace"].as_str() else {
-                    continue;
-                };
-                let Some(graph) = self.graphs.get_mut(workspace) else {
-                    continue;
-                };
-                let id = context["id"].as_u64().unwrap_or(0);
-                let event_id = &context["event"]["event_id"];
-                let queued = graph
-                    .queues
-                    .get(&pane_address(id))
-                    .is_some_and(|q| q.iter().any(|e| e["event_id"] == *event_id));
-                if !queued || !graph.allowed(&context["event"]) {
-                    if let Some(submission) = result["queuedSubmission"]["id"].as_str() {
-                        // Keep revoked submissions until a worker slot can
-                        // cancel them; a late result must not bypass expiry.
-                        let mut record = context.clone();
-                        record["submission_id"] = json!(submission);
-                        self.native_pending.insert(event_id.as_str().unwrap_or("").into(), record);
-                    }
-                    continue;
-                }
-                let queued = result["queuedSubmission"]["id"].as_str();
-                if let Some(submission) = queued {
-                    let mut record = context.clone();
-                    record["submission_id"] = json!(submission);
-                    self.native_pending
-                        .insert(event_id.as_str().unwrap_or("").into(), record);
-                }
-                let status = if result.get("error").is_some() {
-                    format!(
-                        "failed: {}",
-                        result["error"]["message"]
-                            .as_str()
-                            .unwrap_or("delivery failed")
-                    )
-                } else if queued.is_some() {
-                    "queued in Codex".into()
-                } else {
-                    "submitted".into()
-                };
-                let _ = graph.dispatch(
-                    id,
-                    "graph.ack",
-                    &json!({"event_id":event_id,"status":status}),
-                );
+                native_delivery::finish_submit(&mut self.native_pending, &mut self.graphs, context, &result);
             }
         }
         self.completions.advance(&mut self.graphs);
@@ -626,22 +565,7 @@ impl Server {
                 self.completions.launched(&key);
             }
         }
-        self.native_pending.retain(|id, record| {
-            self.graphs.get(record["workspace"].as_str().unwrap_or(""))
-                .is_none_or(|g| !g.allowed(&record["event"]) || g.native_pending(id))
-        });
-        let revoked: Vec<_> = self
-            .native_pending
-            .iter()
-            .filter(|(_, record)| {
-                !self
-                    .graphs
-                    .get(record["workspace"].as_str().unwrap_or(""))
-                    .is_some_and(|g| g.allowed(&record["event"]))
-            })
-            .map(|(id, r)| (id.clone(), r.clone()))
-            .collect();
-        for (id, record) in revoked {
+        for (id, record) in native_delivery::cancellations(&mut self.native_pending, &self.graphs) {
             if self.workers.start(&self.cli,format!("cancel:{id}"),json!({"op":"codex_cancel","target":record["target"],"submission_id":record["submission_id"]}),record.clone()) {self.native_pending.remove(&id);}
         }
         let groups: HashMap<_, _> = self.sessions.values_mut().filter(|s| !s.exited)
@@ -686,6 +610,7 @@ impl Server {
             }
             let mut targets: HashMap<String, Vec<Value>> = HashMap::new();
             for record in self.native_pending.values() {
+                if !self.graphs.get(record["workspace"].as_str().unwrap_or("")).is_some_and(|g| native_delivery::allowed(g, record)) { continue; }
                 targets.entry(record["event"]["target"].as_str().unwrap_or("").into()).or_default().push(record.clone());
             }
             for (target, records) in targets {
@@ -719,7 +644,7 @@ impl Server {
                     .unwrap_or(0);
                 if self.sessions.get(&id).is_none_or(|s| s.typing_guard.blocked()) { continue; }
                 let text = graph.delivery_prompt(event);
-                self.workers.start(&self.cli,format!("deliver:{id}"),json!({"op":if provider=="codex"{"codex_queue"}else{"claude_send"},"target":node,"text":text,"event_id":event["event_id"]}),json!({"id":id,"workspace":workspace,"target":node,"event":event,"text":text}));
+                self.workers.start(&self.cli,format!("deliver:{id}"),json!({"op":if provider=="codex"{"codex_queue"}else{"claude_send"},"target":node,"text":text,"event_id":event["event_id"]}),json!({"id":id,"workspace":workspace,"target":node,"inbox_generation":graph.inbox_generation(key),"event":event,"text":text}));
             }
         }
         self.graphs.iter().any(|(key, graph)| before.get(key) != Some(&graph.notification_revision()))

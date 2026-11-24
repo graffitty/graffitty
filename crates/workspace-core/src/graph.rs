@@ -253,6 +253,9 @@ impl Graph {
             (id, json!({"run_id":id,"count":count,"limit":self.run_limit(id),"available":true}))).collect();
         json!({"limits":{"pending_per_node":self.settings.pending_per_node,"run_messages":self.default_run_limit},"runs":runs})
     }
+    pub fn inbox_generation(&self, key: &str) -> u64 {
+        self.inbox_generations.get(key).copied().unwrap_or_default()
+    }
     pub fn native_pending(&self, id: &str) -> bool { self.journal.native_pending(id) }
     pub fn record_delivery(&mut self, event: &Value, status: &str, pending: bool) {
         self.journal.record(event, status, pending);
@@ -296,7 +299,7 @@ impl Graph {
     fn outcome_route(&self, edge: &Value) -> OutcomeRoute {
         OutcomeRoute {
             wire_revision: edge["revision"].as_u64().unwrap(),
-            inbox_generation: self.inbox_generations.get(string(edge, "to")).copied().unwrap_or(0),
+            inbox_generation: self.inbox_generation(string(edge, "to")),
         }
     }
 
@@ -606,6 +609,16 @@ impl Graph {
     /// session boundary lose authority and queued cross-session delivery stops.
     pub fn transfer_nodes_to(&mut self, ids: &HashSet<u64>, target: &mut Graph) {
         let keys: HashSet<_> = ids.iter().map(|id| format!("t{id}")).collect();
+        let queued = keys.iter().filter_map(|key| self.queues.get(key)).flatten()
+            .map(|event| string(event, "event_id").to_owned()).collect();
+        let moved = self.journal.transfer_pending(&keys, &queued, &mut target.journal);
+        self.receipts.retain_mut(|receipt| {
+            if !moved.contains(string(receipt, "event_id")) { return true; }
+            target.receipts.push(receipt.take());
+            false
+        });
+        let excess = target.receipts.len().saturating_sub(target.settings.receipts);
+        target.receipts.drain(..excess);
         let internal: Vec<_> = self.edges.iter().filter(|(_, e)|
             keys.contains(string(e, "from")) && keys.contains(string(e, "to")))
             .map(|(id, edge)| (id.clone(), edge.clone())).collect();
