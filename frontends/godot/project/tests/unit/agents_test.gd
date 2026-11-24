@@ -541,6 +541,19 @@ func test_agents_in_other_sessions_and_servers_are_listed() -> void:
 	controller.refresh()
 	expect(controller.rows.any(func(row): return row.key == "t3" and row.status == "idle" and row.section == "Working"),
 		"A background session catalog places an idle leader with a busy child in Working")
+	var worker: Dictionary = peer.available_sessions[0].agents[1]
+	var program: Dictionary = worker.program
+	var topology_node: Dictionary = peer.available_sessions[0].agent_tree.nodes[1]
+	worker.program = null
+	worker.attention = {"event":"osc-read","kind":"completed","seen":false}
+	peer.available_sessions[0].agent_tree.nodes[1] = {"key":"t4","kind":"terminal"}
+	controller.refresh()
+	var retained: Dictionary = controller.trees[by_key["t3"].id][0]
+	expect(retained.kind == "terminal" and not retained.has("row_id") and not controller.rows.any(func(row): return row.key == "t4"),
+		"A shell retaining an OSC receipt stays a linked terminal after its program clears")
+	worker.program = program
+	worker.erase("attention")
+	peer.available_sessions[0].agent_tree.nodes[1] = topology_node
 	peer.available_sessions[0].agents[0].status = "unknown"
 	controller.refresh()
 	expect(controller.rows.any(func(row): return row.key == "t3") and controller.trees[by_key["t3"].id][0].row_id == by_key["t4"].id, "A background leader with unknown status keeps its active child connected")
