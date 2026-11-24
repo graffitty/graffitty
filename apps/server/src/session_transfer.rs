@@ -50,7 +50,7 @@ pub fn apply(server: &mut Server, source: &str, request: &Value) -> Result<Value
         crate::graph::Graph::with_activity_clock(server.settings.nodes.clone(), server.activity_clock.clone()));
     from_graph.transfer_nodes_to(&terminals, destination);
     server.completions.transfer(source, &target, &terminals, destination);
-    for record in server.native_pending.values_mut() { crate::native_delivery::move_record(record, source, &target, &terminals); }
+    for submission in server.native_pending.values_mut() { crate::native_delivery::move_record(&mut submission.record, source, &target, &terminals); }
     server.workers.transfer_deliveries(source, &target, &terminals);
     let empty = !server.sessions.values().any(|s| s.workspace == source)
         && !server.chromiums.values().any(|b| b.workspace == source);

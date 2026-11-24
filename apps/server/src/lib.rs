@@ -218,7 +218,7 @@ struct Server {
     app_scan_at: Instant,
     app_groups: HashMap<u64, Option<i32>>,
     foreground_apps: HashMap<u64, Value>,
-    native_pending: HashMap<String, Value>,
+    native_pending: HashMap<String, native_delivery::Submission>,
     completions: agent_completion::Completions,
     agent_contexts: HashMap<String, mpsc::SyncSender<Value>>,
     pane_claims: pane_claim::Claims,
@@ -554,7 +554,7 @@ impl Server {
             } else if key.starts_with("native:") {
                 native_delivery::finish_poll(&mut self.native_pending, &mut self.graphs, &context, &result);
             } else if key.starts_with("cancel:") {
-                native_delivery::finish_cancel(&mut self.graphs, &context, &result);
+                native_delivery::finish_cancel(&mut self.native_pending, &mut self.graphs, &context, &result);
             } else if key.starts_with("deliver:") {
                 native_delivery::finish_submit(&mut self.native_pending, &mut self.graphs, context, &result);
             }
@@ -566,7 +566,7 @@ impl Server {
             }
         }
         for (id, record) in native_delivery::cancellations(&mut self.native_pending, &self.graphs) {
-            if self.workers.start(&self.cli,format!("cancel:{id}"),json!({"op":"codex_cancel","target":record["target"],"submission_id":record["submission_id"]}),record.clone()) {self.native_pending.remove(&id);}
+            if self.workers.start(&self.cli,format!("cancel:{id}"),json!({"op":"codex_cancel","target":record["target"],"submission_id":record["submission_id"]}),record.clone()) { self.native_pending.get_mut(&id).unwrap().cancelling = true; }
         }
         let groups: HashMap<_, _> = self.sessions.values_mut().filter(|s| !s.exited)
             .map(|s| {
@@ -609,7 +609,8 @@ impl Server {
                 self.workers.start(&self.cli, "scan".into(), json!({"op":"scan","roots":roots}), Value::Object(registrations));
             }
             let mut targets: HashMap<String, Vec<Value>> = HashMap::new();
-            for record in self.native_pending.values() {
+            for submission in self.native_pending.values() {
+                let record = &submission.record;
                 if !self.graphs.get(record["workspace"].as_str().unwrap_or("")).is_some_and(|g| native_delivery::allowed(g, record)) { continue; }
                 targets.entry(record["event"]["target"].as_str().unwrap_or("").into()).or_default().push(record.clone());
             }
@@ -888,8 +889,7 @@ impl Server {
             return Ok(json!({"id":target,"title":title}));
         }
         if method == "agent.event" && params["event"] == "UserPromptSubmit" {
-            self.native_pending
-                .retain(|_, record| record["id"] != id || record["text"] != params["prompt"]);
+            self.native_pending.retain(|_, submission| !native_delivery::prompt_started(submission, id, params));
         }
         if method == "session.capture" {
             if params["layout"] == true {

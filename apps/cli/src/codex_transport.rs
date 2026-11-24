@@ -9,7 +9,15 @@ pub fn queue(target: &Value, text: &str, event_id: &str) -> Result<Value> {
 }
 
 pub fn cancel_queue(target: &Value, submission_id: &str) -> Result<Value> {
-    queue_request(target, "thread/queue/delete", json!({"queuedSubmissionId":submission_id}))
+    let deletion = queue_request(target, "thread/queue/delete", json!({"queuedSubmissionId":submission_id}));
+    if let Ok(reply) = &deletion && reply["deleted"].is_boolean() { return deletion; }
+    // A lost reply can follow an effective delete. Only a complete queue
+    // listing for this same verified target can establish absence.
+    if let Ok(snapshot) = queued_ids(target) && let Some(ids) = snapshot["queued_ids"].as_array()
+        && ids.iter().all(|id| id.as_str() != Some(submission_id)) {
+        return Ok(json!({"deleted":false}));
+    }
+    deletion.and_then(|_| Err("Codex did not confirm queue deletion".into()))
 }
 
 /// Return a complete queue snapshot; errors must never be treated as an empty queue.
