@@ -11,7 +11,8 @@ class Connection extends Node:
 	var workspace := "$2"
 	var catalog_revision := 1
 	var available_sessions := [{"id": "$1", "name": "other"}, {"id": "$2", "automatic_name": "graffitty"}]
-	func wire_id(_id: int) -> int: return 7
+	func wire_id(id: int) -> int: return 7 if id in [1, 999] else id
+	func local_id(id: int) -> int: return 1 if id == 7 else id
 
 class Host extends Node:
 	var workspace_layout := preload("res://scenes/WorkspaceLayout.gd").new()
@@ -44,15 +45,16 @@ class Application extends Node:
 
 func test_recorded_view_clears_tab_and_agent_completion_together() -> void:
 	var app := Application.new()
-	var host := Host.new()
+	var host := SessionHost.new()
 	var connection := Connection.new()
+	host.session_backend.connection = connection
 	app.hosts = [host]
 	host.workspace_layout.tabs = [
 		{"id":1, "focused":"t1", "tree":{"type":"windows", "windows":[{"pane":"t1", "shown":true}]}},
 		{"id":2, "focused":"t2", "tree":{"type":"windows", "windows":[{"pane":"t2", "shown":true}]}},
 	]
 	host.workspace_layout.active = 1
-	app.agent_api.graph.nodes = {"t1": {"provider":"pi", "status":"busy"}}
+	app.agent_api.graph.nodes = {"t1": {"provider":"pi", "status":"busy", "activity_revision":2}}
 	app.agent_api.graph.remote_owners = {"t1": connection}
 	var controller := preload("res://scenes/Agents.gd").new()
 	controller.application = app
@@ -64,11 +66,11 @@ func test_recorded_view_clears_tab_and_agent_completion_together() -> void:
 	app.agent_api.graph.nodes["t1"].status = "idle"
 	app.agent_api.graph.nodes["t1"].attention = {"event":"finish-1", "kind":"completed", "seen":false}
 	refresh.call()
-	expect(app.agent_attention.marker(["t1"]).state == "completed" and controller.rows[0].status == "done",
+	expect(app.agent_attention.marker(host, ["t1"]).state == "completed" and controller.rows[0].status == "done",
 		"Without native focus, both surfaces mark the completion unseen")
 	app.agent_attention.in_view = func(view): return view == host and view.presentation_active
 	refresh.call()
-	expect(app.agent_attention.marker(["t1"]).state == "" and controller.rows[0].status == "idle",
+	expect(app.agent_attention.marker(host, ["t1"]).state == "" and controller.rows[0].status == "idle",
 		"The recorded view clears both markers without native window focus")
 	app.agent_api.graph.nodes["t1"].status = "busy"
 	app.agent_api.graph.nodes["t1"].attention = null
@@ -76,7 +78,7 @@ func test_recorded_view_clears_tab_and_agent_completion_together() -> void:
 	app.agent_api.graph.nodes["t1"].status = "idle"
 	app.agent_api.graph.nodes["t1"].attention = {"event":"finish-2", "kind":"completed", "seen":false}
 	refresh.call()
-	expect(app.agent_attention.marker(["t1"]).state == "" and controller.rows[0].status == "idle",
+	expect(app.agent_attention.marker(host, ["t1"]).state == "" and controller.rows[0].status == "idle",
 		"A completion displayed in the recording never becomes unread")
 	host.workspace_layout.active = 2
 	app.agent_api.graph.nodes["t1"].status = "busy"
@@ -85,11 +87,11 @@ func test_recorded_view_clears_tab_and_agent_completion_together() -> void:
 	app.agent_api.graph.nodes["t1"].status = "idle"
 	app.agent_api.graph.nodes["t1"].attention = {"event":"finish-3", "kind":"completed", "seen":false}
 	refresh.call()
-	expect(app.agent_attention.marker(["t1"]).state == "completed" and controller.rows[0].status == "done",
+	expect(app.agent_attention.marker(host, ["t1"]).state == "completed" and controller.rows[0].status == "done",
 		"A background tab still marks an unseen completion")
 	host.workspace_layout.active = 1
 	refresh.call()
-	expect(app.agent_attention.marker(["t1"]).state == "" and controller.rows[0].status == "idle",
+	expect(app.agent_attention.marker(host, ["t1"]).state == "" and controller.rows[0].status == "idle",
 		"Returning to the recorded tab clears both surfaces")
 	controller.free()
 	connection.free()
@@ -284,7 +286,7 @@ func test_catalog_completion_updates_panel_after_visible_receipt() -> void:
 	peer.sessions_changed.emit()
 	expect(app.agent_attention.calls.size() == 1, "The visible pane acknowledges the catalog before focus can move")
 	expect(statuses == ["idle"], "The panel goes directly from working to idle on catalog delivery")
-	expect(app.agent_attention.marker(["t1"]).count == 0, "The remapped visible pane keeps its tab clear")
+	expect(app.agent_attention.marker(host, ["t1"]).count == 0, "The remapped visible pane keeps its tab clear")
 	app.agent_attention.in_view = func(_h): return false
 	app.agent_api.graph.nodes.t1 = peer.available_sessions[1].agents[0].duplicate()
 	app.agent_attention.refresh()
@@ -319,7 +321,7 @@ func test_duplicate_catalogs_share_the_latest_background_activity() -> void:
 	done.title = "Updated title"
 	fresh.available_sessions[0].agents = [done]
 	fresh.sessions_changed.emit()
-	expect(app.agent_attention.marker(["t1"]).count == 1 and panel.rows[0].status == "done",
+	expect(app.agent_attention.marker_for(fresh, "$1", 7).count == 1 and panel.rows[0].status == "done",
 		"The catalog completion updates both the remapped pane marker and the representative peer's row")
 	expect(panel.rows[0].title == "Updated title" and panel._away[panel.rows[0].id].peer == representative,
 		"The latest background descriptor supplies its title and the representative can navigate")
@@ -329,7 +331,7 @@ func test_duplicate_catalogs_share_the_latest_background_activity() -> void:
 	representative.catalog_revision = fresh.catalog_revision + 1
 	representative.available_sessions[0].agents = [replacement]
 	representative.sessions_changed.emit()
-	expect(app.agent_attention.marker(["t1"]).count == 0 and panel.rows[0].status == "working" and panel.rows[0].provider == "claude",
+	expect(app.agent_attention.marker_for(fresh, "$1", 7).count == 0 and panel.rows[0].status == "working" and panel.rows[0].provider == "claude",
 		"A replacement at the same pane address supersedes the former agent even when the removal was missed")
 	expect(app.agent_attention.activity_node("t1", done, fresh, "$other") == done, "Another session cannot override this row")
 	panel.free()
@@ -373,10 +375,10 @@ func test_split_catalog_delivery_adds_moves_and_removes_background_agents() -> v
 		deliver.call(delayed, 2, origin)
 		expect(panel.rows.size() == 1 and panel.rows[0].status == "done" and panel._away[panel.rows[0].id].session == "$2",
 			"A delayed pre-transfer catalog preserves the new destination and completion")
-		expect(app.agent_attention.marker(["t7"]).count == 1, "The moved panel row agrees with the marker")
+		expect(app.agent_attention.marker_for(fresh, "$2", 7).count == 1, "The moved panel row agrees with the marker")
 		deliver.call(fresh, 4, [])
 		deliver.call(delayed, 3, moved)
-		expect(panel.rows.is_empty() and app.agent_attention.marker(["t7"]).count == 0, "Late delivery cannot resurrect a removed pane")
+		expect(panel.rows.is_empty() and app.agent_attention.marker_for(fresh, "$2", 7).count == 0, "Late delivery cannot resurrect a removed pane")
 		fresh.connected = false
 		app.agent_attention.refresh()
 		expect(panel.rows.is_empty(), "Losing the fresher socket cannot roll back the inventory")
@@ -471,7 +473,8 @@ func test_transferred_agent_in_retained_layout_uses_connected_destination() -> v
 		app.agent_attention.refresh()
 		expect(panel.rows.size() == 1 and panel.rows[0].status == "done" and not panel.rows[0].focused,
 			"The cached former layout cannot own or focus the moved result")
-		expect(app.agent_attention.marker(["t2"]).count == 1, "The moved completion stays unread")
+		expect(app.agent_attention.marker(old_host, ["t2"]).count == 0 and app.agent_attention.marker_for(live, "$2", 2).count == 1,
+			"The moved completion stays unread only in the destination session")
 		var switches := []
 		live.switch_to = func(kind, session):
 			switches.append([kind, session])
@@ -490,7 +493,7 @@ func test_transferred_agent_in_retained_layout_uses_connected_destination() -> v
 		old.topology.graph = {}
 		graph.import_remote(old, {})
 		live._receive({"type":"session_list","revision":12,"sessions":[{"id":"$2","agents":[]}],"stops_when_empty":false})
-		expect(panel.rows.is_empty() and app.agent_attention.marker(["t2"]).count == 0, "Confirmed closure clears the previously unread completion")
+		expect(panel.rows.is_empty() and app.agent_attention.marker(live_host, ["t2"]).count == 0, "Confirmed closure clears the previously unread completion")
 		app.hosts = []
 		app.agent_attention.refresh()
 		expect(app.agent_attention._catalogs.is_empty(), "Releasing the final view releases the epoch inventory")
@@ -727,6 +730,49 @@ func test_catalog_and_live_topology_share_scoped_children_and_local_navigation()
 	peer.available_sessions[0].agent_tree = {"graph_revision":5,"nodes":[],"edges":[]}
 	app.agent_attention.refresh()
 	expect(panel.rows.size() == 2 and panel.trees[leader_id].size() == 1, "A newer empty catalog suppresses the stale live wire")
+	panel.free()
+	app.free()
+	host.free()
+	peer.free()
+
+
+func test_first_graph_wire_nests_catalog_worker_before_shared_graph_arrives() -> void:
+	var app := Application.new()
+	var panel := preload("res://scenes/Agents.gd").new()
+	var host := AttachedTreeHost.new()
+	var peer := RevisionTreePeer.new()
+	host.session_backend.connection = peer
+	host.terminal(1)
+	host.terminal(8)
+	host.workspace_layout.tabs = [{"id":1,"tree":{"windows":[{"pane":"t1"},{"pane":"t8"}]}}]
+	host.workspace_layout.active = 1
+	host.pane_focus = "t8"
+	app.hosts = [host]
+	app.agents = panel
+	panel.application = app
+	panel._sounds = {"enabled":false}
+	app.agent_attention.in_view = func(_host): return false
+	var leader := {"node":"t1","provider":"pi","status":"idle"}
+	var worker := {"node":"t8","provider":"codex","status":"busy"}
+	app.agent_api.graph.nodes.t1 = leader
+	app.agent_api.graph.remote_owners.t1 = peer
+	peer.available_sessions = [{"id":"$2","agents":[{"pane":7,"provider":"pi","status":"idle"},{"pane":8,"provider":"codex","status":"busy"}],
+		"agent_tree":{"graph_revision":2,"nodes":[],"edges":[]}}]
+	app.agent_attention.refresh()
+	expect(panel.rows.size() == 2, "Unlinked catalog agents start as separate rows")
+	peer.topology.graph = {"revision":3,"nodes":[leader,worker],"edges":[{"from":"t1","to":"t8"}]}
+	var leader_id := JSON.stringify([peer.url,peer.epoch,7])
+	var worker_id := JSON.stringify([peer.url,peer.epoch,8])
+	for shared_graph_ready in [false,true]:
+		if shared_graph_ready:
+			app.agent_api.graph.nodes.t8 = worker
+			app.agent_api.graph.remote_owners.t8 = peer
+			app.agent_api.graph.edges = {"first":{"from":"t1","to":"t8"}}
+		app.agent_attention.refresh()
+		expect(panel.rows.size() == 1 and panel.rows[0].id == leader_id and panel.rows[0].section == "Working", "The first wire promotes the idle leader as soon as it arrives")
+		var children: Array = panel.trees.get(leader_id,[])
+		expect(children.size() == 1 and children[0].kind == "agent" and children[0].row_id == worker_id and children[0].provider == "codex", "The worker has one nested agent row before and after the shared graph update")
+		expect(panel.selected_id(host) == worker_id, "Selection follows the same worker through both deliveries")
 	panel.free()
 	app.free()
 	host.free()

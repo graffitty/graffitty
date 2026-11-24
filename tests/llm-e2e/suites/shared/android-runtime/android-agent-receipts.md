@@ -9,7 +9,8 @@ Graffitty app or connect to user sessions.
 1. Register a live fixture Pi process through `gft rpc agent.event`, then focus a
    different terminal on Android. Open the production Agents panel.
 2. Attach an independent desktop Godot process. Complete the agent's turn and
-   verify both clients show the same unread event, completed row and tab marker.
+   verify both clients show the same unread event and completed row. Check the
+   tab marker in the host displaying the agent’s server session on each client.
 3. Tap the rendered Android agent row using native ADB input. Verify the pane
    opens, the server confirms that exact event as seen, and both clients clear
    their completed row and tab marker.

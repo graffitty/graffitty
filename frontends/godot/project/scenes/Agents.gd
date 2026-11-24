@@ -145,7 +145,7 @@ func refresh_body() -> void:
 					"provider": node.get("provider", ""), "status": node.get("status", ""),
 					"program": node.get("program_status"),
 					"status_history": node.get("status_history", []),
-					"attention": application.agent_attention.project_attention(node.get("attention")),
+					"attention": application.agent_attention.project_attention(node.get("attention"), connection),
 					"looking": shown, "focused": focused}
 		host_trees.append([host, ids_by_key, stale_keys])
 	var topologies := _add_away(input, remotes, sessions, catalog_views, groups)
@@ -215,7 +215,7 @@ func _add_away(input: Dictionary, remotes: Dictionary, sessions: Dictionary, cat
 				input[id] = {"id": id, "key": view.get("key", PaneAddress.key(pane)), "title": title,
 					"provider": str(activity.get("provider", "")), "status": str(activity.get("status", "")),
 					"program": activity.get("program_status", activity.get("program")), "status_history": activity.get("status_history", []),
-					"attention": application.agent_attention.project_attention(activity.get("attention")),
+					"attention": application.agent_attention.project_attention(activity.get("attention"), peer),
 					"looking": view.get("looking", false), "focused": view.get("focused", false)}
 
 			var topology: Dictionary = value.get("agent_tree", {})
@@ -227,6 +227,13 @@ func _add_away(input: Dictionary, remotes: Dictionary, sessions: Dictionary, cat
 					input.has(JSON.stringify([peer.url, peer.epoch, PaneAddress.id(str(node.get("key", "")))]))))
 			var scoped_nodes := {}
 			for node in nodes: scoped_nodes[node.key] = node
+			# The catalog lists agents even before their first graph wire exists.
+			for agent in value.get("agents", []):
+				var pane := int(agent.pane)
+				var wire := PaneAddress.key(pane)
+				var row: Dictionary = input.get(JSON.stringify([peer.url,peer.epoch,pane]), {})
+				var entry: Dictionary = scoped_nodes.get(wire, {"key":wire,"title":row.get("title","")}).duplicate()
+				if _classify_agent(entry,row): scoped_nodes[wire] = entry
 			topologies[[peer.url, peer.epoch, value.id]] = {"nodes":scoped_nodes, "edges":topology.edges.duplicate(),
 				"graph_revision":int(topology.graph_revision), "routes":{}, "host":group.host, "peer":peer, "session":str(value.id)}
 	return topologies
@@ -260,6 +267,19 @@ func _merge_graph_snapshot(topology: Dictionary, peer: Node) -> void:
 		var target_wire: int = peer.wire_id(target)
 		if source_wire > 0 and target_wire > 0:
 			topology.edges.append({"from":PaneAddress.key(source_wire),"to":PaneAddress.key(target_wire),"kind":"graph"})
+
+func _classify_agent(entry: Dictionary, row: Dictionary) -> bool:
+	var provider: String = row.get("provider", "")
+	var status: String = row.get("status", "")
+	var program: Variant = row.get("program")
+	if provider not in ["pi", "claude", "codex", "opencode"]:
+		if not program is Dictionary or program.get("app", "") not in ["pi", "claude", "codex", "opencode"]: return false
+		provider = program.app
+		status = {"working":"busy","blocked":"waiting","error":"waiting"}.get(program.get("state", ""), "idle")
+	entry.kind = "agent"
+	entry.provider = provider
+	entry.status = {"busy":"working","waiting":"blocked","error":"blocked","offline":"offline"}.get(status, "idle")
+	return true
 
 ## One graph per host: nodes for every pane in its tabs and the wires among
 ## them. The Rust model picks each group's leading agent and orders children.
@@ -308,29 +328,14 @@ func _build_trees(host_trees: Array, topologies: Dictionary, input: Dictionary) 
 					var owner_id: int = host.chromiums[id].owner_id if host.chromiums.has(id) else id
 					if owner_id != id: edges.append({"from": PaneAddress.key(owner_id), "to": key, "kind": "chromium"})
 				elif host.is_terminal_pane(key) and host.sessions.has(id):
-					var node: Dictionary = graph.nodes.get(key, {})
-					var owner: Node = graph.remote_owners.get(key)
-					if is_instance_valid(peer):
-						node = application.agent_attention.graph_node_for(peer, id, owner, node)
-					if not node.is_empty() and is_instance_valid(owner):
-						node = application.agent_attention.activity_node(key, node, owner, owner.workspace)
+					var agent_id: String = ids_by_key.get(key, "")
+					if wire_keys.has(key): agent_id = JSON.stringify([peer.url,peer.epoch,peer.wire_id(id)])
 					var term: Node = host.sessions[id].term
-					var provider := str(node.get("provider", ""))
-					var status := str(node.get("status", ""))
-					var program: Dictionary = node.get("program_status", {}) if node.get("program_status") is Dictionary else {}
-					if provider not in ["pi", "claude", "codex", "opencode"] and str(program.get("app", "")) in ["pi", "claude", "codex", "opencode"]:
-						provider = str(program.app)
-						status = {"working": "busy", "blocked": "waiting", "error": "waiting"}.get(str(program.get("state", "")), "idle")
 					var filetree_owner: int = term.get_meta("filetree_owner", -1)
 					var spawned_by: int = term.get_meta("spawned_by", -1)
 					if filetree_owner >= 0:
 						continue
-					elif provider in ["pi", "claude", "codex", "opencode"]:
-						if not ids_by_key.has(key): continue
-						entry.kind = "agent"
-						entry.provider = provider
-						entry.status = {"busy": "working", "waiting": "blocked", "error": "blocked", "offline": "offline"}.get(status, "idle")
-					else:
+					if not _classify_agent(entry, input.get(agent_id, {})):
 						entry.app = str(host.sessions[id].model.foreground_app.get("id", ""))
 					if spawned_by >= 0 and spawned_by != id: edges.append({"from": PaneAddress.key(spawned_by), "to": key, "kind": "spawned"})
 				else: continue

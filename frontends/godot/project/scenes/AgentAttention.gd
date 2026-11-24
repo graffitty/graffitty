@@ -15,11 +15,12 @@ const WorkspaceLayout := preload("res://scenes/WorkspaceLayout.gd")
 const REPAIR_INTERVAL := 1.0
 var application  # TerminalApplication: hosts and agent_api
 var _core: RefCounted = ClassDB.instantiate("AgentAttentionCore") if ClassDB.class_exists("AgentAttentionCore") else null
+var _remote_cores := {}
 var _queued := false
 var _acknowledging: Dictionary = {}
 var _receipt_owners: Dictionary = {}
 var _activity: Dictionary = {}
-var _activity_scopes: Dictionary = {}
+var _receipt_panes: Dictionary = {}
 var _catalogs := {}
 ## Shared by tab markers and the agent list. Recordings and headless fixtures
 ## can supply their viewed host without taking native window focus.
@@ -74,41 +75,58 @@ func panes(host: Node) -> Dictionary:
 	return {"live": live, "visible": visible}
 
 
+static func identity(peer: Node, session: String, wire: int) -> String:
+	return JSON.stringify([peer.url, peer.epoch, session, wire])
+
+
+static func _host_peer(host: Node, key: String) -> Node:
+	var backend: Variant = host.get("session_backend")
+	if backend == null or not backend.is_remote: return null
+	var connection: Node = backend.connection
+	if not is_instance_valid(connection): return null
+	var pane := PaneAddress.id(key)
+	return connection.owners.get(pane) if "owners" in connection else connection
+
+
+static func _host_key(host: Node, key: String) -> String:
+	var peer := _host_peer(host, key)
+	if is_instance_valid(peer): return identity(peer, peer.workspace, peer.wire_id(PaneAddress.id(key)))
+	var backend: Variant = host.get("session_backend")
+	return "" if backend != null and backend.is_remote else key
+
+
 func refresh() -> void:
 	_queued = false
 	if _core == null or application == null or application.agent_api == null: return
-	var live := PackedStringArray()
-	var visible := PackedStringArray()
+	var live := {}
+	var visible := {}
 	var graph: Object = application.agent_api.graph
-	var nodes: Dictionary = graph.nodes.duplicate()
+	var nodes: Dictionary = {}
+	for key in graph.nodes:
+		if not graph.remote_owners.has(key): nodes[key] = graph.nodes[key]
 	var previous_owners := _receipt_owners
-	_receipt_owners = graph.remote_owners.duplicate()
-	# A shared graph row can still belong to the previous attachment. Remote
-	# snapshots below carry the peer and epoch that actually supplied the row.
-	for key in graph.remote_owners:
-		var owner: Node = graph.remote_owners[key]
-		if is_instance_valid(owner) and "topology" in owner:
-			nodes.erase(key)
-			_receipt_owners.erase(key)
+	_receipt_owners = {}
+	_receipt_panes = {}
 	var visible_views := {}
 	var peers := {}
-	var scopes := {}
 	for host in application.hosts:
 		if not is_instance_valid(host) or host.is_queued_for_deletion(): continue
 		var found := panes(host)
-		live.append_array(PackedStringArray(found.live))
 		var backend: Variant = host.get("session_backend")
 		if backend == null or not backend.is_remote:
-			visible.append_array(PackedStringArray(found.visible))
+			for key in found.live: live[key] = []
+			for key in found.visible: visible[key] = true
 			continue
 		var connection: Node = backend.connection
 		if not is_instance_valid(connection): continue
 		for peer in connection.connections if "connections" in connection else [connection]:
 			peers[peer] = true
-		for key in found.visible:
+		for key in found.live:
 			var owner: Node = connection.owners.get(PaneAddress.id(key)) if "owners" in connection else connection
 			if is_instance_valid(owner):
-				visible_views.get_or_add(owner, []).append(key)
+				var scoped := identity(owner, owner.workspace, owner.wire_id(PaneAddress.id(key)))
+				live[scoped] = _domain(owner)
+				if key in found.visible: visible_views.get_or_add(owner, []).append(key)
 	# Parked connections can still confirm or retry a receipt after a session switch.
 	for group in preload("res://scenes/session/SessionsList.gd").collect(application.hosts, []):
 		if is_instance_valid(group.get("peer")): peers[group.peer] = true
@@ -141,7 +159,8 @@ func refresh() -> void:
 		var catalog: Dictionary = _catalogs.get([peer.url, peer.epoch], {})
 		for key in view_nodes:
 			if outside_catalog(catalog, peer.wire_id(PaneAddress.id(key)), snapshot_session, view_nodes[key]): continue
-			_merge_activity(key, view_nodes[key], peer, snapshot_session, nodes, scopes, visible_views)
+			_merge_activity(peer, snapshot_session, peer.wire_id(PaneAddress.id(key)), view_nodes[key], nodes)
+		if snapshot_session != peer.workspace: view_nodes.clear()
 		if peer.connected:
 			if peer.session_view_ready(peer.workspace):
 				for session in peer.available_sessions:
@@ -153,39 +172,62 @@ func refresh() -> void:
 				for summary in session.get("agents", []):
 					var pane := int(summary.get("pane", -1))
 					if pane < 0: continue
-					var key := PaneAddress.key(peer.local_id(pane))
-					if not live.has(key): live.append(key)
+					var scoped := identity(peer, session.id, pane)
+					live[scoped] = _domain(peer)
 					var row: Dictionary = summary.duplicate()
 					row.program_status = summary.get("program")
-					_merge_activity(key, row, peer, session.id, nodes, scopes, visible_views)
+					_merge_activity(peer, session.id, pane, row, nodes)
 		# Only this window's own graph or ready catalog describes what it showed.
 		# A disconnected screen can authorize its cached UUID via another route.
 		if peer.connected and not peer.session_view_ready(peer.workspace): continue
 		for key in visible_views.get(peer, []):
 			var row: Dictionary = view_nodes.get(key, {})
 			var event: Variant = row.get("attention")
-			if event is Dictionary and (snapshot_session == peer.workspace or peer.connected):
-				displayed_events[[key, peer.url, peer.epoch, peer.workspace, peer.wire_id(PaneAddress.id(key)), event.event]] = true
-	# A retained layout can outlive both the closed pane and its graph row.
-	# Explicitly retire its previous event when the complete inventory omits it.
-	for key in _activity_scopes:
-		if nodes.has(key): continue
-		var scope: Array = _activity_scopes[key]
-		var peer: Node = previous_owners.get(key)
-		if not is_instance_valid(peer) or [peer.url, peer.epoch] != scope.slice(0, 2): continue
-		var catalog: Dictionary = _catalogs.get([peer.url, peer.epoch], {})
-		if outside_catalog(catalog, scope[3], scope[2], _activity[key]): nodes[key] = {}
-	for key in scopes:
-		if scopes[key] == _activity_scopes.get(key) and _newer(_activity[key], nodes[key]):
-			nodes[key] = _activity[key]
-		var event: Variant = nodes[key].get("attention")
-		if event is Dictionary and displayed_events.has([key] + scopes[key] + [event.event]):
-			visible.append(key)
+			if event is Dictionary:
+				var scoped := identity(peer, peer.workspace, peer.wire_id(PaneAddress.id(key)))
+				displayed_events[[scoped, event.event]] = [peer, PaneAddress.id(key)]
+	# A retained layout can outlive the inventory entry for a closed or moved pane.
+	for scoped in previous_owners:
+		if nodes.has(scoped): continue
+		var scope: Array = JSON.parse_string(scoped)
+		var catalog: Dictionary = _catalogs.get(scope.slice(0, 2), {})
+		if outside_catalog(catalog, scope[3], scope[2], _activity.get(scoped, {})): nodes[scoped] = {}
+	for scoped in _receipt_owners:
+		var prior: Dictionary = _activity.get(scoped, {})
+		if _newer(prior, nodes[scoped]): nodes[scoped] = prior
+		var event: Variant = nodes[scoped].get("attention")
+		if event is Dictionary and displayed_events.has([scoped, event.event]):
+			visible[scoped] = true
+			var source: Array = displayed_events[[scoped, event.event]]
+			var viewed: Node = source[0]
+			if viewed.connected:
+				_receipt_owners[scoped] = viewed
+				_receipt_panes[scoped] = source[1]
 	_activity = nodes
-	_activity_scopes = scopes
-	if _core.observe(nodes, visible, live):
-		changed.emit()
-	_send_receipts()
+	# Server event UUIDs survive tab transfers; independent epochs own separate pending receipts.
+	var observations := {}
+	for key in live:
+		var domain: Array = live[key]
+		if not observations.has(domain): observations[domain] = {"nodes":{}, "visible":PackedStringArray(), "live":PackedStringArray()}
+		var batch: Dictionary = observations[domain]
+		batch.live.append(key)
+		if visible.has(key): batch.visible.append(key)
+		if nodes.has(key): batch.nodes[key] = nodes[key]
+	var updated := false
+	for domain in _remote_cores.keys():
+		if not retained_scopes.has(domain):
+			_remote_cores.erase(domain)
+			updated = true
+	for domain in retained_scopes:
+		if not _remote_cores.has(domain): _remote_cores[domain] = ClassDB.instantiate("AgentAttentionCore")
+	var domains: Array = _remote_cores.keys()
+	domains.append([])
+	for domain in domains:
+		var core: RefCounted = _core if domain.is_empty() else _remote_cores[domain]
+		var batch: Dictionary = observations.get(domain, {})
+		if core.observe(batch.get("nodes", {}), batch.get("visible", PackedStringArray()), batch.get("live", PackedStringArray())): updated = true
+		_send_receipts(core, domain)
+	if updated: changed.emit()
 	if "agents" in application and is_instance_valid(application.agents):
 		application.agents.refresh()
 
@@ -225,65 +267,82 @@ static func _newer(candidate: Dictionary, current: Dictionary) -> bool:
 	return current.is_empty() or int(candidate.get("activity_revision", 0)) > int(current.get("activity_revision", 0))
 
 
-func _merge_activity(key: String, row: Dictionary, peer: Node, session: String, nodes: Dictionary, scopes: Dictionary, visible_views: Dictionary) -> void:
-	var current: Dictionary = nodes.get(key, {})
-	var route: Node = _receipt_owners.get(key)
-	var live_route: bool = peer.connected and (not is_instance_valid(route) or not route.connected)
-	# Raw (non-namespaced) views can reuse a key on a replacement server.
-	# Revisions are comparable only within one server epoch.
-	if is_instance_valid(route) and (route.url != peer.url or route.epoch != peer.epoch):
-		if peer.connected != route.connected:
-			if not peer.connected: return
-		elif key not in visible_views.get(peer, []) or key in visible_views.get(route, []):
-			return
-		current = {}
-	if _newer(row, current) or (int(row.get("activity_revision", 0)) == int(current.get("activity_revision", 0)) and live_route):
-		nodes[key] = row
-		_receipt_owners[key] = peer
-		scopes[key] = [peer.url, peer.epoch, session, peer.wire_id(PaneAddress.id(key))]
-	elif peer == route and not scopes.has(key) and int(row.get("activity_revision", 0)) == int(current.get("activity_revision", 0)):
-		scopes[key] = [peer.url, peer.epoch, session, peer.wire_id(PaneAddress.id(key))]
+func _merge_activity(peer: Node, session: String, wire: int, row: Dictionary, nodes: Dictionary) -> void:
+	var scoped := identity(peer, session, wire)
+	var current: Dictionary = nodes.get(scoped, {})
+	var route: Node = _receipt_owners.get(scoped)
+	var now_connected: bool = peer.connected and is_instance_valid(route) and not route.connected
+	var same_revision := int(row.get("activity_revision", 0)) == int(current.get("activity_revision", 0))
+	if _newer(row, current) or (now_connected and same_revision): nodes[scoped] = row
+	if not is_instance_valid(route) or (peer.connected and not route.connected):
+		_receipt_owners[scoped] = peer
+		_receipt_panes[scoped] = peer.local_id(wire)
 
 
 func activity_node(key: String, node: Dictionary, peer: Node, session: String) -> Dictionary:
-	if _activity_scopes.get(key) != [peer.url, peer.epoch, session, peer.wire_id(PaneAddress.id(key))]: return node
-	var current: Dictionary = _activity.get(key, {})
+	var scoped := identity(peer, session, peer.wire_id(PaneAddress.id(key)))
+	var current: Dictionary = _activity.get(scoped, {})
 	return current if not current.is_empty() and _newer(current, node) else node
 
 
-## Both the agent panel and tab markers use the same optimistic read receipt.
-func attention(key: String) -> Variant:
-	return _core.attention(key) if _core != null else null
+static func _domain(peer: Node) -> Array:
+	return [peer.url, peer.epoch] if is_instance_valid(peer) else []
 
 
-func project_attention(value: Variant) -> Variant:
-	return _core.project_attention(value) if _core != null else value
+func _projection(peer: Node) -> RefCounted:
+	return _remote_cores.get(_domain(peer)) if is_instance_valid(peer) else _core
 
 
-func _send_receipts() -> void:
-	for receipt in _core.acknowledgements():
+func attention(host: Node, key: String) -> Variant:
+	var core := _projection(_host_peer(host, key))
+	return core.attention(_host_key(host, key)) if core != null else null
+
+
+func project_attention(value: Variant, peer: Node = null) -> Variant:
+	var core := _projection(peer)
+	return core.project_attention(value) if core != null else value
+
+
+func _send_receipts(core: RefCounted, domain: Array) -> void:
+	for receipt in core.acknowledgements():
 		var event: String = receipt.event
-		if _acknowledging.has(event): continue
+		if _acknowledging.has([domain, event]): continue
 		# Leave capacity for terminal actions on the same connection.
 		if _acknowledging.size() >= 8: break
 		var connection: Node = _receipt_owners.get(receipt.key)
 		if not is_instance_valid(connection) or not connection.connected: continue
-		_acknowledging[event] = true
-		_send_receipt(connection, PaneAddress.id(str(receipt.key)), event)
+		_acknowledging[[domain, event]] = true
+		_send_receipt(connection, int(_receipt_panes[receipt.key]), event)
 
 
 func _send_receipt(connection: Node, pane: int, event: String) -> void:
+	var token := [_domain(connection), event]
 	await connection.acknowledge_agent(pane, event)
 	# Only a server snapshot clears the Rust pending receipt. Retry after errors
 	# or reconnects, including when the user has already looked away.
 	await get_tree().create_timer(REPAIR_INTERVAL).timeout
-	_acknowledging.erase(event)
+	_acknowledging.erase(token)
 
 
 ## `{state: "waiting" | "completed" | "", count}`; waiting wins.
-func marker(keys: Array) -> Dictionary:
-	if _core == null: return {"state": "", "count": 0}
-	return _core.marker(PackedStringArray(keys))
+func marker(host: Node, keys: Array) -> Dictionary:
+	var groups := {}
+	for key in keys:
+		var core := _projection(_host_peer(host, key))
+		if core != null: groups.get_or_add(core, []).append(_host_key(host, key))
+	var waiting := 0
+	var completed := 0
+	for core in groups:
+		var result: Dictionary = core.marker(PackedStringArray(groups[core]))
+		if result.state == "waiting": waiting += int(result.count)
+		if result.state == "completed": completed += int(result.count)
+	if waiting > 0: return {"state":"waiting", "count":waiting}
+	return {"state":"completed" if completed > 0 else "", "count":completed}
+
+
+func marker_for(peer: Node, session: String, wire: int) -> Dictionary:
+	var core := _projection(peer)
+	return core.marker(PackedStringArray([identity(peer, session, wire)])) if core != null else {"state":"", "count":0}
 
 
 static func describe(attention: Dictionary) -> String:

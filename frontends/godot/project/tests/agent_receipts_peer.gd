@@ -84,9 +84,9 @@ func run() -> void:
 			var row_status := ""
 			for row in app.agents.rows:
 				if row.key == key: row_status = row.status
-			var projected: Variant = app.agent_attention.attention(key)
+			var projected: Variant = app.agent_attention.attention(client.host, key)
 			var state := JSON.stringify({"connected": client.connection.connected,
-				"presented": client.host.pane_is_presented(key), "status": row_status, "marker": app.agent_attention.marker([key]).state,
+				"presented": client.host.pane_is_presented(key), "status": row_status, "marker": app.agent_attention.marker(client.host, [key]).state,
 				"attention": node.get("attention"), "projected_event": projected.event if projected is Dictionary else null, "held": client.connection.held, "sent": client.connection.sent,
 				"rejected": client.connection.rejected, "workspace": client.connection.workspace,
 				"control": control, "provider": node.get("provider"),

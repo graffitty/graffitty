@@ -23,7 +23,7 @@ func finish_turn(pane: String) -> bool:
 	event.event = "Stop"
 	await transport.remote_call(initial_id, "agent.event", event)
 	if not await until(func(): return row_status(pane) == "done", "Unviewed completion appears in Android Agents"): return false
-	return expect(host.application.agent_attention.marker([pane]).state == "completed" and not attention(pane).get("seen", true), "Android tab and Agents share the unread completion")
+	return expect(host.application.agent_attention.marker(host, [pane]).state == "completed" and not attention(pane).get("seen", true), "Android tab and Agents share the unread completion")
 
 func agent_receipts() -> void:
 	var pane: String = host.pane_focus
@@ -65,7 +65,7 @@ func agent_receipts() -> void:
 	if not await phase("unread-phone", {"attention": first, "tap": [roundi(at.x + bounds[0]), roundi(at.y + bounds[1])]}): return
 	if not await until(func(): return host.pane_focus == pane, "Native Android tap focuses the agent pane"): return
 	if not await until(func(): return attention(pane).get("seen", false), "Server confirms the Android read receipt"): return
-	expect(row_status(pane) == "idle" and host.application.agent_attention.marker([pane]).state.is_empty(), "Android removes its completed row and tab marker")
+	expect(row_status(pane) == "idle" and host.application.agent_attention.marker(host, [pane]).state.is_empty(), "Android removes its completed row and tab marker")
 	if not await phase("read-phone", {"attention": attention(pane)}): return
 	host.focus_pane(elsewhere)
 	await wait()
@@ -74,5 +74,5 @@ func agent_receipts() -> void:
 	if not await phase("unread-desktop", {"attention": attention(pane)}): return
 	if not await until(func(): return attention(pane).get("seen", false), "Desktop receipt reaches Android while another pane is focused"): return
 	expect(host.pane_focus == elsewhere, "Remote receipt leaves Android pane focus unchanged")
-	expect(row_status(pane) == "idle" and host.application.agent_attention.marker([pane]).state.is_empty(), "Desktop read clears Android Agents and tab markers")
+	expect(row_status(pane) == "idle" and host.application.agent_attention.marker(host, [pane]).state.is_empty(), "Desktop read clears Android Agents and tab markers")
 	await phase("read-desktop", {"attention": attention(pane)})

@@ -704,7 +704,7 @@ func get_tabs(session_only := false) -> Array[Dictionary]:
 				"progress_value": model.progress_value if model != null else -1,
 				"exited": false,
 				"chromium_count": count - terminals.size(),
-				"attention": application.agent_attention.marker(terminals) if application != null and application.agent_attention != null else {"state": "", "count": 0},
+				"attention": application.agent_attention.marker(self, terminals) if application != null and application.agent_attention != null else {"state": "", "count": 0},
 			}
 		)
 	return result

@@ -54,7 +54,7 @@ class CapturedAttention extends "res://scenes/AgentAttention.gd":
 	var calls: Array = []
 	func _send_receipt(connection: Node, pane: int, event: String) -> void:
 		calls.append({"connection": connection, "pane": pane, "event": event})
-		_acknowledging.erase(event)
+		_acknowledging.erase([_domain(connection), event])
 
 
 func test_connected_catalog_retries_cached_read_without_reading_unshown_results() -> void:
@@ -86,10 +86,10 @@ func test_connected_catalog_retries_cached_read_without_reading_unshown_results(
 		attention.refresh()
 		if scenario == "same":
 			expect(attention.calls == [{"connection":connected, "pane":1, "event":"first"}], "A connected view carries the cached pane's exact receipt")
-			expect(attention.marker(["t1"]).state == "", "Reading the cached event clears its local marker")
+			expect(attention.marker(cached, ["t1"]).state == "", "Reading the cached event clears its local marker")
 		else:
 			expect(attention.calls.is_empty(), "Catalog-only evidence cannot acknowledge an unshown result: " + scenario)
-			expect(attention.marker(["t1"]).state == "completed", "The unseen catalog event stays unread: " + scenario)
+			expect(attention.marker(cached, ["t1"]).state == "completed", "The unseen catalog event stays unread: " + scenario)
 		attention.free()
 		cached.free()
 		other.free()
@@ -132,14 +132,14 @@ func test_offscreen_completion_waits_for_the_pane_to_enter_the_content_area() ->
 	attention.application = app
 	attention.in_view = func(_host): return true
 	attention.refresh()
-	expect(attention.calls.is_empty() and attention.marker(["t2"]).count == 1, "A shown pane stashed outside the camera keeps its completion")
+	expect(attention.calls.is_empty() and attention.marker(host, ["t2"]).count == 1, "A shown pane stashed outside the camera keeps its completion")
 	host.world.origin = Vector2(5000, 5124)
 	attention.refresh()
-	expect(attention.calls.is_empty() and attention.marker(["t2"]).count == 1, "A pane touching the content edge behind the tabs stays unread")
+	expect(attention.calls.is_empty() and attention.marker(host, ["t2"]).count == 1, "A pane touching the content edge behind the tabs stays unread")
 	host.world.origin.y -= 1
 	attention.refresh()
 	expect(attention.calls == [{"connection": peer, "pane": 2, "event": "stashed-completion"}], "Panning part of the pane into content sends its exact receipt")
-	expect(attention.marker(["t2"]).count == 0, "The viewed completion clears its marker")
+	expect(attention.marker(host, ["t2"]).count == 0, "The viewed completion clears its marker")
 	pane.free()
 	host.workspace_view.free()
 	host.world.free()
@@ -178,7 +178,7 @@ func test_floating_panes_cover_only_their_visible_union() -> void:
 	attention.application = app
 	attention.in_view = func(_host): return true
 	attention.refresh()
-	expect(attention.calls.is_empty() and attention.marker(["t1"]).count == 1, "Jointly covered completion stays unread")
+	expect(attention.calls.is_empty() and attention.marker(host, ["t1"]).count == 1, "Jointly covered completion stays unread")
 	right.position.x += 1
 	attention.refresh()
 	expect(attention.calls == [{"connection": peer, "pane": 1, "event": "covered-completion"}], "A narrow gap sends the covered pane’s exact receipt")
@@ -239,8 +239,8 @@ func test_live_completion_receipt_in_either_snapshot_order() -> void:
 		attention.in_view = func(h): return h.in_view
 		attention.refresh()
 		var watched: bool = scenario in ["catalog_first", "graph_first"]
-		expect(attention.marker(["t1"]).count == (0 if watched else 1), "Tab marker: " + scenario)
-		expect(attention.project_attention(event).seen == watched, "Agents panel receipt: " + scenario)
+		expect(attention.marker(host, ["t1"]).count == (0 if watched or scenario == "other_session" else 1), "Tab marker: " + scenario)
+		expect(attention.project_attention(event, peer).seen == watched, "Agents panel receipt: " + scenario)
 		expect(attention.calls.size() == int(watched), "Only the presented pane sends a receipt: " + scenario)
 		if watched:
 			host.in_view = false
@@ -248,7 +248,7 @@ func test_live_completion_receipt_in_either_snapshot_order() -> void:
 			app.agent_api.graph.nodes["t1"] = agent
 			app.agent_api.graph.remote_owners["t1"] = peer
 			attention.refresh()
-			expect(attention.marker(["t1"]).count == 0 and attention.attention("t1").seen, "The second update keeps both projections seen")
+			expect(attention.marker(host, ["t1"]).count == 0 and attention.attention(host, "t1").seen, "The second update keeps both projections seen")
 		attention.free()
 		host.free()
 		peer.free()
@@ -306,7 +306,7 @@ func test_disconnected_visible_window_cannot_read_another_windows_new_graph() ->
 	attention.application = app
 	attention.in_view = func(host): return host.in_view
 	attention.refresh()
-	expect(attention.calls.is_empty() and attention.marker(["t1"]).count == 1,
+	expect(attention.calls.is_empty() and attention.marker(current, ["t1"]).count == 1,
 		"A cached window cannot read a UUID that only an unfocused window received")
 	current.in_view = true
 	attention.refresh()
@@ -345,8 +345,60 @@ func test_replacement_epoch_uses_visible_receipt_even_with_lower_revision() -> v
 		attention.in_view = func(host): return host.in_view
 		attention.refresh()
 		expect(attention.calls == [{"connection":replacement,"pane":1,"event":"replacement"}], "Only the replacement peer receives its visible event")
-		expect(attention.attention("t1").event == "replacement", "The replacement activity wins regardless of host order")
+		expect(attention.attention(current, "t1").event == "replacement", "The replacement activity wins regardless of host order")
 		for entry in [attention, cached, current, old, replacement]: entry.free()
+
+
+class NamespacedPeer extends "res://scenes/remote/RemoteConnection.gd":
+	func fonts_ready() -> bool: return true
+
+
+func test_colliding_window_keys_keep_independent_markers_and_receipts() -> void:
+	for same_epoch in [true, false]:
+		for hidden_newer in [true, false]:
+			var app := Application.new()
+			var hidden := RemoteHost.new()
+			var shown := RemoteHost.new()
+			var direct := NamespacedPeer.new()
+			var mapped := NamespacedPeer.new()
+			mapped.namespace_ids = true
+			var wire := 2002
+			var local := mapped.local_id(wire)
+			var key := PaneAddress.key(local)
+			var waiting := {"pane":local,"status":"waiting","activity_revision":50 if hidden_newer else 2,
+				"attention":{"event":"hidden-request","kind":"waiting","seen":false}}
+			var completed := {"pane":wire,"status":"idle","activity_revision":20,
+				"attention":{"event":"visible-result","kind":"completed","seen":false}}
+			for peer in [direct, mapped]:
+				peer.connected = true
+				peer.url = "test://receipts"
+				peer.epoch = "shared" if same_epoch or peer == direct else "replacement"
+				peer.workspace = "$1"
+				peer.catalog_revision = 100
+				peer.available_sessions = [{"id":"$1","agents":[waiting, completed]}]
+				peer.topology = {"workspace":"$1","graph":{"nodes":[]}}
+				for row in [waiting, completed]:
+					peer.topology.graph.nodes.append(row.merged({"node":PaneAddress.key(peer.local_id(row.pane))}))
+			hidden.session_backend.connection = direct
+			shown.session_backend.connection = mapped
+			for host in [hidden, shown]:
+				host.in_view = false
+				host.workspace_layout.tabs.assign([_tab(1, [key])])
+				host.workspace_layout.active = 1
+			app.hosts = [hidden, shown]
+			var attention := CapturedAttention.new()
+			attention.application = app
+			attention.in_view = func(host): return host.in_view
+			attention.refresh()
+			expect(attention.marker(hidden, [key]).state == "waiting" and attention.marker(shown, [key]).state == "completed",
+				"Each window shows only its own pane's marker")
+			shown.in_view = true
+			attention.refresh()
+			expect(attention.calls == [{"connection":mapped,"pane":local,"event":"visible-result"}],
+				"Only the viewed attachment sends its exact wire receipt")
+			expect(attention.marker(hidden, [key]).state == "waiting" and attention.marker(shown, [key]).count == 0,
+				"Reading the completion preserves the other view's waiting marker")
+			for item in [attention, hidden, shown, direct, mapped]: item.free()
 
 
 func _tab(id: int, keys: Array, shown := []) -> Dictionary:
@@ -386,7 +438,7 @@ func test_tabs_show_unseen_outcomes_and_clear_only_after_every_pane_is_seen() ->
 	var busy := _node("busy", [["01", "busy"]])
 	app.agent_api.graph.nodes = {"t1": busy, "t2": busy, "t3": busy, "t4": busy}
 	attention.refresh()
-	expect(attention.marker(["t2", "t3", "t4"]).state == "", "Running agents have no marker")
+	expect(attention.marker(host, ["t2", "t3", "t4"]).state == "", "Running agents have no marker")
 	var done := _node("idle", [["01", "busy"], ["02", "idle"]])
 	var ask := _node("waiting", [["01", "busy"], ["02", "waiting"]])
 	app.agent_api.graph.nodes = {"t1": done, "t2": done, "t3": done, "t4": ask}
@@ -394,16 +446,16 @@ func test_tabs_show_unseen_outcomes_and_clear_only_after_every_pane_is_seen() ->
 	attention.changed.connect(func(): emitted[0] += 1)
 	attention.refresh()
 	expect(emitted[0] == 1, "A marker change emits once")
-	expect(attention.marker(["t1"]).state == "", "The visible active tab's completion is already seen")
-	expect(attention.marker(["t2", "t3", "t4"]) == {"state": "waiting", "count": 1}, "Waiting wins over completions")
+	expect(attention.marker(host, ["t1"]).state == "", "The visible active tab's completion is already seen")
+	expect(attention.marker(host, ["t2", "t3", "t4"]) == {"state": "waiting", "count": 1}, "Waiting wins over completions")
 	attention.refresh()
 	expect(emitted[0] == 1, "Re-observing unchanged evidence changes nothing")
 	host.workspace_layout.active = 2
 	attention.refresh()
-	expect(attention.marker(["t2", "t3", "t4"]) == {"state": "waiting", "count": 1}, "A hidden pane in the active tab is not seen")
+	expect(attention.marker(host, ["t2", "t3", "t4"]) == {"state": "waiting", "count": 1}, "A hidden pane in the active tab is not seen")
 	host.workspace_layout.tabs[1] = _tab(2, ["t2", "t3", "t4"])
 	attention.refresh()
-	expect(attention.marker(["t2", "t3", "t4"]).state == "", "Showing every pane clears the tab")
+	expect(attention.marker(host, ["t2", "t3", "t4"]).state == "", "Showing every pane clears the tab")
 	host.free()
 	attention.free()
 
@@ -420,10 +472,10 @@ func test_unfocused_window_does_not_count_as_seen_and_closed_panes_are_forgotten
 	attention.refresh()
 	app.agent_api.graph.nodes = {"t1": _node("idle", [["01", "busy"], ["02", "idle"]])}
 	attention.refresh()
-	expect(attention.marker(["t1"]) == {"state": "completed", "count": 1}, "An unfocused window's active tab still marks")
+	expect(attention.marker(host, ["t1"]) == {"state": "completed", "count": 1}, "An unfocused window's active tab still marks")
 	host.workspace_layout.tabs = []
 	attention.refresh()
-	expect(attention.marker(["t1"]).state == "", "A closed pane leaves no marker")
+	expect(attention.marker(host, ["t1"]).state == "", "A closed pane leaves no marker")
 	host.free()
 	attention.free()
 
