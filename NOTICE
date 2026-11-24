@@ -16,6 +16,8 @@ Terminal file staging and clipboard paste routing are adapted from Herdr:
 - herdr-core, crates/herdr-core/src/put.rs, revision
   c84d6e76156a6c2aac1da20efbe800f10acfe897
   https://github.com/herdrdev/herdr-core
+- Adaptive upload sizing from herdr-core, crates/herdr-core/src/put.rs, revision
+  7cb4de47164f1d65db84dfab294166994f143a15
 - herdr-app, src/terminal.rs, revision
   b67715e8985e6097f83f8120fc9b9e52e6596f50
   https://github.com/herdrdev/herdr-app

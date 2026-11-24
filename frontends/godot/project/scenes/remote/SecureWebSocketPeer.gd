@@ -17,7 +17,8 @@ var _no_delay_set := false
 func _init() -> void:
 	# One 8 MiB session message plus its record overhead.
 	peer.inbound_buffer_size = 8388608 + 65536
-	peer.outbound_buffer_size = 262144
+	# One base64-encoded 1 MiB upload chunk plus metadata and encryption.
+	peer.outbound_buffer_size = 2 * 1024 * 1024
 	peer.max_queued_packets = 128
 	# A mobile network/VPN can silently discard an idle TCP connection. Native
 	# WebSocket ping/pong times it out so RemoteConnection can reconnect.

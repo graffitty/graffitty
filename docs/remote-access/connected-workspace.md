@@ -60,6 +60,6 @@ gft terminal put -t 'build/work:1.2' --json screenshot.png
 - Omit the target inside the destination Graffitty terminal.
 - Files must be no larger than **32 MiB**.
 - When you paste an image into a local terminal, Graffitty writes the file directly on this computer and pastes its quoted path. For a remote terminal, it uploads the image to the terminal’s owner first.
-- Partial uploads never paste a path. Completed attachments remain until their terminal closes.
+- Remote uploads start at 4 KiB per chunk and adjust to the link, up to 1 MiB. Partial uploads never paste a path. Completed attachments remain until their terminal closes.
 - The receiving agent must support image paths as attachments.
 - An SSH shell inside a local pane is not an attached Graffitty server. Connect Graffitty to the computer running the agent first.

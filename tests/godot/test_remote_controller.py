@@ -75,7 +75,9 @@ class RemoteControllerTests(unittest.TestCase):
                     import os, sys, socket, threading, pathlib
                     if "-L" not in sys.argv:
                         if sys.argv[-1] == "uname -s; uname -m": print("Linux\\naarch64")
-                        else: print(pathlib.Path(os.environ["CONTROLLER_TEST_DESCRIPTOR"]).read_text())
+                        else:
+                            print("running")
+                            print(pathlib.Path(os.environ["CONTROLLER_TEST_DESCRIPTOR"]).read_text())
                         sys.exit(0)
                     host, port, remote_host, remote_port = sys.argv[sys.argv.index("-L") + 1].split(":")
                     listener = socket.create_server((host, int(port)))
@@ -123,7 +125,7 @@ class RemoteControllerTests(unittest.TestCase):
                         # command packet. The remote process receives only the final
                         # quoted path in one bracketed paste, with no Enter.
                         import shlex
-                        data = bytes(range(256)) * 1025
+                        data = bytes(range(256)) * 12289
                         source = directory / "image fixture.png"
                         source.write_bytes(data)
                         local = command("terminal", "put", "--target", f"t{pane['id']}", "--json", str(source))

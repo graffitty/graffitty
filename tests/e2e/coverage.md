@@ -1711,6 +1711,14 @@ wheel/trackpad/drag acceptance matrix remain unverified.
 
 ## Terminal image paste and `gft terminal put` (IN-09)
 
+2026-11-24, macOS ARM64, adaptive remote upload sizing:
+
+- Five Rust tests passed for sizing, receipts, command bounds and file staging.
+- The encrypted headless controller transferred a 3 MiB fixture byte-for-byte
+  over the SSH loopback test forwarder and pasted its quoted remote path.
+- The simulated Godot bracketed-paste scenario passed with a 1024 × 768 PNG,
+  verifying its SHA-256 in the receiving terminal and typing order after paste.
+
 2026-11-14, working tree based on `70912e8`, macOS ARM64 host:
 
 - Rust upload/transport tests: 20 passed, including fragmented local-socket

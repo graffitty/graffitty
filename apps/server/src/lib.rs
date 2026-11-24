@@ -1237,6 +1237,7 @@ impl Server {
             c.workspace = key.clone();
             c.workspace_incarnation = self.workspace_incarnations.get(workspace).copied().unwrap_or(0);
             c.authenticated = true;
+            c.socket.allow_authenticated_uploads();
             c.chromium_png = value["chromium_image_format"] == "png";
             c.video_quality = chromium_video::Quality::parse(&value["chromium_stream"]);
             c.video_rejected.clear();
@@ -2631,6 +2632,9 @@ pub fn run(options: Options, foreground_apps: fn(&Value) -> Value) -> Result<(),
                     match c.socket.read() {
                         Ok(Message::Text(text)) => {
                             let value: Value = serde_json::from_str(&text)?;
+                            if !c.socket.is_local() && !graffitty_protocol::file_transfer::fits_command(&value, text.len()) {
+                                return Err("Command exceeds the packet limit".into());
+                            }
                             if c.socket.is_cli() {
                                 if c.api_stream { return Err("Subscription does not accept further requests".into()); }
                                 c.api_stream = value["method"] == "graph.watch";

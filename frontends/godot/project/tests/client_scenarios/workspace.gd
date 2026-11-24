@@ -1534,16 +1534,16 @@ func selection_copy() -> void:
 
 func bracketed_paste() -> void:
 	var pixels := PackedByteArray()
-	pixels.resize(384 * 256 * 4)
+	pixels.resize(1024 * 768 * 4)
 	var rng := RandomNumberGenerator.new()
 	rng.seed = 7193
 	for i in pixels.size(): pixels[i] = rng.randi() & 255
-	var png := Image.create_from_data(384, 256, false, Image.FORMAT_RGBA8, pixels).save_png_to_buffer()
+	var png := Image.create_from_data(1024, 768, false, Image.FORMAT_RGBA8, pixels).save_png_to_buffer()
 	var digest := HashingContext.new()
 	digest.start(HashingContext.HASH_SHA256)
 	digest.update(png)
 	var sha := digest.finish().hex_encode()
-	expect(png.size() > 131072, "Image fixture requires multiple upload chunks")
+	expect(png.size() > 2 * 1024 * 1024, "Image fixture spans multiple maximum-size upload chunks")
 	run_python("""import os,tty,termios,shlex,pathlib,hashlib
 old=termios.tcgetattr(0)
 try:
