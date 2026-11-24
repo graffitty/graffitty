@@ -19,7 +19,7 @@ var _owners: Dictionary = {}
 ## Rows from sessions no window shows: id → {host, peer, session, pane}.
 var _away: Dictionary = {}
 var _audio: RefCounted
-var audio_state := {"active": 0, "completed": 0, "error": ""}
+var audio_state := {"active": 0, "completed": 0, "skipped": 0, "error": ""}
 var _pcm: Dictionary = {}
 var _sounds: Dictionary = {}
 var _streams: Dictionary = {}
@@ -376,6 +376,7 @@ func _play(kind: String) -> void:
 func _process(_delta: float) -> void:
 	if _audio == null: return
 	audio_state = _audio.poll()
+	if audio_state.skipped > 0: print_verbose("Attention sound skipped because audio output stopped responding")
 	var failure: String = audio_state.error
 	if failure == "No audio output device" or failure.begins_with("Unsupported audio output format: "):
 		print_verbose("Attention sound: " + failure)
