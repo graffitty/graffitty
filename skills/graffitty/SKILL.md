@@ -83,6 +83,21 @@ workspace, the way a person would type: `gft rpc pane.send --params
 '{"target":"t7","text":"Focus on the first bug","enter":true}'`. Prefer the
 graph for agents: it queues behind their typing and respects pauses.
 
+### Resume a child at startup
+
+If a child you just launched shows a folder-trust dialog for the checkout the
+user asked it to work in, select **Trust and continue** yourself. When that
+choice is already highlighted, send Enter to the pane returned by `pane run`:
+
+```sh
+gft rpc pane.send --params '{"target":"t7","text":"","enter":true}'
+```
+
+Check the actual prompt and selection first. A child can show this dialog
+before its graph node registers or its transcript exists. If you cannot
+identify the prompt, ask what the child pane shows. After startup, verify
+whether the first task arrived before sending it again.
+
 ## Run programs
 
 Your own shell tool holds you until its command ends. Run anything slow
@@ -111,14 +126,14 @@ chromium windows and filetrees, and along agent connections. Plan positions
 before you start several panes: information should flow left to right (or
 top to bottom) and related panes should touch.
 
-Keep the graph out of the main view area. The main view is the frame the user
-works in at normal zoom (the rectangles of the tab's tiled panes, or of the
-pane they started you from); `gft tiling status` prints those rectangles and
-whether the tab is `tiling`. Start your panes beyond its right or bottom edge
-(`--side right --of <rightmost pane>`, or `--at` past the edge) so the user's
-editor and shell stay unobstructed and the graph appears when they zoom out to
-the overview. In a tiled tab `--side` splits the main view instead: switch the
-tab to floating first (`gft tiling layout floating`) or ask before carving it.
+Keep the user's main tiles in place. Check `gft tiling status` before
+placing children. In a tiled tab, use `--side` with `--of` pointing to a
+stashed pane (`stashed: true`) to start the graph in the overview. Place
+later reviewers beside the first one. To move an existing reviewer out of
+the main tiles, use `gft pane place --target <reviewer> --side right --of
+<stashed-pane>`. Verify that `tiles` still lists the user's original panes.
+If every pane is a main tile, ask before splitting one or changing the tab
+layout. In a floating tab, use `--at` beyond the main area.
 
 ```sh
 gft pane run --agent pi --name plan --side right                  # beside you
@@ -130,7 +145,7 @@ gft pane place --target t9 --at 1200,80 --size 800x500
 ```
 
 - `--side` puts the whole pane next to `--of` (default: you), one gap apart,
-  copying its size. In a tiled tab it splits that pane instead; `--at` and
+  copying its size. In a tiled tab it splits a main tile or inherits a stashed anchor’s layer; `--at` and
   `--size` then apply only to floating panes (`gft tiling layout floating`
   switches the tab, `gft tiling status` shows which it is).
 - Keep rows aligned: reuse the same `--of` for siblings (`--side below` of the
@@ -227,8 +242,8 @@ input or output. Custom node outputs are Send ports, so pass `--send`.
   anything. Preserve an incoming `--run-id` when replying so loops stay bounded.
 - Agent status (`busy`, `waiting`, `idle`, `error`) comes from provider hooks
   and OSC 7501 reports in `gft graph list`; do not guess it from screen text.
-  `waiting` means a person is needed: tell your user instead of answering a
-  permission prompt for it.
+  For a permission request or question during the task, relay it to the user.
+  For the initial folder-trust dialog, follow “Resume a child at startup” above.
 - Closing your pane closes the children that depend on you. A child started
   with `--outlive-parent` stays and forgets its parent. Only clean up panes
   you started.
