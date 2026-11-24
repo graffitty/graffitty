@@ -23,8 +23,8 @@ func test_stashing_pane_moves_its_strip_without_repositioning_neighbor() -> void
 			carried.append(View.carry_status_strip(previous[j], owners[j], next[j], previous[j].size))
 			desired.append(Rect2(next[j].position - Vector2(0, previous[j].size.y + 3), previous[j].size))
 		var placed := View.place_status_strips(desired, bounds, next, [], [], carried)
-		expect(placed[0] == previous[0], "Stationary %1 keeps its usable location while %3 is stashed")
-		expect(placed[1].position.distance_to(previous[1].position) < 1.1, "%3 follows its owner without jumping edges")
+		expect(placed[0] == previous[0], "Stationary t1 keeps its usable location while t3 is stashed")
+		expect(placed[1].position.distance_to(previous[1].position) < 1.1, "t3 follows its owner without jumping edges")
 		for j in 2:
 			for owner in next: expect(not placed[j].grow(1).intersects(owner), "Moving strips never cross pane content")
 		previous = placed

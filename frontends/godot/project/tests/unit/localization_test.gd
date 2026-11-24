@@ -44,10 +44,10 @@ func test_locale_selection_fallback_and_formatted_text() -> void:
 	expect(service.resolve("zz_ZZ") == "en-US", "Unsupported languages fall back to English")
 	var label := Label.new()
 	service.set_language("ko", false)
-	service.text(label, "Dictation → %s", ["%12 Settings"])
-	expect(label.text == "받아쓰기 → %12 Settings", "Translate the message, never its supplied pane name")
+	service.text(label, "Dictation → %s", ["t12 Settings"])
+	expect(label.text == "받아쓰기 → t12 Settings", "Translate the message, never its supplied pane name")
 	service.set_language("ja", false)
-	expect(label.text == "音声入力 → %12 Settings", "Open formatted text updates on language change")
+	expect(label.text == "音声入力 → t12 Settings", "Open formatted text updates on language change")
 	expect(TranslationServer.translate("Unknown diagnostic") == "Unknown diagnostic", "Unknown messages stay readable")
 	label.text = "A newer status"
 	service.set_language("fr", false)

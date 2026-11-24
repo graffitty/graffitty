@@ -85,13 +85,13 @@ class PiIntegration(unittest.TestCase):
         self.assertEqual(context.returncode, 0, context.stderr)
         self.assertIn("Current graph", context.stdout)
         for method in ("graph.read", "graph.send"):
-            result = self.plugin("tool", input={"method": method, "params": {"node": "%2", "to": "%2", "text": "reply"}})
+            result = self.plugin("tool", input={"method": method, "params": {"node": "t2", "to": "t2", "text": "reply"}})
             self.assertEqual(result.returncode, 0, result.stderr)
         self.assertNotEqual(self.plugin("tool", input={"method": "graph.connect"}).returncode, 0)
 
     def test_typing_defers_new_work_until_the_server_gate_opens(self):
         request = self.reply(self.start(), self.snapshot())
-        self.queue = [{"event_id": "quiet", "source": "%2", "target": "%1", "text": "after typing"}]
+        self.queue = [{"event_id": "quiet", "source": "t2", "target": "t1", "text": "after typing"}]
         self.typing = True
         request = self.reply(request, self.snapshot())
         self.assertEqual(request["op"], "snapshot")
@@ -103,7 +103,7 @@ class PiIntegration(unittest.TestCase):
 
     def test_busy_queue_is_revocable_and_ack_requires_user_message(self):
         request = self.reply(self.start(), self.snapshot())
-        event = {"event_id": "revoked", "source": "%2", "target": "%1", "run_id": "causal-run", "text": "Implement it", "sessions": []}
+        event = {"event_id": "revoked", "source": "t2", "target": "t1", "run_id": "causal-run", "text": "Implement it", "sessions": []}
         self.queue = [event]
         request = self.reply(request, self.snapshot(idle=False))
         self.assertEqual(request["op"], "snapshot")

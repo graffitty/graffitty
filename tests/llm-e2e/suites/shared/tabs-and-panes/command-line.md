@@ -23,6 +23,6 @@ pane takes focus, because tabs and panes are both numbered from 1. Ctrl+A follow
 directly by a pane's `%ID` and Enter focuses that pane.
 
 In Overview, each status strip shows its ordered pane number alongside its
-stable ID, for example `.1 (%4)`. Run `FitToMainArea` in the command line:
+stable ID, for example `.1 (t4)`. Run `FitToMainArea` in the command line:
 the camera animates back to the fitted main area. Report failures with the
 replay and the observed state.

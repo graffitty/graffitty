@@ -181,15 +181,15 @@ class CliTests(unittest.TestCase):
             (["graph", "list"], "graph.list", {}),
             (["graph", "adjacent"], "graph.adjacent", {}),
             (["graph", "spawn", "--provider", "claude"], "graph.spawn", {"provider": "claude"}),
-            (["graph", "spawn", "--provider", "pi", "--side", "right", "--of", "%3"], "graph.spawn", {"provider": "pi", "side": "right", "of": "%3"}),
+            (["graph", "spawn", "--provider", "pi", "--side", "right", "--of", "t3"], "graph.spawn", {"provider": "pi", "side": "right", "of": "t3"}),
             (["pane", "run", "--name", "build", "--side", "below", "cargo", "build", "--release"], "terminal.run", {"name": "build", "side": "below", "command": "cargo build --release"}),
             (["pane", "run", "--agent", "codex", "--model", "gpt-6", "--agent-arg=--no-daemon", "--outlive-parent", "--at", "40,900", "--size", "600x300"], "terminal.run", {"agent": "codex", "model": "gpt-6", "agent_args": ["--no-daemon"], "outlive_parent": True, "x": 40.0, "y": 900.0, "width": 600.0, "height": 300.0}),
             (["pane", "run"], "terminal.run", {}),
-            (["pane", "place", "--target", "%8", "--side", "below", "--of", "%7"], "pane.place", {"target": "%8", "side": "below", "of": "%7"}),
-            (["graph", "connect", "--from", "%1", "--to", "%2", "--turn-completed"], "graph.connect", {"from": "%1", "to": "%2", "read": False, "send": False, "turn_completed": True, "muted": False, "from_port": "", "to_port": ""}),
-            (["graph", "read", "--node", "%1"], "graph.read", {"node": "%1"}),
-            (["graph", "read", "--node", "%1", "--offset", "32"], "graph.read", {"node": "%1", "offset": 32}),
-            (["graph", "send", "--to", "%2", "--text", "approved", "--run-id", "test"], "graph.send", {"to": "%2", "text": "approved", "run_id": "test"}),
+            (["pane", "place", "--target", "t8", "--side", "below", "--of", "t7"], "pane.place", {"target": "t8", "side": "below", "of": "t7"}),
+            (["graph", "connect", "--from", "t1", "--to", "t2", "--turn-completed"], "graph.connect", {"from": "t1", "to": "t2", "read": False, "send": False, "turn_completed": True, "muted": False, "from_port": "", "to_port": ""}),
+            (["graph", "read", "--node", "t1"], "graph.read", {"node": "t1"}),
+            (["graph", "read", "--node", "t1", "--offset", "32"], "graph.read", {"node": "t1", "offset": 32}),
+            (["graph", "send", "--to", "t2", "--text", "approved", "--run-id", "test"], "graph.send", {"to": "t2", "text": "approved", "run_id": "test"}),
         ]:
             result, request = self.exchange(args)
             self.assertEqual(result.returncode, 0, result.stderr)
@@ -200,15 +200,15 @@ class CliTests(unittest.TestCase):
         cases = [
             (["pane", "list"], "pane.list", {}),
             (["pane", "pid"], "terminal.pid", {"details": False}),
-            (["pane", "pid", "%3", "--details"], "terminal.pid", {"target": "%3", "details": True}),
+            (["pane", "pid", "t3", "--details"], "terminal.pid", {"target": "t3", "details": True}),
             (["pane", "pid", "@7"], "terminal.pid", {"target": "@7", "details": False}),
             (["pane", "pid", ":2.1"], "terminal.pid", {"target": ":2.1", "details": False}),
-            (["terminal", "get-text", "--target", "%3", "--json"], "terminal.get_text", {"target": "%3", "scrollback": False}),
-            (["terminal", "send-key", "--target", "%3", "Enter"], "terminal.press", {"target": "%3", "key": "Enter"}),
-            (["terminal", "send-key", "Ctrl+h", "--no-effects", "--target", "%3"], "terminal.press", {"target": "%3", "key": "Ctrl+h", "effects": False}),
+            (["terminal", "get-text", "--target", "t3", "--json"], "terminal.get_text", {"target": "t3", "scrollback": False}),
+            (["terminal", "send-key", "--target", "t3", "Enter"], "terminal.press", {"target": "t3", "key": "Enter"}),
+            (["terminal", "send-key", "Ctrl+h", "--no-effects", "--target", "t3"], "terminal.press", {"target": "t3", "key": "Ctrl+h", "effects": False}),
             (["tab", "rename", "--target", "@7", "Build"], "tab.set_title", {"target": "@7", "title": "Build"}),
-            (["chromium", "snapshot", "--target", "%8"], "chromium.snapshot", {"chromium": "%8"}),
-            (["graph", "read", "--node", "%3"], "graph.read", {"node": "%3"}),
+            (["chromium", "snapshot", "--target", "c8"], "chromium.snapshot", {"chromium": "c8"}),
+            (["graph", "read", "--node", "t3"], "graph.read", {"node": "t3"}),
         ]
         for args, method, params in cases:
             with self.subTest(args=args):
@@ -417,9 +417,9 @@ class CliTests(unittest.TestCase):
         ]:
             cases.append(
                 (
-                    ["chromium", verb, "--target", "%3", *flags],
+                    ["chromium", verb, "--target", "c3", *flags],
                     "chromium." + verb,
-                    {"chromium": "%3", **params},
+                    {"chromium": "c3", **params},
                 )
             )
         for args, method, params in cases:
@@ -474,8 +474,8 @@ class CliTests(unittest.TestCase):
             "missing_context",
         )
         for args in [
-            ["chromium", "fill", "--target", "%3"],
-            ["chromium", "present", "--target", "%3", "--mode", "oops"],
+            ["chromium", "fill", "--target", "c3"],
+            ["chromium", "present", "--target", "c3", "--mode", "oops"],
             ["terminal", "type", "--text", "hi", "--interval-ms", "abc"],
             ["not-a-command"],
             ["browser", "list"],
@@ -487,7 +487,7 @@ class CliTests(unittest.TestCase):
             ["rpc", "identify", "--params", "{"],
             ["chromium", "layout", "--ratio", "NaN"],
             ["terminal", "type", "--text", "hi", "--interval-ms", "-1"],
-            ["chromium", "wait", "--target", "%3", "--timeout-ms", "0"],
+            ["chromium", "wait", "--target", "c3", "--timeout-ms", "0"],
         ]:
             with self.subTest(args=args):
                 result = run(*args)

@@ -1,4 +1,5 @@
 extends "../../../../replay/replay.gd"
+
 ## Replays tests/llm-e2e/suites/shared/bistro-world/world-switch-keeps-tabs.md
 
 
@@ -36,7 +37,7 @@ func check_kept(before: Dictionary, label: String) -> void:
 	var now := arrangement()
 	check(now.titles == before.titles, "%s: the same tabs, and no new ones (%s)" % [label, now.titles])
 	check(now == before, "%s: every tab, window, name, shell and the keyboard stay as they were%s" % [label, "" if now == before else " - " + changes(before, now)])
-	var shown: Dictionary = host.sessions.get(int(host.pane_focus.substr(1)), { })
+	var shown: Dictionary = host.sessions.get(PaneAddress.id(host.pane_focus), { })
 	check(not shown.is_empty() and host.world.term == shown.term, "%s: the world shows the window with the keyboard" % label)
 
 
@@ -106,7 +107,7 @@ func play() -> void:
 ## on that surface's view.
 func shown_on(surface: Node) -> bool:
 	var world: Node = host.world
-	var shown: Dictionary = host.sessions.get(int(host.pane_focus.substr(1)), { })
+	var shown: Dictionary = host.sessions.get(PaneAddress.id(host.pane_focus), { })
 	return (
 		world.surfaces[world.active] == surface and not shown.is_empty() and world.term == shown.term
 		and int(surface.session_id) == world._first_terminal(host.workspace_layout.tab(host.workspace_layout.active))

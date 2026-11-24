@@ -19,14 +19,14 @@ function M.rpc(method, params)
 end
 
 ---Same count convention as tmux-send: 5 = pane 5, 12 = tab 1 pane 2.
----Stable IDs use count_is_uid or pane_identifier = "%12".
+---Stable IDs use count_is_uid or pane_identifier = "t12".
 function M.send_to_pane(opts)
   opts = opts or {}
   local target = opts.pane_identifier
   if not target then
     local count = vim.v.count
     if count > 0 then
-      if opts.count_is_uid then target = "%" .. count
+      if opts.count_is_uid then target = "t" .. count
       elseif count < 10 then target = "." .. count
       else target = ":" .. math.floor(count / 10) .. "." .. (count % 10) end
     else

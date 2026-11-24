@@ -1,4 +1,6 @@
 extends Node
+
+const PaneAddress := preload("res://scenes/PaneAddress.gd")
 ## Tab markers for unseen agent outcomes. Evidence and counting live in Rust
 ## (AgentAttentionCore); this node only gathers what is on screen.
 ##
@@ -91,10 +93,10 @@ func refresh() -> void:
 			for agent in session.get("agents", []):
 				var pane := int(agent.get("pane", -1))
 				if pane < 0: continue
-				var key := "%%%d" % peer.local_id(pane)
+				var key := PaneAddress.key(peer.local_id(pane))
 				if not live.has(key): live.append(key)
 				var owner: Node = _receipt_owners.get(key)
-				var unavailable_owner: bool = is_instance_valid(owner) and not owner.connected and owner.url == peer.url and owner.epoch == peer.epoch and owner.wire_id(int(key.substr(1))) == pane
+				var unavailable_owner: bool = is_instance_valid(owner) and not owner.connected and owner.url == peer.url and owner.epoch == peer.epoch and owner.wire_id(PaneAddress.id(key)) == pane
 				if not nodes.has(key) or unavailable_owner:
 					# Catalogs can deliver a pending read but cannot make a newer
 					# result visible in a disconnected terminal's cached screen.
@@ -128,7 +130,7 @@ func _send_receipts() -> void:
 		var connection: Node = _receipt_owners.get(receipt.key)
 		if not is_instance_valid(connection) or not connection.connected: continue
 		_acknowledging[event] = true
-		_send_receipt(connection, int(str(receipt.key).substr(1)), event)
+		_send_receipt(connection, PaneAddress.id(str(receipt.key)), event)
 
 
 func _send_receipt(connection: Node, pane: int, event: String) -> void:

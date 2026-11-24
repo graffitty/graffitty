@@ -1,5 +1,6 @@
 extends "../../../../replay/replay.gd"
 
+
 class FakePower extends "res://scenes/PowerMonitor.gd":
 	func _ready() -> void:
 		_accept({"available": true, "on_battery": true})
@@ -24,7 +25,7 @@ func _start() -> void:
 func play() -> void:
 	check(host.current_plugin == "flat-2d", "Battery selects Flat 2D at startup")
 	await labelled_tabs(["POWER"])
-	var id: int = int(host.pane_focus.substr(1))
+	var id: int = PaneAddress.id(host.pane_focus)
 	var pid: int = host.sessions[id].term.get_shell_pid()
 	host.power._accept({"available": true, "on_battery": false})
 	await hold(.3)

@@ -1179,20 +1179,20 @@ mod tests {
     fn floating_tab() -> TabLayout {
         let mut tab = TabLayout::default();
         tab.gap = Some(10.);
-        tab.windows.push(Window::new("%1", [100., 100., 400., 300.]));
+        tab.windows.push(Window::new("t1", [100., 100., 400., 300.]));
         tab
     }
 
     #[test]
     fn beside_places_a_whole_floating_window_one_gap_away() {
         let mut tab = floating_tab();
-        tab.add_beside("%1", "%2", Side::Right, AREA).unwrap();
-        assert_eq!(tab.window("%2").unwrap().rect, [510., 100., 400., 300.]);
-        tab.add_beside("%1", "%3", Side::Above, AREA).unwrap();
-        assert_eq!(tab.window("%3").unwrap().rect, [100., -210., 400., 300.]);
-        assert_eq!(tab.focused, "%3");
-        assert!(tab.add_beside("%1", "%2", Side::Left, AREA).is_err(), "duplicate keys are rejected");
-        assert!(tab.add_beside("%9", "%4", Side::Left, AREA).is_err(), "unknown sources are rejected");
+        tab.add_beside("t1", "t2", Side::Right, AREA).unwrap();
+        assert_eq!(tab.window("t2").unwrap().rect, [510., 100., 400., 300.]);
+        tab.add_beside("t1", "t3", Side::Above, AREA).unwrap();
+        assert_eq!(tab.window("t3").unwrap().rect, [100., -210., 400., 300.]);
+        assert_eq!(tab.focused, "t3");
+        assert!(tab.add_beside("t1", "t2", Side::Left, AREA).is_err(), "duplicate keys are rejected");
+        assert!(tab.add_beside("t9", "t4", Side::Left, AREA).is_err(), "unknown sources are rejected");
         assert_eq!(Side::parse("down"), Some(Side::Below));
         assert_eq!(Side::parse("sideways"), None);
     }
@@ -1200,44 +1200,44 @@ mod tests {
     #[test]
     fn move_beside_and_set_rect_edit_existing_floating_windows() {
         let mut tab = floating_tab();
-        tab.windows.push(Window::new("%2", [900., 900., 200., 100.]));
-        tab.focused = "%1".into();
-        tab.move_beside("%2", "%1", Side::Below, AREA).unwrap();
-        assert_eq!(tab.window("%2").unwrap().rect, [100., 410., 400., 300.], "moved panes adopt the anchor's size");
-        assert_eq!(tab.focused, "%1", "moving does not steal focus");
-        tab.set_rect("%2", Some([5., 6.]), Some([300., 200.])).unwrap();
-        assert_eq!(tab.window("%2").unwrap().rect, [5., 6., 300., 200.]);
-        assert!(tab.set_rect("%2", None, Some([10., 10.])).is_err(), "tiny sizes are rejected");
-        assert!(tab.move_beside("%2", "%2", Side::Left, AREA).is_err());
+        tab.windows.push(Window::new("t2", [900., 900., 200., 100.]));
+        tab.focused = "t1".into();
+        tab.move_beside("t2", "t1", Side::Below, AREA).unwrap();
+        assert_eq!(tab.window("t2").unwrap().rect, [100., 410., 400., 300.], "moved panes adopt the anchor's size");
+        assert_eq!(tab.focused, "t1", "moving does not steal focus");
+        tab.set_rect("t2", Some([5., 6.]), Some([300., 200.])).unwrap();
+        assert_eq!(tab.window("t2").unwrap().rect, [5., 6., 300., 200.]);
+        assert!(tab.set_rect("t2", None, Some([10., 10.])).is_err(), "tiny sizes are rejected");
+        assert!(tab.move_beside("t2", "t2", Side::Left, AREA).is_err());
     }
 
     #[test]
     fn move_beside_joins_the_anchor_outside_main_view() {
         let mut tab = floating_tab();
         tab.enabled = true;
-        tab.window_mut("%1").unwrap().graph_floating = true;
-        tab.windows.push(Window::new("%2", [60., 50., 1000., 700.]));
-        tab.move_beside("%2", "%1", Side::Above, AREA).unwrap();
-        let moved = tab.window("%2").unwrap();
+        tab.window_mut("t1").unwrap().graph_floating = true;
+        tab.windows.push(Window::new("t2", [60., 50., 1000., 700.]));
+        tab.move_beside("t2", "t1", Side::Above, AREA).unwrap();
+        let moved = tab.window("t2").unwrap();
         assert!(moved.graph_floating && !moved.in_main(), "a pane placed beside a floating pane floats with it");
-        assert_eq!(moved.rect[1] + moved.rect[3], tab.window("%1").unwrap().rect[1] - tab.gap.unwrap_or(8.));
-        tab.window_mut("%1").unwrap().graph_floating = false;
-        tab.move_beside("%2", "%1", Side::Right, AREA).unwrap();
-        assert!(tab.window("%2").unwrap().in_main(), "beside a Main View pane, it tiles into Main View");
+        assert_eq!(moved.rect[1] + moved.rect[3], tab.window("t1").unwrap().rect[1] - tab.gap.unwrap_or(8.));
+        tab.window_mut("t1").unwrap().graph_floating = false;
+        tab.move_beside("t2", "t1", Side::Right, AREA).unwrap();
+        assert!(tab.window("t2").unwrap().in_main(), "beside a Main View pane, it tiles into Main View");
     }
 
     #[test]
     fn beside_splits_tiled_tabs_and_set_rect_refuses_them() {
         let mut tab = floating_tab();
         tab.enabled = true;
-        tab.add_beside("%1", "%2", Side::Right, AREA).unwrap();
-        tab.add_beside("%2", "%3", Side::Below, AREA).unwrap();
+        tab.add_beside("t1", "t2", Side::Right, AREA).unwrap();
+        tab.add_beside("t2", "t3", Side::Below, AREA).unwrap();
         let rects = tab.arrange(AREA);
-        assert!(rects["%1"][0] < rects["%2"][0] && rects["%2"][0] == rects["%3"][0] && rects["%2"][1] < rects["%3"][1]);
-        assert!(tab.set_rect("%3", Some([0., 0.]), None).is_err());
-        tab.move_beside("%3", "%1", Side::Left, AREA).unwrap();
+        assert!(rects["t1"][0] < rects["t2"][0] && rects["t2"][0] == rects["t3"][0] && rects["t2"][1] < rects["t3"][1]);
+        assert!(tab.set_rect("t3", Some([0., 0.]), None).is_err());
+        tab.move_beside("t3", "t1", Side::Left, AREA).unwrap();
         let rects = tab.arrange(AREA);
-        assert!(rects["%3"][0] < rects["%1"][0] && rects["%1"][0] < rects["%2"][0]);
+        assert!(rects["t3"][0] < rects["t1"][0] && rects["t1"][0] < rects["t2"][0]);
     }
 
     #[test]
@@ -1246,8 +1246,8 @@ mod tests {
             let rect = [position[0], position[1], 480., 300.];
             assert_eq!(clamp_window_position(rect), rect);
             let mut tab = TabLayout {
-                focused: "%1".into(),
-                windows: vec![Window::new("%1", rect)],
+                focused: "t1".into(),
+                windows: vec![Window::new("t1", rect)],
                 ..Default::default()
             };
             assert!(tab.validate().is_ok());
@@ -1266,18 +1266,18 @@ mod tests {
         let mut tab = TabLayout {
             enabled: true,
             windows: [20, 9, 21, 3, 8, 22, 23].map(|id|
-                Window::new(format!("%{id}"), [0., 0., 100., 100.])).into(),
+                Window::new(format!("t{id}"), [0., 0., 100., 100.])).into(),
             tiles: Some(Node::branch(Axis::Horizontal, vec![
-                Node::branch(Axis::Vertical, vec![Node::leaf("%3"), Node::leaf("%9")]),
-                Node::branch(Axis::Vertical, vec![Node::leaf("%8"), Node::leaf("%22")]),
+                Node::branch(Axis::Vertical, vec![Node::leaf("t3"), Node::leaf("t9")]),
+                Node::branch(Axis::Vertical, vec![Node::leaf("t8"), Node::leaf("t22")]),
             ])),
             ..Default::default()
         };
-        tab.window_mut("%20").unwrap().stashed = true;
-        tab.window_mut("%21").unwrap().shown = false;
-        tab.window_mut("%23").unwrap().graph_floating = true;
+        tab.window_mut("t20").unwrap().stashed = true;
+        tab.window_mut("t21").unwrap().shown = false;
+        tab.window_mut("t23").unwrap().graph_floating = true;
         let before = tab.clone();
-        let expected = ["%3", "%8", "%9", "%22", "%20", "%21", "%23"];
+        let expected = ["t3", "t8", "t9", "t22", "t20", "t21", "t23"];
         assert_eq!(tab.numbered_keys(), expected);
         assert_eq!(tab, before, "Numbering is a read-only projection");
         for area in [[0., 0., 1280., 720.], [-100., 250., 720., 1280.]] {
@@ -1288,12 +1288,12 @@ mod tests {
         if let Kind::Split { children, .. } = &mut tab.tiles.as_mut().unwrap().kind {
             children.reverse();
         }
-        assert_eq!(tab.numbered_keys(), ["%8", "%3", "%22", "%9", "%20", "%21", "%23"]);
+        assert_eq!(tab.numbered_keys(), ["t8", "t3", "t22", "t9", "t20", "t21", "t23"]);
         tab.enabled = false;
-        let free = ["%9", "%3", "%8", "%22", "%20", "%21", "%23"];
+        let free = ["t9", "t3", "t8", "t22", "t20", "t21", "t23"];
         assert_eq!(tab.numbered_keys(), free);
-        tab.window_mut("%9").unwrap().rect = [800., 600., 100., 100.];
-        tab.window_mut("%20").unwrap().rect = [-5000., -5000., 100., 100.];
+        tab.window_mut("t9").unwrap().rect = [800., 600., 100., 100.];
+        tab.window_mut("t20").unwrap().rect = [-5000., -5000., 100., 100.];
         assert_eq!(tab.numbered_keys(), free);
     }
 
@@ -1301,26 +1301,26 @@ mod tests {
     fn pane_numbers_track_stash_restore_close_and_pending_tiles() {
         let mut tab = TabLayout {
             enabled: true,
-            windows: (1..=3).map(|id| Window::new(format!("%{id}"), [0., 0., 100., 100.])).collect(),
-            tiles: Some(Node::branch(Axis::Horizontal, vec![Node::leaf("%3"), Node::leaf("%2")])),
+            windows: (1..=3).map(|id| Window::new(format!("t{id}"), [0., 0., 100., 100.])).collect(),
+            tiles: Some(Node::branch(Axis::Horizontal, vec![Node::leaf("t3"), Node::leaf("t2")])),
             ..Default::default()
         };
-        tab.window_mut("%1").unwrap().stashed = true;
+        tab.window_mut("t1").unwrap().stashed = true;
         let area = [0., 0., 1000., 600.];
-        assert_eq!(tab.numbered_keys(), ["%3", "%2", "%1"]);
-        tab.place("%2", [1500., 0., 300., 200.], area, "", "right", [1650., 100.]).unwrap();
-        assert_eq!(tab.numbered_keys(), ["%3", "%1", "%2"]);
-        tab.place("%1", [0., 0., 300., 200.], area, "%3", "left", [150., 100.]).unwrap();
-        assert_eq!(tab.numbered_keys(), ["%1", "%3", "%2"]);
-        tab.remove("%1");
-        assert_eq!(tab.numbered_keys(), ["%3", "%2"]);
-        tab.windows.push(Window::new("%4", [0., 0., 300., 200.]));
-        tab.focused = "%3".into();
+        assert_eq!(tab.numbered_keys(), ["t3", "t2", "t1"]);
+        tab.place("t2", [1500., 0., 300., 200.], area, "", "right", [1650., 100.]).unwrap();
+        assert_eq!(tab.numbered_keys(), ["t3", "t1", "t2"]);
+        tab.place("t1", [0., 0., 300., 200.], area, "t3", "left", [150., 100.]).unwrap();
+        assert_eq!(tab.numbered_keys(), ["t1", "t3", "t2"]);
+        tab.remove("t1");
+        assert_eq!(tab.numbered_keys(), ["t3", "t2"]);
+        tab.windows.push(Window::new("t4", [0., 0., 300., 200.]));
+        tab.focused = "t3".into();
         let before = tab.clone();
-        assert_eq!(tab.numbered_keys(), ["%3", "%4", "%2"]);
+        assert_eq!(tab.numbered_keys(), ["t3", "t4", "t2"]);
         assert_eq!(tab, before);
         tab.arrange(area);
-        assert_eq!(tab.numbered_keys(), ["%3", "%4", "%2"]);
+        assert_eq!(tab.numbered_keys(), ["t3", "t4", "t2"]);
     }
 
     #[test]
@@ -1329,44 +1329,44 @@ mod tests {
         let mut tab = TabLayout {
             enabled: true,
             gap: Some(8.),
-            windows: vec![Window::new("%1", [24., 60., 800., 500.])],
-            focused: "%1".into(),
+            windows: vec![Window::new("t1", [24., 60., 800., 500.])],
+            focused: "t1".into(),
             ..Default::default()
         };
-        tab.add_neighbor("%1", "%2", Axis::Horizontal, false, area)
+        tab.add_neighbor("t1", "t2", Axis::Horizontal, false, area)
             .unwrap();
-        tab.add_neighbor("%2", "%3", Axis::Vertical, false, area)
-            .unwrap();
-        let rects = tab.arrange(area);
-        assert!(rects["%1"][3] > rects["%2"][3] * 1.9);
-        assert!(rects["%2"][1] + rects["%2"][3] < rects["%3"][1]);
-        tab.add_neighbor("%2", "%4", Axis::Vertical, true, area)
+        tab.add_neighbor("t2", "t3", Axis::Vertical, false, area)
             .unwrap();
         let rects = tab.arrange(area);
-        assert!(rects["%4"][1] + rects["%4"][3] < rects["%2"][1]);
-        assert_eq!(tab.focused, "%4");
+        assert!(rects["t1"][3] > rects["t2"][3] * 1.9);
+        assert!(rects["t2"][1] + rects["t2"][3] < rects["t3"][1]);
+        tab.add_neighbor("t2", "t4", Axis::Vertical, true, area)
+            .unwrap();
+        let rects = tab.arrange(area);
+        assert!(rects["t4"][1] + rects["t4"][3] < rects["t2"][1]);
+        assert_eq!(tab.focused, "t4");
         tab.enabled = false;
-        let source = tab.window_mut("%4").unwrap();
+        let source = tab.window_mut("t4").unwrap();
         source.rect = [300., 200., 600., 400.];
         source.stashed = true;
         source.graph_floating = true;
-        tab.add_neighbor("%4", "%5", Axis::Horizontal, true, area)
+        tab.add_neighbor("t4", "t5", Axis::Horizontal, true, area)
             .unwrap();
-        let new = tab.window("%5").unwrap();
+        let new = tab.window("t5").unwrap();
         assert_eq!(new.rect, [-260., 200., 600., 400.]);
         assert!(new.stashed && new.graph_floating);
         assert!(!tab.enabled);
-        assert_eq!(tab.physics_anchor.as_deref(), Some("%4"));
+        assert_eq!(tab.physics_anchor.as_deref(), Some("t4"));
     }
 
     #[test]
     fn clean_workspace_tiles_new_panes_but_preserves_saved_floating_choice() {
-        let live = [(1, Window::new("%1", [40., 70., 320., 200.]))];
+        let live = [(1, Window::new("t1", [40., 70., 320., 200.]))];
         let area = [0., 34., 1280., 766.];
         let mut clean = Workspace::default();
         clean.reconcile(&live, &[1]);
         assert_eq!(
-            clean.tabs.get_mut(&1).unwrap().arrange(area)["%1"],
+            clean.tabs.get_mut(&1).unwrap().arrange(area)["t1"],
             [8., 42., 1264., 750.]
         );
         let mut saved: Workspace = serde_json::from_value(serde_json::json!({
@@ -1376,13 +1376,13 @@ mod tests {
         .unwrap();
         saved.reconcile(&live, &[1]);
         assert_eq!(
-            saved.tabs.get_mut(&1).unwrap().arrange(area)["%1"],
+            saved.tabs.get_mut(&1).unwrap().arrange(area)["t1"],
             live[0].1.rect
         );
         saved.reconcile(
             &[
                 live[0].clone(),
-                (2, Window::new("%2", live[0].1.rect)),
+                (2, Window::new("t2", live[0].1.rect)),
             ],
             &[1, 2],
         );
@@ -1400,11 +1400,11 @@ mod tests {
             saved.reconcile(&live, &[1]);
             let layout = saved.tabs.get_mut(&1).unwrap();
             layout.enabled = true;
-            assert_eq!(layout.arrange(area)["%1"], expected);
+            assert_eq!(layout.arrange(area)["t1"], expected);
         }
     }
     fn key(n: u64) -> String {
-        format!("%{n}")
+        format!("t{n}")
     }
     fn leaf(n: u64) -> Node {
         Node::leaf(key(n))
@@ -1567,22 +1567,22 @@ mod tests {
     fn divider_clamps_to_real_terminal_and_chromium_minima() {
         let mut t = TabLayout {
             enabled: true,
-            windows: vec![Window::new(key(1), AREA), Window::new("%9", AREA)],
+            windows: vec![Window::new(key(1), AREA), Window::new("t9", AREA)],
             tiles: Some(Node::branch(
                 Axis::Vertical,
-                vec![leaf(1), Node::leaf("%9")],
+                vec![leaf(1), Node::leaf("t9")],
             )),
             ..Default::default()
         };
         let d = t.dividers(AREA).remove(0);
-        t.tiles.as_mut().unwrap().resize_with_minima(&d, 1_000_000., &[("%9".into(), [200., 136.])].into()).unwrap();
+        t.tiles.as_mut().unwrap().resize_with_minima(&d, 1_000_000., &[("t9".into(), [200., 136.])].into()).unwrap();
         let r = t.arrange(AREA);
-        close(r["%9"][3], 136.);
+        close(r["t9"][3], 136.);
         assert!(r[&key(1)][3] >= 149.);
-        t.tiles.as_mut().unwrap().resize_with_minima(&d, -1_000_000., &[("%9".into(), [200., 136.])].into()).unwrap();
+        t.tiles.as_mut().unwrap().resize_with_minima(&d, -1_000_000., &[("t9".into(), [200., 136.])].into()).unwrap();
         let r = t.arrange(AREA);
         close(r[&key(1)][3], 149.);
-        assert!(r["%9"][3] >= 136.);
+        assert!(r["t9"][3] >= 136.);
     }
     #[test]
     fn cramped_divider_still_moves_within_a_quarter_floor() {
@@ -1675,7 +1675,7 @@ mod tests {
             let proposal = t
                 .preview(
                     7,
-                    vec![Window::new("%9", [0., 0., 300., 250.])],
+                    vec![Window::new("t9", [0., 0., 300., 250.])],
                     [0., 0., 300., 250.],
                     AREA,
                     point,
@@ -1684,7 +1684,7 @@ mod tests {
             assert_eq!(t, before);
             let mut committed = proposal.layout.clone();
             assert_eq!(proposal.rectangles, committed.arrange(AREA));
-            assert!(proposal.rectangles.contains_key("%9"));
+            assert!(proposal.rectangles.contains_key("t9"));
             assert_ne!(proposal.rectangles[&key(1)], baseline[&key(1)]);
         }
     }

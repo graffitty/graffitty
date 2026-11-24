@@ -78,7 +78,7 @@ impl Store {
         pending.file.write_all(&data)?;
         pending.received = end;
         pending.touched = Instant::now();
-        let mut receipt = Receipt { id: chunk.id, pane: format!("%{pane}"), received: end, path: None };
+        let mut receipt = Receipt { id: chunk.id, pane: format!("t{pane}"), received: end, path: None };
         if end != chunk.size { return Ok((receipt, false)); }
         let pending = self.pending.remove(&key).unwrap();
         pending.file.sync_all()?;

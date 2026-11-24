@@ -1,5 +1,6 @@
 extends "main-area-tiling.gd"
 
+
 func play() -> void:
 	await labelled_tabs(["DIRECTIONS"])
 	await camera_at_rest()
@@ -31,5 +32,5 @@ func play() -> void:
 				var delta: Vector2 = view.pane_rects[added].get_center() - view.pane_rects[source].get_center()
 				check((delta.x if axis == "h" else delta.y) * (-1 if before else 1) > 1.0, "New pane appears on the requested side (%s, before=%s, delta=%s)" % [axis, before, delta])
 				check(not pane.title_menu.visible, "Right-click split does not open the title menu")
-				host._close_terminal_pane(int(added.substr(1)))
+				host._close_terminal_pane(PaneAddress.id(added))
 				await owner_at_rest()

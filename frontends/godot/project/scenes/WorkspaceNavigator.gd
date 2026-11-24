@@ -1,4 +1,6 @@
 extends RefCounted
+
+const PaneAddress := preload("res://scenes/PaneAddress.gd")
 ## Presentation adapter: the server owns bindings, routing, and neighbor selection.
 var host: Node
 var held: Dictionary = {}
@@ -24,7 +26,7 @@ func content_has_focus() -> bool:
 	if not host.is_terminal_pane(host.pane_focus): return false
 	if host.command_line_open(): return false
 	if is_instance_valid(host.dictation_preview) and host.dictation_preview.visible: return false
-	var pair: Dictionary = host.sessions.get(int(host.pane_focus.substr(1)), {})
+	var pair: Dictionary = host.sessions.get(PaneAddress.id(host.pane_focus), {})
 	if not pair.is_empty() and pair.term.has_method("get_ui_state") and not str(pair.term.get_ui_state().get("modal", "")).is_empty(): return false
 	if is_instance_valid(host.close_dialog) and host.close_dialog.visible: return false
 	var window: Window = host.get_window()
@@ -36,16 +38,16 @@ func content_has_focus() -> bool:
 	return true
 
 func connection_for(pane: String) -> Node:
-	if not pane.begins_with("%") or not pane.substr(1).is_valid_int(): return null
+	if PaneAddress.id(pane) < 0: return null
 	# A backend without a session connection (fixtures, early startup) navigates locally.
 	if not "connection" in host.session_backend: return null
 	var connection: Node = host.session_backend.connection
 	if "owners" in connection:
-		connection = connection.owners.get(int(pane.substr(1)), connection.owners.get(host.workspace_layout.containing(pane)))
+		connection = connection.owners.get(PaneAddress.id(pane), connection.owners.get(host.workspace_layout.containing(pane)))
 	return connection
 
 func request_id(pane: String, connection: Node) -> int:
-	var id := int(pane.substr(1))
+	var id := PaneAddress.id(pane)
 	for chromium in connection.topology.get("chromiums", []):
 		if int(chromium.id) == id: return int(chromium.owner)
 	return id
@@ -96,12 +98,12 @@ func handle(event: InputEvent) -> bool:
 	return true
 
 func _forward_key(pane: String, original: InputEventKey, effects := false) -> void:
-	if not host.sessions.has(int(pane.substr(1))): return
+	if not host.sessions.has(PaneAddress.id(pane)): return
 	var event := original.duplicate() as InputEventKey
 	for pressed in [true, false]:
 		event.pressed = pressed
 		event.echo = original.echo and pressed
-		host.sessions[int(pane.substr(1))].term.send_key(event, effects)
+		host.sessions[PaneAddress.id(pane)].term.send_key(event, effects)
 
 func apply_result(result: Dictionary) -> void:
 	if result.get("outcome") != "moved": return
@@ -123,7 +125,7 @@ func _drain() -> void:
 		if not is_instance_valid(connection):
 			_forward_key(item.pane, item.event)
 			continue
-		var response: Dictionary = await connection.remote_call(int(str(item.pane).substr(1)), "navigator.input",
+		var response: Dictionary = await connection.remote_call(PaneAddress.id(str(item.pane)), "navigator.input",
 			{"key": key_name(item.event), "context": context(item.pane)})
 		if not is_instance_valid(host): return
 		if item.epoch != epoch or item.pane != host.pane_focus: continue

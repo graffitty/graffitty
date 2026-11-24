@@ -1,10 +1,11 @@
 extends "fit-to-pane.gd"
 
+
 func play() -> void:
 	await camera_at_rest()
 	var view: Control = host.workspace_view
 	var key: String = host.pane_focus
-	var original_pid: int = host.sessions[int(key.substr(1))].term.get_shell_pid()
+	var original_pid: int = host.sessions[PaneAddress.id(key)].term.get_shell_pid()
 	await say("First launch: title double-click toggles to a 30% view and back")
 	var startup := frame()
 	await double_title(key)
@@ -91,7 +92,7 @@ func play() -> void:
 	view.show_main()
 	await hold(0.4)
 	check(not view.overview and is_equal_approx(view.navigation_zoom, view.main_frame().zoom), "Main View cancels an in-progress animation")
-	check(host.sessions[int(key.substr(1))].term.get_shell_pid() == original_pid, "Navigation preserves the original shell PID")
+	check(host.sessions[PaneAddress.id(key)].term.get_shell_pid() == original_pid, "Navigation preserves the original shell PID")
 	await say("Vertical split: full-width panes return to Main View")
 	host.world.create_terminal_tab()
 	await camera_at_rest()

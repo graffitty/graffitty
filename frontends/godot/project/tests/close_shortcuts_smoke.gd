@@ -1,17 +1,18 @@
 extends "../../../../tests/llm-e2e/suites/godot/tabs-and-panes/replays/main-area-tiling.gd"
 
 
+
 func play() -> void:
 	await camera_at_rest()
 	var first: String = host.pane_focus
-	var first_id := int(first.substr(1))
+	var first_id := PaneAddress.id(first)
 	var pid: int = host.sessions[first_id].term.get_shell_pid()
 	var tab: int = host.workspace_layout.active
 	var second := await add_window(first)
 	await camera_at_rest()
 	await keys("cmd+w")
 	await hold(0.3)
-	check(not host.sessions.has(int(second.substr(1))), "Cmd+W closes the focused terminal pane")
+	check(not host.sessions.has(PaneAddress.id(second)), "Cmd+W closes the focused terminal pane")
 	check(host.sessions.has(first_id) and host.sessions[first_id].term.get_shell_pid() == pid, "Sibling terminal keeps its PTY")
 	check(host.workspace_layout.active == tab, "Pane close preserves the workspace tab")
 	host.create_session()

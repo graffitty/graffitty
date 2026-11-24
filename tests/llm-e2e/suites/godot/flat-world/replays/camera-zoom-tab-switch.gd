@@ -1,4 +1,5 @@
 extends "../../../../replay/replay.gd"
+
 ## Replays tests/llm-e2e/suites/shared/flat-world/camera-zoom-tab-switch.md
 
 
@@ -24,7 +25,7 @@ func play() -> void:
 	)
 
 	var view: Control = host.workspace_view
-	var pane: Control = view.panes["%%%d" % host.active_session_id]
+	var pane: Control = view.panes[PaneAddress.key(host.active_session_id)]
 	var cursor_point: Vector2 = host.world._camera_cursor_uv() * host.world._sheet_size()
 	check((view.view_point(cursor_point) - view.view_point(pane.position)).y < view.content_rect().size.y - 40,
 		"Title and typing cursor fit together in the zoomed viewport")

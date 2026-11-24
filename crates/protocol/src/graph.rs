@@ -541,7 +541,7 @@ mod tests {
     fn previews_and_server_connections_share_modes_conditions_and_deadlines() {
         let source: Node = serde_json::from_value(json!({"provider":"claude"})).unwrap();
         let target: Node = serde_json::from_value(json!({"provider":"codex"})).unwrap();
-        let params = json!({"from":"%1","to":"%2","send":true,"outcome":"custom-success"});
+        let params = json!({"from":"t1","to":"t2","send":true,"outcome":"custom-success"});
         let mut original = connection(&params, &source, &target, |_| None).unwrap();
         assert!(original.send && !original.read);
         assert_eq!(original.from_port, "send");

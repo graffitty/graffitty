@@ -161,7 +161,7 @@ mod tests {
     const FIRST: &str = "00000000-0000-4000-8000-000000000001";
     const SECOND: &str = "00000000-0000-4000-8000-000000000002";
     fn input(status: &str, looking: bool, focused: bool) -> Vec<Input> {
-        vec![Input { id: "server/epoch/1".into(), key: "%1".into(), title: "task".into(), provider: "pi".into(), status: status.into(), program: None, attention: None, status_history: vec![], looking, focused }]
+        vec![Input { id: "server/epoch/1".into(), key: "t1".into(), title: "task".into(), provider: "pi".into(), status: status.into(), program: None, attention: None, status_history: vec![], looking, focused }]
     }
     fn completed(event: &str, seen: bool, looking: bool, focused: bool) -> Vec<Input> {
         let mut items = input("idle", looking, focused);
@@ -255,7 +255,7 @@ mod tests {
         assert!(sounds.is_empty(), "waiting attention is not completion");
     }
     #[test] fn typed_attention_is_optional_but_rejects_obsolete_or_malformed_forms() {
-        let mut value = serde_json::json!({"id":"agent", "key":"%1", "title":"task", "provider":"pi", "status":"idle",
+        let mut value = serde_json::json!({"id":"agent", "key":"t1", "title":"task", "provider":"pi", "status":"idle",
             "program":null, "looking":false, "focused":false});
         assert!(serde_json::from_value::<Input>(value.clone()).unwrap().attention.is_none());
         value["attention"] = serde_json::Value::Null;
@@ -270,24 +270,24 @@ mod tests {
     #[test] fn tab_projection_and_list_share_optimistic_receipts_without_a_second_seen_flag() {
         let mut tabs = crate::agent_attention::AgentAttention::default();
         let mut list = Agents::default();
-        let live: HashSet<String> = ["%1".into()].into();
-        let mut nodes = serde_json::json!({"%1":{"attention":{"event":FIRST, "kind":"completed", "seen":false}}});
+        let live: HashSet<String> = ["t1".into()].into();
+        let mut nodes = serde_json::json!({"t1":{"attention":{"event":FIRST, "kind":"completed", "seen":false}}});
         let mut rows = completed(FIRST, false, false, false);
         tabs.observe(&nodes, &HashSet::new(), &live);
-        rows[0].attention = serde_json::from_value(tabs.attention("%1")).unwrap();
+        rows[0].attention = serde_json::from_value(tabs.attention("t1")).unwrap();
         assert_eq!(list.observe(rows.clone(), 1).0[0].status, "done");
         tabs.observe(&nodes, &live, &live);
-        rows[0].attention = serde_json::from_value(tabs.attention("%1")).unwrap();
+        rows[0].attention = serde_json::from_value(tabs.attention("t1")).unwrap();
         rows[0].focused = true;
         rows[0].looking = true;
         let (shown, sounds) = list.observe(rows.clone(), 2);
         assert_eq!(shown[0].status, "idle");
         assert_eq!(shown[0].section, "Done", "focusing the result holds its group");
         assert!(sounds.is_empty());
-        assert_eq!(tabs.acknowledgements(), serde_json::json!([{"key":"%1", "event":FIRST}]));
-        nodes["%1"]["attention"]["event"] = SECOND.into();
+        assert_eq!(tabs.acknowledgements(), serde_json::json!([{"key":"t1", "event":FIRST}]));
+        nodes["t1"]["attention"]["event"] = SECOND.into();
         tabs.observe(&nodes, &HashSet::new(), &live);
-        rows[0].attention = serde_json::from_value(tabs.attention("%1")).unwrap();
+        rows[0].attention = serde_json::from_value(tabs.attention("t1")).unwrap();
         rows[0].focused = false;
         rows[0].looking = false;
         let (shown, sounds) = list.observe(rows, 3);

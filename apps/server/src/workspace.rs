@@ -1,4 +1,5 @@
 //! Canonical workspace persistence and session membership.
+use graffitty_protocol::pane_id::address as pane_address;
 use crate::{Error, Server};
 use graffitty_workspace_core::{
     state::{Authority, Edit, Snapshot},
@@ -25,15 +26,32 @@ pub struct Store {
     workspaces: BTreeMap<String, Authority>,
 }
 impl Store {
-    pub fn new(descriptor: &Path, epoch: &str) -> Result<Self, Error> {
+    pub fn new(descriptor: &Path, epoch: &str, adopting_003: bool) -> Result<Self, Error> {
         let path = descriptor.with_extension("workspace.json");
         let mut workspaces = BTreeMap::new();
+        let mut upgraded = false;
         if path.is_file() {
             // Session IDs belong to one owner epoch. A new daemon must not give
             // freshly allocated PTYs a previous daemon's identity/layout.
             let metadata = fs::metadata(&path)?;
             if metadata.len() <= 16 * 1024 * 1024 {
-                let document = serde_json::from_slice::<Value>(&fs::read(&path)?).and_then(|value| {
+                let document = serde_json::from_slice::<Value>(&fs::read(&path)?).and_then(|mut value| {
+                    if adopting_003 && value["version"] == 1 && value["epoch"] == epoch {
+                        // Only terminals survive the 0.0.3 holder handover.
+                        // Reconciliation drops old browser windows once the server adopts its PTYs.
+                        if let Some(spaces) = value["workspaces"].as_object_mut() {
+                            for space in spaces.values_mut() {
+                                if let Some(tabs) = space["layout"]["tabs"].as_object_mut() {
+                                    for tab in tabs.values_mut() {
+                                        if tab["windows"].as_array().is_some_and(|windows| windows.iter().any(|w| w["key"].as_str().is_some_and(|s| s.starts_with('%')))) {
+                                            crate::holder_upgrade::layout(tab);
+                                            upgraded = true;
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                    }
                     serde_json::from_value::<Document>(value)
                 });
                 if let Ok(document) = document {
@@ -48,11 +66,9 @@ impl Store {
                 }
             }
         }
-        Ok(Self {
-            path,
-            epoch: epoch.into(),
-            workspaces,
-        })
+        let store = Self { path, epoch: epoch.into(), workspaces };
+        if upgraded { store.persist_all(None)?; }
+        Ok(store)
     }
     pub fn snapshot(&self, workspace: &str) -> Snapshot {
         self.workspaces
@@ -179,7 +195,7 @@ pub fn sync(server: &mut Server, name: &str) -> Result<(), Error> {
         .map(|s| {
             (
                 s.tab,
-                Window::new(format!("%{}", s.id), s.rect.map(|v| v as f32)),
+                Window::new(pane_address(s.id), s.rect.map(|v| v as f32)),
             )
         })
         .chain(
@@ -190,8 +206,8 @@ pub fn sync(server: &mut Server, name: &str) -> Result<(), Error> {
                 .map(|b| {
                     (
                         b.tab,
-                        Window::new(format!("%{}", b.id), if b.main_window { [1050., 60., 1000., 750.] } else {
-                            let owner = format!("%{}", b.owner);
+                        Window::new(pane_address(b.id), if b.main_window { [1050., 60., 1000., 750.] } else {
+                            let owner = pane_address(b.owner);
                             let parent = snapshot.layout.tabs.get(&b.tab).and_then(|tab|tab.windows.iter().find(|w|w.key == owner));
                             let offset = server.chromiums.values().filter(|other|other.session_id==b.session_id && !other.main_window && other.id<b.id).count() as f32;
                             parent.map(|w|[w.rect[0]+w.rect[2]+40.+offset*1040.,w.rect[1],1000.,750.])
@@ -215,7 +231,7 @@ pub fn place_chromium_beside_owner(server: &mut Server, name: &str, tab: u64, ow
     let (Some(mut layout), Some(settings)) = (state.layout.tabs.get(&tab).cloned(), state.tabs.get(&tab)) else {
         return Ok(());
     };
-    if !beside_owner(&mut layout, &format!("%{owner}"), &format!("%{pane}"), settings.area)? {
+    if !beside_owner(&mut layout, &pane_address(owner), &pane_address(pane), settings.area)? {
         return Ok(());
     }
     server.workspace_state.edit(name, state.revision, Edit::Tab { tab, layout, settings: None })?;
@@ -242,7 +258,7 @@ pub fn sync_terminal_geometry(server: &mut Server, name: &str) -> Result<(), Err
         rectangles.extend(layout.clone().arrange(state.tabs[id].area));
     }
     for session in server.sessions.values_mut().filter(|s| s.workspace == name) {
-        if let Some(rect) = rectangles.get(&format!("%{}", session.id)) {
+        if let Some(rect) = rectangles.get(&pane_address(session.id)) {
             let extent = (f64::from(rect[2]), f64::from(rect[3]));
             if session.layout_extent != Some(extent) {
                 session.resize_pixels((extent.0-inset[0]-inset[2]).max(1.), (extent.1-inset[1]-inset[3]).max(1.))?;
@@ -300,9 +316,9 @@ pub fn create_pane(
         .get(&tab)
         .cloned()
         .ok_or("Unknown workspace tab")?;
-    let key = format!("%{}", server.next);
+    let key = pane_address(server.next);
     layout.add_neighbor(
-        &format!("%{source}"),
+        &pane_address(source),
         &key,
         axis,
         before,
@@ -340,10 +356,10 @@ mod tests {
         let dir = std::env::temp_dir().join(format!("graffitty-transfer-{}", uuid::Uuid::new_v4()));
         fs::create_dir(&dir).unwrap();
         let descriptor = dir.join("server.json");
-        let mut store = Store::new(&descriptor, "epoch").unwrap();
-        store.sync("0", &[(1, Window::new("%1", [0., 0., 100., 80.])),
-                          (2, Window::new("%2", [20., 10., 100., 80.]))]).unwrap();
-        store.sync("1", &[(3, Window::new("%3", [0., 0., 100., 80.]))]).unwrap();
+        let mut store = Store::new(&descriptor, "epoch", false).unwrap();
+        store.sync("0", &[(1, Window::new("t1", [0., 0., 100., 80.])),
+                          (2, Window::new("t2", [20., 10., 100., 80.]))]).unwrap();
+        store.sync("1", &[(3, Window::new("t3", [0., 0., 100., 80.]))]).unwrap();
         let before_source = store.snapshot("0");
         let before_target = store.snapshot("1");
         let backup = dir.join("backup.json");
@@ -358,7 +374,7 @@ mod tests {
         assert_eq!(store.snapshot("0").order, vec![1]);
         assert_eq!(store.snapshot("1").layout.tabs[&2], before_source.layout.tabs[&2]);
         assert_eq!(store.snapshot("1").order, vec![3, 2]);
-        let reopened = Store::new(&descriptor, "epoch").unwrap();
+        let reopened = Store::new(&descriptor, "epoch", false).unwrap();
         assert_eq!(reopened.snapshot("0"), store.snapshot("0"));
         assert_eq!(reopened.snapshot("1"), store.snapshot("1"));
         fs::remove_dir_all(dir).unwrap();
@@ -369,11 +385,11 @@ mod tests {
             std::env::temp_dir().join(format!("graffitty-workspace-{}", uuid::Uuid::new_v4()));
         fs::create_dir(&dir).unwrap();
         let descriptor = dir.join("server.json");
-        let mut store = Store::new(&descriptor, "one").unwrap();
+        let mut store = Store::new(&descriptor, "one", false).unwrap();
         store
             .sync(
                 "main",
-                &[(1, Window::new("%1", [0., 0., 100., 80.]))],
+                &[(1, Window::new("t1", [0., 0., 100., 80.]))],
             )
             .unwrap();
         let current = store.snapshot("main");
@@ -390,10 +406,10 @@ mod tests {
                 },
             )
             .unwrap();
-        let reopened = Store::new(&descriptor, "one").unwrap();
+        let reopened = Store::new(&descriptor, "one", false).unwrap();
         assert_eq!(reopened.snapshot("main"), store.snapshot("main"));
         assert!(
-            Store::new(&descriptor, "two")
+            Store::new(&descriptor, "two", false)
                 .unwrap()
                 .snapshot("main")
                 .layout
@@ -420,12 +436,12 @@ mod chromium_placement_tests {
 
     fn tab(enabled: bool, owner: impl FnOnce(&mut Window)) -> TabLayout {
         let mut layout = TabLayout { enabled, gap: Some(10.), ..Default::default() };
-        let mut terminal = Window::new("%1", [100., 100., 600., 400.]);
+        let mut terminal = Window::new("t1", [100., 100., 600., 400.]);
         owner(&mut terminal);
         layout.windows.push(terminal);
-        layout.windows.push(Window::new("%2", [300., 300., 800., 500.])); // Main's other pane.
+        layout.windows.push(Window::new("t2", [300., 300., 800., 500.])); // Main's other pane.
         // The new Chromium, where a new pane lands by default.
-        layout.windows.push(Window::new("%9", [1050., 60., 1000., 750.]));
+        layout.windows.push(Window::new("t9", [1050., 60., 1000., 750.]));
         layout
     }
 
@@ -438,21 +454,21 @@ mod chromium_placement_tests {
         ];
         for (name, enabled, owner) in cases {
             let mut layout = tab(enabled, owner);
-            assert!(beside_owner(&mut layout, "%1", "%9", AREA).unwrap(), "{name}");
-            let anchor = layout.window("%1").unwrap().clone();
-            let chromium = layout.window("%9").unwrap();
+            assert!(beside_owner(&mut layout, "t1", "t9", AREA).unwrap(), "{name}");
+            let anchor = layout.window("t1").unwrap().clone();
+            let chromium = layout.window("t9").unwrap();
             assert_eq!(chromium.rect[0], anchor.rect[0] + anchor.rect[2] + 10., "{name}: one gap to the right");
             assert_eq!(chromium.rect[1], anchor.rect[1], "{name}: level with the terminal");
             assert_eq!((chromium.stashed, chromium.graph_floating), (anchor.stashed, anchor.graph_floating), "{name}: same layer");
             assert!(!chromium.in_main() || !enabled, "{name}: not tiled into Main");
-            assert_eq!(layout.focused, "%9", "{name}: the new Chromium is focused");
+            assert_eq!(layout.focused, "t9", "{name}: the new Chromium is focused");
         }
     }
 
     #[test]
     fn chromium_from_a_terminal_in_main_stays_in_main() {
         let mut layout = tab(true, |_| {});
-        assert!(!beside_owner(&mut layout, "%1", "%9", AREA).unwrap());
-        assert_eq!(layout.window("%9").unwrap().rect, [1050., 60., 1000., 750.]);
+        assert!(!beside_owner(&mut layout, "t1", "t9", AREA).unwrap());
+        assert_eq!(layout.window("t9").unwrap().rect, [1050., 60., 1000., 750.]);
     }
 }

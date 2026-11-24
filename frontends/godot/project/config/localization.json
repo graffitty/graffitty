@@ -5213,18 +5213,18 @@
       "sv": "%s kraschade. Ladda om sidan för att fortsätta.",
       "da": "%s gik ned. Genindlæs siden for at fortsætte."
     },
-    "Chromium %d": {
-      "en-US": "Chromium %d",
-      "fr": "Navigateur %d",
-      "pt-BR": "Navegador %d",
-      "es": "Navegador %d",
-      "it": "Chromium %d",
-      "ko": "브라우저 %d",
-      "ja": "ブラウザー %d",
-      "de": "Chromium %d",
-      "nb": "Nettleser %d",
-      "sv": "Webbläsare %d",
-      "da": "Chromium %d"
+    "Chromium %s": {
+      "en-US": "Chromium %s",
+      "fr": "Navigateur %s",
+      "pt-BR": "Navegador %s",
+      "es": "Navegador %s",
+      "it": "Chromium %s",
+      "ko": "브라우저 %s",
+      "ja": "ブラウザー %s",
+      "de": "Chromium %s",
+      "nb": "Nettleser %s",
+      "sv": "Webbläsare %s",
+      "da": "Chromium %s"
     },
     "Remember password in system credential store": {
       "en-US": "Remember password in system credential store",
@@ -6370,18 +6370,18 @@
       "sv": "Resursövervakning är inte tillgänglig för denna panel.",
       "da": "Ressourceovervågning er ikke tilgængelig for dette panel."
     },
-    "Pane %%%d": {
-      "en-US": "Pane %%%d",
-      "fr": "Panneau %%%d",
-      "pt-BR": "Painel %%%d",
-      "es": "Panel %%%d",
-      "it": "Pannello %%%d",
-      "ko": "패널 %%%d",
-      "ja": "ペイン %%%d",
-      "de": "Bereich %%%d",
-      "nb": "Panel %%%d",
-      "sv": "Panel %%%d",
-      "da": "Panel %%%d"
+    "Pane %s": {
+      "en-US": "Pane %s",
+      "fr": "Panneau %s",
+      "pt-BR": "Painel %s",
+      "es": "Panel %s",
+      "it": "Pannello %s",
+      "ko": "패널 %s",
+      "ja": "ペイン %s",
+      "de": "Bereich %s",
+      "nb": "Panel %s",
+      "sv": "Panel %s",
+      "da": "Panel %s"
     },
     "≥ %.1f%% (partial)": {
       "en-US": "≥ %.1f%% (partial)",

@@ -39,7 +39,7 @@ func run() -> void:
 	connection.url = "wss://example.invalid/session"
 	chromium.open_native()
 	assert(chromium._queue.is_empty(), "Remote presentation must not open a server window")
-	assert(host.workspace_view.fitted == "%42")
+	assert(host.workspace_view.fitted == "t42")
 	app.hosts.erase(host)
 	host.free()
 	print("CHROMIUM_NATIVE_PRESENTATION_PASS")

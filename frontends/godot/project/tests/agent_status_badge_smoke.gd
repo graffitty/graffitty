@@ -45,7 +45,7 @@ func run() -> void:
 	app.add_child(mods)
 	var owner := Node.new()
 	root.add_child(owner)
-	var strip: Control = mods.create_pane_strip(owner, "%1")
+	var strip: Control = mods.create_pane_strip(owner, "t1")
 	strip.mouse_filter = Control.MOUSE_FILTER_PASS
 	strip.position = Vector2(30, 30)
 	root.add_child(strip)
@@ -53,24 +53,24 @@ func run() -> void:
 		{"at":"2030-01-01T00:30:15+00:00", "provider":"claude", "status":"busy"},
 		{"at":"2030-01-01T00:31:15+00:00", "provider":"claude", "status":"idle"},
 	]
-	var status: Dictionary = mods.pane_resources({"status": "running", "cpu_valid": true, "cpu_percent": 0.0, "memory_current": 10485760}, "%1")
+	var status: Dictionary = mods.pane_resources({"status": "running", "cpu_valid": true, "cpu_percent": 0.0, "memory_current": 10485760}, "t1")
 	status["agent"] = mods.agent_badge("claude", "idle", {}, history)
-	mods.publish_pane(owner, "%1", status)
+	mods.publish_pane(owner, "t1", status)
 	await process_frame
 	await process_frame
 	strip.render_now()
-	check("%1" in strip.texts() and "0%" in strip.texts() and "10M" in strip.texts(), "The strip shows pane, CPU and memory")
+	check("t1" in strip.texts() and "0%" in strip.texts() and "10M" in strip.texts(), "The strip shows pane, CPU and memory")
 	var badge_rect: Rect2 = strip.hit_rect("agent")
 	check(badge_rect.has_area(), "The strip draws the agent badge")
 	# A custom node's manifest icon is its own artwork, drawn in place of a provider logo.
 	var icon := {"svg": '<svg xmlns="http://www.w3.org/2000/svg" width="64" height="64" viewBox="0 0 64 64"><circle cx="32" cy="32" r="28" fill="#ffd078"/></svg>'}
 	status["agent"] = mods.agent_badge("", "idle", {"name": "Manual Prompt", "icon": icon}, [])
-	mods.publish_pane(owner, "%1", status)
+	mods.publish_pane(owner, "t1", status)
 	await process_frame
 	strip.render_now()
 	check(str(status.agent.logo).begins_with("<svg") and strip.hit_rect("agent").has_area() and not "agent-name" in strip.hit_keys() and strip.last_error().is_empty(), "A node icon's SVG draws inline instead of the node's name: " + strip.last_error())
 	status["agent"] = mods.agent_badge("claude", "idle", {}, history)
-	mods.publish_pane(owner, "%1", status)
+	mods.publish_pane(owner, "t1", status)
 	await process_frame
 	strip.render_now()
 	badge_rect = strip.hit_rect("agent")

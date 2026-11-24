@@ -219,3 +219,4 @@ mod chromium_video_header_tests {
 }
 
 pub mod graph;
+pub mod pane_id;

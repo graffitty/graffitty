@@ -1,6 +1,7 @@
 extends "main-area-tiling.gd"
 
 
+
 func cli(command: String) -> void:
 	var marker := OS.get_environment("XDG_STATE_HOME").path_join("tiling-cli-%d-%d" % [OS.get_process_id(), Time.get_ticks_usec()])
 	if OS.get_name() == "Windows":
@@ -26,7 +27,7 @@ func play() -> void:
 	if host.workspace_view.physics_enabled():
 		await view_menu("Floating Pane Physics")
 	var first: String = host.pane_focus
-	var caller := int(first.substr(1))
+	var caller := PaneAddress.id(first)
 	var pid: int = host.sessions[caller].term.get_shell_pid()
 	await say("CLI: horizontal tiles, then two new windows")
 	await cli("layout h_tiles")

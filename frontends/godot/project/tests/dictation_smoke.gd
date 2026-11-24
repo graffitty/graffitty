@@ -1,4 +1,5 @@
 extends "../../../../tests/llm-e2e/replay/replay.gd"
+
 const Dictation := preload("res://scenes/input/Dictation.gd")
 const Floating := preload("res://scenes/input/FloatingButtons.gd")
 
@@ -125,7 +126,7 @@ func play() -> void:
 	dictation.host = host
 	host.add_child(dictation)
 	var source: String = host.pane_focus
-	var source_id := int(source.substr(1))
+	var source_id := PaneAddress.id(source)
 	dictation._press()
 	dictation._release()
 	audio(dictation)
@@ -181,7 +182,7 @@ func play() -> void:
 	# Latched recording's square sends into the originally focused chromium field.
 	var created: Dictionary = await host.session_backend.connection.remote_call(source_id, "chromium.create", {"url":"about:blank"})
 	var chromium_key: String = created.get("result", {}).get("chromium", "")
-	var id := int(chromium_key.substr(1))
+	var id := PaneAddress.id(chromium_key)
 	deadline = Time.get_ticks_msec() + 15000
 	while not host.chromiums.has(id) and Time.get_ticks_msec() < deadline: await process_frame
 	check(host.chromiums.has(id), "Chromium is available for dictation")

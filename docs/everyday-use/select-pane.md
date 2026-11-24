@@ -4,17 +4,17 @@ Find a pane, then focus it:
 
 ```sh
 gft pane list
-gft pane select -t %3
+gft pane select -t t3
 ```
 
-Replace `%3` with a returned ID. Selection reveals hidden panes and switches
+Replace `t3` with a returned ID. Selection reveals hidden panes and switches
 tabs within the calling window. With no flags, the calling terminal is selected.
 
 ## Choose a neighbor
 
 ```sh
 gft pane select -L
-gft pane select -t %3 -R
+gft pane select -t t3 -R
 ```
 
 Use one direction: `-L`, `-D`, `-U`, or `-R`.

@@ -38,8 +38,8 @@ class Host extends Node:
 	var layout_transaction := false
 	var application := {"checkpoints": {"importing": false}}
 	var workspace_view := View.new()
-	var workspace_layout := {"active": 1, "tabs": [{"id": 1, "focused": "%1",
-		"tree": {"windows": [{"pane": "%1", "rect": Rect2(8, 42, 1000, 700)}]}}]}
+	var workspace_layout := {"active": 1, "tabs": [{"id": 1, "focused": "t1",
+		"tree": {"windows": [{"pane": "t1", "rect": Rect2(8, 42, 1000, 700)}]}}]}
 
 
 class TerminalStub extends Node:
@@ -58,7 +58,7 @@ func test_arrival_waits_for_claim_topology_resize_and_matching_scene() -> void:
 	var terminal := TerminalStub.new()
 	var pane := Control.new()
 	f.host.sessions[1] = {"term": terminal}
-	f.host.workspace_view.panes["%1"] = pane
+	f.host.workspace_view.panes["t1"] = pane
 	f.transport.topology.panes = [{"id": 1, "tab": 1, "columns": 100, "rows": 30}]
 	expect(not f.backend.transition_layout_ready(f.host), "A painted old grid cannot stand in for the resized scene")
 	terminal.grid = Vector2i(100, 30)

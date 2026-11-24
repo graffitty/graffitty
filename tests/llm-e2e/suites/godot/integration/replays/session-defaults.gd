@@ -1,4 +1,5 @@
 extends "terminal-tools.gd"
+
 const Defaults = preload("res://scenes/TerminalSessionDefaults.gd")
 var receipt_number := 0
 
@@ -85,7 +86,7 @@ func play() -> void:
 	if not await new_shell(false): return
 	var descendant := await shell_receipt()
 	check(same_path(descendant.cwd,moved),"Descendant split inherits changed live cwd")
-	host.focus_pane("%%%d" % original)
+	host.focus_pane(PaneAddress.key(original))
 	await camera_at_rest()
 	terminal = host.active_terminal()
 	var retained := await shell_receipt()

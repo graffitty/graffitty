@@ -5,34 +5,27 @@ class RestoreHost extends RefCounted:
 	var restored := []
 	func restore_checkpoint(tag: String, checkpoint: String) -> void: restored.append([tag, checkpoint])
 
-func test_saved_pane_and_route_ids_upgrade_without_changing_titles() -> void:
-	var saved := {"focused": "terminal:0", "title": "terminal:0",
-		"tree": {"windows": [{"pane": "terminal:0"}, {"pane": "chromium:8"}], "physics_anchor": "terminal:0"},
-		"graph_visual": {"routes": {"terminal:0/out>terminal:2/in": ["r1"]}}}
-	var restored: Dictionary = Checkpoints.decode(saved)
-	expect(restored.focused == "%0" and restored.tree.physics_anchor == "%0", "Saved pane zero keeps its identity")
-	expect(restored.tree.windows[1].pane == "%8", "Chromium IDs use the same namespace")
-	expect(restored.graph_visual.routes == {"%0/out>%2/in": ["r1"]}, "Saved routes use canonical graph endpoints")
-	expect(restored.title == "terminal:0", "User titles are preserved verbatim")
-	expect(Checkpoints.decode(restored) == restored, "Loading the migrated document again is stable")
-
+func test_saved_typed_keys_and_user_titles_round_trip() -> void:
+	var saved := {"focused": "c1", "title": "%1", "tree": {"windows": [{"pane": "t1"}, {"pane": "c1"}]},
+		"graph_visual": {"routes": {"t1/out>t2/in": ["r1"]}}}
+	expect(Checkpoints.decode(Checkpoints.encode(saved)) == saved, "Typed keys and literal user titles survive")
 
 func test_layout_json_round_trip_keeps_stashes_and_split_ratios() -> void:
 	var tabs := [
 		{
 			"id": 7,
 			"title": "review",
-			"focused": "%9",
+			"focused": "t9",
 			"tree": {
 				"windows": [
-					{ "pane": "%7", "rect": Rect2(-420, 80, 400, 300), "stashed": true },
-					{ "pane": "%9", "rect": Rect2(4, 80, 800, 600), "shown": true },
+					{ "pane": "t7", "rect": Rect2(-420, 80, 400, 300), "stashed": true },
+					{ "pane": "t9", "rect": Rect2(4, 80, 800, 600), "shown": true },
 				],
 				"tiles": {
 					"axis": "h",
 					"children": [
-						{ "pane": "%9", "weight": 0.37 },
-						{ "pane": "%10", "weight": 0.63 },
+						{ "pane": "t9", "weight": 0.37 },
+						{ "pane": "t10", "weight": 0.63 },
 					],
 				},
 				"tiling": true,
@@ -51,7 +44,7 @@ func test_layout_json_round_trip_keeps_stashes_and_split_ratios() -> void:
 		"Split ratio survives",
 	)
 	expect(
-		restored[0].focused == "%9" and restored[0].title == "review",
+		restored[0].focused == "t9" and restored[0].title == "review",
 		"Focus and title survive",
 	)
 
@@ -78,13 +71,13 @@ func test_restored_panes_spawn_their_prepared_program_and_arguments() -> void:
 
 func test_restored_panes_ask_for_their_saved_ids_only_from_local_history() -> void:
 	var window := {"panes": [{"id": 3}, {"id": 4}, {"id": 9}], "chromiums": [{"id": 12}],
-		"tabs": [{"id": 7, "tree": {"windows": [{"pane": "%3"}, {"pane": "%4"}]}}]}
+		"tabs": [{"id": 7, "tree": {"windows": [{"pane": "t3"}, {"pane": "t4"}]}}]}
 	var saved := {"keep_ids": true, "windows": [window]}
 	expect(Checkpoints.saved_tabs(saved) == {3: 7, 4: 7}, "Each placed pane knows its saved tab")
-	expect(Checkpoints.saved_identity(saved, window.panes[0], true) == {"id": 3, "tab": 7, "through": 12},
+	expect(Checkpoints.saved_identity(saved, window.panes[0], true) == {"id": 3, "tab": 7, "through": 9},
 		"A pane that opens its tab asks for both IDs, and new IDs start after the largest saved one")
-	expect(Checkpoints.saved_identity(saved, window.panes[1], false) == {"id": 4, "through": 12}, "A later pane joins its tab")
-	expect(Checkpoints.saved_identity(saved, window.panes[2], true) == {"id": 9, "through": 12}, "A pane outside every tab opens a new one")
+	expect(Checkpoints.saved_identity(saved, window.panes[1], false) == {"id": 4, "through": 9}, "A later pane joins its tab")
+	expect(Checkpoints.saved_identity(saved, window.panes[2], true) == {"id": 9, "through": 9}, "A pane outside every tab opens a new one")
 	saved.keep_ids = false
 	expect(Checkpoints.saved_identity(saved, window.panes[0], true) == {}, "An imported checkpoint takes new IDs")
 

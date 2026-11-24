@@ -114,9 +114,9 @@ class PrivateClient:
                     if update["id"] in current:
                         current[update["id"]].update(update)
 
-    def action(self, action, pane=-1, **params):
+    def action(self, action, session=-1, **params):
         self.sequence += 1
-        self.send(dict(type=action, session=pane, request=self.sequence, **params))
+        self.send(dict(type=action, session=session, request=self.sequence, **params))
         return self.until(lambda m: m.get("request") == self.sequence)
 
     def terminal(self):

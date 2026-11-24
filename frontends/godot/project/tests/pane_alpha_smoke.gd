@@ -28,7 +28,7 @@ func run():
 	host.add_child(host.workspace_view)
 	var pane := Pane.new()
 	pane.host = host
-	pane.key = "%0"
+	pane.key = "t0"
 	pane.size = Vector2(800,600)
 	var vp := SubViewport.new()
 	vp.size = Vector2i(800,600)

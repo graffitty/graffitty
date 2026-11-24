@@ -1,4 +1,6 @@
 extends "res://tests/mods_fixture.gd"
+
+const PaneAddress := preload("res://scenes/PaneAddress.gd")
 ## The Agents window renders the Agents mod from published rows: sections,
 ## captions, connected panes, fold, pin and focus. Isolated UI fixture.
 
@@ -6,13 +8,13 @@ func run() -> void:
 	setup()
 	var now := int(Time.get_unix_time_from_system())
 	for index in 5:
-		app.agents.rows.append({"id": "test-%d" % index, "key": "%%%d" % index,
+		app.agents.rows.append({"id": "test-%d" % index, "key": PaneAddress.key(index),
 			"title": ["Review the release", "Permission needed", "Tests complete", "Implement the agent list", "Ready for a task"][index],
 			"provider": ["claude", "pi", "codex", "pi", "opencode"][index],
 			"status": ["idle", "blocked", "done", "working", "idle"][index],
 			"section": ["Pinned", "Needs you", "Done", "Working", "Idle"][index],
 			"at": now - index * 70, "focused": false, "pinned": index == 0, "remote": "", "session": ""})
-	app.agents.trees["test-3"] = [{"key": "%9", "kind": "chromium", "title": "Docs", "status": "", "icon": "chromium", "lines": ["└"], "host_id": host.get_instance_id()}]
+	app.agents.trees["test-3"] = [{"key": "t9", "kind": "chromium", "title": "Docs", "status": "", "icon": "chromium", "lines": ["└"], "host_id": host.get_instance_id()}]
 	app.agents.changed.emit()
 	var dialog: Window = PanelWindow.open(host, "agents")
 	await settle()
@@ -28,10 +30,10 @@ func run() -> void:
 	check("Review the release" in shown and "Docs" in shown, "Rows and connected panes are drawn")
 	check("<1m" in shown and "2m" in shown, "Herdr elapsed times")
 	var keys: PackedStringArray = dialog.view.hit_keys()
-	check("sub-test-3|%9" in keys and "fold-test-3" in keys, "Connected pane row and its fold chevron exist")
+	check("sub-test-3|t9" in keys and "fold-test-3" in keys, "Connected pane row and its fold chevron exist")
 	dialog.view.click("fold-test-3")
 	await settle()
-	check(not "sub-test-3|%9" in dialog.view.hit_keys() and "1" in texts(dialog), "Folding hides connected panes and shows their count")
+	check(not "sub-test-3|t9" in dialog.view.hit_keys() and "1" in texts(dialog), "Folding hides connected panes and shows their count")
 	dialog.view.click("sec-Done")
 	await settle()
 	check(not "Tests complete" in texts(dialog), "Group folds")
@@ -53,16 +55,16 @@ func run() -> void:
 	dialog.view.click("fold-test-3")
 	await settle()
 	dialog.view.render_now()
-	dialog.view.click("sub-test-3|%9")
+	dialog.view.click("sub-test-3|t9")
 	pump()
-	check(host.focused_key == "%9", "Connected pane row focuses that pane in its host")
+	check(host.focused_key == "t9", "Connected pane row focuses that pane in its host")
 	check(dialog.visible, "Selecting a row leaves Agents open")
 	# Title-only updates re-render without losing fold state.
 	dialog.view.click("fold-test-3")
 	app.agents.rows[0].title = "Retitled"
 	app.agents.changed.emit()
 	await settle()
-	check("Retitled" in texts(dialog) and not "sub-test-3|%9" in dialog.view.hit_keys(), "Title updates keep the folded state")
+	check("Retitled" in texts(dialog) and not "sub-test-3|t9" in dialog.view.hit_keys(), "Title updates keep the folded state")
 	# Captions: one per consecutive server/session; local shows session only.
 	var contexts := [["", "work"], ["", "work"], ["build", "api"], ["build", "api"], ["build", "web"]]
 	for index in 5:

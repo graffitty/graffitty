@@ -113,7 +113,7 @@ class RemoteControllerTests(unittest.TestCase):
                                 self.fail(listed.stdout + listed.stderr + log.read())
                             time.sleep(.05)
                         target = json.loads(listed.stdout)["result"]["panes"][0]["target"]
-                        self.assertEqual(target, f"build/%{pane['id']}")
+                        self.assertEqual(target, f"build/t{pane['id']}")
                         sent = command("terminal", "type", "-t", target, "--text", "printf 'HEADLESS_MARKER\\n'\n", "--interval-ms", "0")
                         self.assertEqual(sent.returncode, 0, sent.stdout + sent.stderr)
                         read = command("terminal", "get-text", "-t", target, "--json")
@@ -126,7 +126,7 @@ class RemoteControllerTests(unittest.TestCase):
                         data = bytes(range(256)) * 1025
                         source = directory / "image fixture.png"
                         source.write_bytes(data)
-                        local = command("terminal", "put", "--target", f"%{pane['id']}", "--json", str(source))
+                        local = command("terminal", "put", "--target", f"t{pane['id']}", "--json", str(source))
                         self.assertEqual(local.returncode, 0, local.stdout + local.stderr)
                         self.assertEqual(Path(json.loads(local.stdout)["path"]).read_bytes(), data)
                         uploaded = command("terminal", "put", "--target", target, "--json", str(source))

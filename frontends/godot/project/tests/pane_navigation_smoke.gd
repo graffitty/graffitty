@@ -1,4 +1,5 @@
 extends "../../../../tests/llm-e2e/replay/replay.gd"
+
 ## Isolated server required, like the other workspace replays. Run with a GPU
 ## to exercise the final render hook as well as keyboard focus/navigation.
 const Layout := preload("res://scenes/WorkspaceLayout.gd")
@@ -19,7 +20,7 @@ func sample_render_camera() -> void:
 	for key in view.panes:
 		if not host.is_terminal_pane(key): continue
 		var pane: Control = view.panes[key]
-		var pair: Dictionary = host.sessions[int(key.substr(1))]
+		var pair: Dictionary = host.sessions[PaneAddress.id(key)]
 		if not pane._layout_held or not preload("res://scenes/TerminalViewportUpdates.gd").is_active(pair.vp): continue
 		raster_samples += 1
 		var expected: Vector2 = pane._layout_region.size * pane._layout_scale
@@ -56,7 +57,7 @@ func play() -> void:
 	host.focus_pane(source)
 	view.show_main()
 	for pane in [source, outside]:
-		host.sessions[int(pane.substr(1))].term.send_text("printf '\\033[2J'; i=0; while [ $i -lt 20 ]; do printf 'NAVIGATION TEXT HHHH MMMM 0123456789\\n'; i=$((i+1)); done\n")
+		host.sessions[PaneAddress.id(pane)].term.send_text("printf '\\033[2J'; i=0; while [ $i -lt 20 ]; do printf 'NAVIGATION TEXT HHHH MMMM 0123456789\\n'; i=$((i+1)); done\n")
 	await hold(1.0)
 	var initial: Dictionary = view.main_frame()
 	RenderingServer.frame_pre_draw.connect(sample_render_camera)

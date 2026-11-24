@@ -36,7 +36,7 @@ impl Upload {
         if let Some(error) = response.get("error") { bail!("{}", error["message"].as_str().unwrap_or("File upload failed")); }
         let receipt: Receipt = serde_json::from_value(response["result"].clone())?;
         ensure!(receipt.id == self.id && self.awaiting == Some(receipt.received)
-            && receipt.pane.starts_with('%') && receipt.pane[1..].parse::<u64>().is_ok()
+            && receipt.pane.starts_with('t') && graffitty_protocol::pane_id::parse(&receipt.pane).is_some()
             && self.pane.as_ref().is_none_or(|p| p == &receipt.pane), "Invalid file upload acknowledgment");
         ensure!(receipt.path.is_some() == (receipt.received == self.bytes.len()), "Incomplete file upload acknowledgment");
         self.offset = receipt.received;
@@ -59,11 +59,11 @@ mod tests {
         let packet = graffitty_protocol::pack(&json!({"type":"rpc","method":"terminal.put","params":first}), &[]).unwrap();
         assert!(packet.len() < graffitty_protocol::MAX_COMMAND_PACKET);
         assert_eq!(STANDARD.decode(first["upload"]["data"].as_str().unwrap()).unwrap(), bytes[..CHUNK_BYTES]);
-        let receipt = |received, path: Option<&str>| json!({"result":{"id":first["upload"]["id"],"pane":"%7","received":received,"path":path}});
+        let receipt = |received, path: Option<&str>| json!({"result":{"id":first["upload"]["id"],"pane":"t7","received":received,"path":path}});
         assert!(upload.accept(&receipt(CHUNK_BYTES-1, None)).is_err());
         assert!(upload.accept(&receipt(CHUNK_BYTES, None)).unwrap().is_none());
         let last = upload.next().unwrap();
-        assert_eq!(last["target"], "%7");
+        assert_eq!(last["target"], "t7");
         assert_eq!(last["upload"]["offset"], CHUNK_BYTES);
         assert_eq!(upload.accept(&receipt(bytes.len(), Some("/fixture/image.png"))).unwrap().as_deref(), Some("/fixture/image.png"));
         assert!(upload.next().is_none());

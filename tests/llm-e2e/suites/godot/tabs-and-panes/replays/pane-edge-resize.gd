@@ -1,6 +1,7 @@
 extends "main-area-tiling.gd"
 
 
+
 # Owner tile weights are f32; Godot gesture math uses f64. Compare exact tree
 # structure and weights at their wire precision, including after an ACK.
 func wire_tiles(tiles: Dictionary) -> Dictionary:
@@ -37,7 +38,7 @@ func play() -> void:
 	await camera_at_rest()
 	var pids := { }
 	for key in [alpha, beta, gamma]:
-		pids[key] = host.sessions[int(key.substr(1))].term.get_shell_pid()
+		pids[key] = host.sessions[PaneAddress.id(key)].term.get_shell_pid()
 	await say("Grab the right pane's LEFT EDGE, not the gap")
 	var before: Dictionary = view.pane_rects.duplicate()
 	var edge: Vector2 = before[beta].position + Vector2(2, before[beta].size.y * 0.25)
@@ -120,6 +121,6 @@ func play() -> void:
 	check_tiles()
 	for key in pids:
 		check(
-			host.sessions[int(key.substr(1))].term.get_shell_pid() == pids[key],
+			host.sessions[PaneAddress.id(key)].term.get_shell_pid() == pids[key],
 			"Resizing preserves %s's shell" % key,
 		)

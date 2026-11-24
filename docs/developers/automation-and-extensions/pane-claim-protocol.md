@@ -32,7 +32,7 @@ The sequence is invisible. Keep the ticket private; the nonce alone grants no au
 ### 3. Finish the claim
 
 Call `pane.claim.finish` with `{"ticket": ...}` and the same capability.
-It waits for nonce observation, then returns `{"pane":"%N","token":...}`.
+It waits for nonce observation, then returns `{"pane":"tN","token":...}`.
 Use that token for subsequent requests.
 
 Unknown, replayed, or expired nonces are ignored. Claims expire after two seconds.

@@ -6,7 +6,7 @@ var failures := 0
 class ScrollPointer extends "res://scenes/input/MobilePointer.gd":
 	var now := 0
 	var drag_scroll := false
-	var target := "%1"
+	var target := "t1"
 	var pointer_events: Array[InputEventMouse] = []
 	# This fixture presents one terminal without workspace chrome. Keep the
 	# production input handler and deferred scroll dispatch into that terminal.
@@ -134,11 +134,11 @@ func run() -> void:
 	for count in [1, 3]:
 		pointer.drag_scroll = count == 1
 		pointer.pointer_events.clear()
-		pointer.target = "%1"
+		pointer.target = "t1"
 		var first_coast := 0.0
 		var previous_coast := 0.0
 		for repeat_index in 4:
-			if repeat_index == 3: pointer.target = "%2"
+			if repeat_index == 3: pointer.target = "t2"
 			terminal.scroll_to_position(40.0)
 			var start := 2000 + repeat_index * 180
 			for index in count: touch(pointer, index, true, start)
@@ -165,7 +165,7 @@ func run() -> void:
 	# whose fling stops at an update that scrolls nothing, the fling ends with
 	# it: the next tap is a tap, not a brake on content that no longer moves.
 	pointer.drag_scroll = true
-	pointer.target = "%1"
+	pointer.target = "t1"
 	pointer.pointer_events.clear()
 	terminal.scroll_to_position(2.0)
 	touch(pointer, 0, true, 5000)

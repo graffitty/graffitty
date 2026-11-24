@@ -1,4 +1,6 @@
 extends "res://tests/client_scenarios/scenario.gd"
+
+const PaneAddress := preload("res://scenes/PaneAddress.gd")
 var manager: Node
 
 
@@ -313,12 +315,12 @@ func run() -> void:
 	var current_tab: Dictionary = host.workspace_layout.tab(host.workspace_layout.active)
 	var leaf := preload("res://scenes/WorkspaceLayout.gd").find(
 		current_tab.tree,
-		"%%%d" % ids[0],
+		PaneAddress.key(ids[0]),
 	)
 	var placed: Rect2 = leaf.rect
 	placed.position = Vector2(430, 180)
 	leaf.rect = placed
-	host.session_backend.move_pane(host, "%%%d" % ids[0], Vector2.INF)
+	host.session_backend.move_pane(host, PaneAddress.key(ids[0]), Vector2.INF)
 	a.send_action("resize", ids[0], { "columns": 72, "rows": 20 })
 	expect(
 		await until(
@@ -329,14 +331,14 @@ func run() -> void:
 	)
 	var retained := preload("res://scenes/WorkspaceLayout.gd").find(
 		host.workspace_layout.tab(host.workspace_layout.active).tree,
-		"%%%d" % ids[0],
+		PaneAddress.key(ids[0]),
 	)
 	expect(
 		(retained.rect as Rect2).position == placed.position,
 		"Topology updates preserve client pane placement",
 	)
 	var graph: Node = host.application.agent_api.graph
-	var key := "%%%d" % ids[0]
+	var key := PaneAddress.key(ids[0])
 	expect(
 		await until(
 			func():
@@ -352,7 +354,7 @@ func run() -> void:
 	var denied: Dictionary = await a.remote_call(
 		ids[0],
 		"graph.connect",
-		{ "from": key, "to": "%%%d" % ids[1], "from_port": "out", "to_port": "in" },
+		{ "from": key, "to": PaneAddress.key(ids[1]), "from_port": "out", "to_port": "in" },
 	)
 	expect(denied.has("error"), "Graph connections cannot cross workspace authority")
 	if OS.get_environment("GRAFFITTY_TEST_NO_CHROMIUM") != "1":

@@ -21,6 +21,15 @@ Don't:
 - Bump versions or write migrations for unreleased formats.
 - Treat optional app data as a legacy schema.
 
+**Remove the 0.0.3 live-holder exception on 2026-12-24.** During the 0.0.4
+upgrade, the server may convert a running holder's workspace layout and resolve
+an authenticated process's own inherited `%N` address. Public pane addresses
+use `tN` and `cN`. Saved checkpoints are outside this exception.
+
+On or after that date, delete `apps/server/src/holder_upgrade.rs`, its call
+sites, the `inherited_percent_id` flag, tests specific to this exception, and
+this note. Preserve normal live-holder reattachment and its tests.
+
 One format per boundary:
 
 | Boundary | Rule |

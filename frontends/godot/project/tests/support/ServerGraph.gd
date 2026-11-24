@@ -1,4 +1,5 @@
 extends "res://scenes/AgentGraph.gd"
+
 ## Rendering fixtures use the real Rust graph authority in an isolated process.
 ## Helpers only translate test operations into RPCs; there is no graph policy here.
 class Connection extends Node:
@@ -57,29 +58,29 @@ func _prepare() -> void:
 func connect_nodes(params: Dictionary) -> Dictionary:
 	_prepare()
 	# Tests wait for the real authority rather than testing optimistic previews.
-	return connection.remote_call(int(str(params.from).substr(1)), "graph.connect", params)
+	return connection.remote_call(PaneAddress.id(str(params.from)), "graph.connect", params)
 
 func dispatch(id: int, method: String, params: Dictionary) -> Dictionary:
 	_prepare()
 	return connection.remote_call(id, method, params)
 
 func register_ports(key: String, manifest: Dictionary) -> Dictionary:
-	return dispatch(int(key.substr(1)), "agent.register", manifest)
+	return dispatch(PaneAddress.id(key), "agent.register", manifest)
 
 func emit_output(key: String, params: Dictionary) -> Dictionary:
-	return dispatch(int(key.substr(1)), "graph.emit", params)
+	return dispatch(PaneAddress.id(key), "graph.emit", params)
 
 func enqueue(source: String, target: String, text: String, _type: String, run_id := "", outcome := "", _from_port := "", _to_port := "") -> Dictionary:
-	return dispatch(int(source.substr(1)), "graph.send", {"to": target, "text": text, "run_id": run_id, "outcome": outcome})
+	return dispatch(PaneAddress.id(source), "graph.send", {"to": target, "text": text, "run_id": run_id, "outcome": outcome})
 
 func progress(target: String, params: Dictionary) -> Dictionary:
-	return dispatch(int(target.substr(1)), "graph.progress", params.merged({"status": "pending"}))
+	return dispatch(PaneAddress.id(target), "graph.progress", params.merged({"status": "pending"}))
 
 func ack(target: String, id: String, status: String) -> void:
-	dispatch(int(target.substr(1)), "graph.ack", {"event_id": id, "status": status})
+	dispatch(PaneAddress.id(target), "graph.ack", {"event_id": id, "status": status})
 
 func lifecycle(key: String, params: Dictionary) -> Dictionary:
-	return dispatch(int(key.substr(1)), "agent.event", params)
+	return dispatch(PaneAddress.id(key), "agent.event", params)
 
 func _edge(edge: String) -> String:
 	return edge if not edge.is_empty() else str(edges.keys()[0])

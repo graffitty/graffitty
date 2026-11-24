@@ -1,4 +1,5 @@
 //! Session owner implementation, run by `gft server`. No Godot or windowing.
+use graffitty_protocol::pane_id::address as pane_address;
 pub mod fonts;
 use graffitty_platform::process_cwd;
 mod chromium_video;
@@ -64,6 +65,7 @@ mod close_policy;
 pub mod holder;
 pub mod holder_proto;
 mod holder_link;
+mod holder_upgrade;
 pub use holder_link::build_id;
 mod owner_state;
 mod clipboard;
@@ -194,6 +196,7 @@ struct Server {
     tab_titles: HashMap<u64, String>,
     retired_tabs: regroup::RetiredTabs,
     next: u64,
+    next_chromium: u64,
     shell: String,
     epoch: String,
     graphs: HashMap<String, graph::Graph>,
@@ -314,17 +317,9 @@ impl Server {
     ) -> Result<u64, Error> {
         self.create_with_environment(workspace, tab, source, options, &[], SavedIdentity::default())
     }
-    /// The identity a new pane or chromium takes: the saved one a restore
-    /// asks for while no live pane has it, else the next unused one.
-    ///
-    /// A reference to `%N` then still names the same pane after its
-    /// checkpoint is restored.
+    /// Restore a saved terminal ID when free, otherwise use the next terminal number.
     fn pane_identity(&self, saved: Option<u64>) -> u64 {
-        SavedIdentity::choose([saved, None], self.next, |id| {
-            !self.sessions.contains_key(&id)
-                && !self.chromiums.contains_key(&id)
-                && !self.retired_chromiums.iter().any(|chromium| chromium.id == id)
-        })
+        SavedIdentity::choose([saved, None], self.next, |id| !self.sessions.contains_key(&id))
     }
     /// A new tab's identity: the saved one, else `fallback`, while no live tab
     /// has it, else the next unused one after `taken`.
@@ -334,6 +329,15 @@ impl Server {
             !self.sessions.values().any(|s| s.tab == tab) && !self.chromiums.values().any(|b| b.tab == tab)
         })
     }
+    fn chromium_identity(&self, saved: Option<u64>) -> Result<u64, Error> {
+        let base = graffitty_protocol::pane_id::CHROMIUM_BASE;
+        let id = saved.filter(|id| (base + 1..2 * base).contains(id)
+            && !self.chromiums.contains_key(id)
+            && !self.retired_chromiums.iter().any(|b| b.id == *id)).unwrap_or(self.next_chromium);
+        if id >= 2 * base { return Err("Chromium ID space exhausted".into()); }
+        Ok(id)
+    }
+
     fn identities_taken(&mut self, ids: &[u64]) {
         for id in ids {
             self.next = self.next.max(id + 1);
@@ -368,6 +372,7 @@ impl Server {
             self.identities_taken(&[through]);
         }
         let id = self.pane_identity(saved.pane);
+        if id >= SavedIdentity::LIMIT { return Err("Terminal ID space exhausted".into()); }
         let new_tab = self.tab_identity(saved.tab, id, id);
         let initial_font = self.recent_font_size.unwrap_or_else(|| source.and_then(|id| self.sessions.get(&id)).map_or(self.settings.terminal.font.size, |s| s.font_size));
         let mut session = Session::new_with_font(
@@ -451,7 +456,7 @@ impl Server {
                     if json!(session.pid()) != root["pid"] || json!(session.foreground()) != root["foreground"] {
                         continue;
                     }
-                    if let Some(app) = result.get(format!("%{id}")).filter(|v| v.is_object()) {
+                    if let Some(app) = result.get(pane_address(id)).filter(|v| v.is_object()) {
                         self.foreground_apps.insert(id, app.clone());
                     }
                 }
@@ -459,7 +464,7 @@ impl Server {
                 if let Some(found) = result.as_object() {
                     for (key, state) in found {
                         let Some(id) = key
-                            .strip_prefix('%')
+                            .strip_prefix('t')
                             .and_then(|s| s.parse::<u64>().ok())
                         else {
                             continue;
@@ -514,7 +519,7 @@ impl Server {
                 let event_id = &context["event"]["event_id"];
                 let queued = graph
                     .queues
-                    .get(&format!("%{id}"))
+                    .get(&pane_address(id))
                     .is_some_and(|q| q.iter().any(|e| e["event_id"] == *event_id));
                 if !queued || !graph.allowed(&context["event"]) {
                     if let Some(submission) = result["queuedSubmission"]["id"].as_str() {
@@ -586,7 +591,7 @@ impl Server {
             && (groups != self.app_groups || self.app_scan_at.elapsed() >= Duration::from_millis(400))
         {
             let roots: Vec<_> = self.sessions.values().filter(|s| !s.exited).map(|s| {
-                let key = format!("%{}", s.id);
+                let key = pane_address(s.id);
                 let node = &self.graphs[&s.workspace].nodes[&key];
                 json!({"id":s.id,"node":key,"pid":s.pid(),"foreground":groups[&s.id],
                     "agent":{"pid":node["pid"],"provider":node["provider"],"started":node["started"],
@@ -600,7 +605,7 @@ impl Server {
         self.foreground_apps.retain(|id, _| self.sessions.get(id).is_some_and(|s| !s.exited));
         if self.scan_at.elapsed() > Duration::from_secs(2) && !self.workers.busy("scan") {
             let roots: Vec<_> = self.sessions.values().filter_map(|s| {
-                let key = format!("%{}", s.id);
+                let key = pane_address(s.id);
                 let node = &self.graphs[&s.workspace].nodes[&key];
                 // A closed shell's PID can be reused. Only check its registered agent.
                 let shell = if s.exited { None } else { s.pid() };
@@ -641,7 +646,7 @@ impl Server {
                     continue;
                 }
                 let id = key
-                    .trim_start_matches('%')
+                    .trim_start_matches('t')
                     .parse::<u64>()
                     .unwrap_or(0);
                 if self.sessions.get(&id).is_none_or(|s| s.typing_guard.blocked()) { continue; }
@@ -663,9 +668,9 @@ impl Server {
                 if self.chromiums[&root].window_is_closing(window) { continue; }
                 if self.chromiums.values().any(|b|b.session_id==session && b.state["windowId"]==window) { continue; }
                 if self.chromiums.len() >= 32 { break; }
-                let id=self.next; self.next+=1;
+                let Ok(id) = self.chromium_identity(None) else { break };
                 match self.chromiums[&root].sibling(id,window,self.resources.clone()) {
-                    Ok(chromium)=>{self.chromiums.insert(id,chromium);self.lifecycle_dirty=true;},
+                    Ok(chromium)=>{self.next_chromium = id + 1; self.chromiums.insert(id,chromium);self.lifecycle_dirty=true;},
                     Err(error)=>eprintln!("Could not mirror Chromium window: {error}"),
                 }
             }
@@ -811,7 +816,7 @@ impl Server {
             let event_id = params["event_id"].as_str().ok_or("Expected event_id")?;
             let ready = self.sessions.get(&id).is_some_and(|s| !s.typing_guard.blocked())
                 && self.graphs.get(&workspace).is_some_and(|graph|
-                    graph.queues.get(&format!("%{id}")).is_some_and(|queue|
+                    graph.queues.get(&pane_address(id)).is_some_and(|queue|
                         queue.iter().any(|event| event["event_id"] == event_id && graph.allowed(event))));
             return Ok(json!({"ready":ready}));
         }
@@ -868,7 +873,7 @@ impl Server {
                 target
             } else if let Some(target) = params["target"].as_str() {
                 let pane = target
-                    .trim_start_matches('%')
+                    .trim_start_matches('t')
                     .parse::<u64>()?;
                 self.sessions
                     .get(&pane)
@@ -919,8 +924,7 @@ impl Server {
             if params.get("id").is_some_and(|saved| !saved.is_u64()) {
                 return Err("Expected a saved chromium ID".into());
             }
-            let chromium_id = self.pane_identity(params["id"].as_u64());
-            self.identities_taken(&[chromium_id]);
+            let chromium_id = self.chromium_identity(params["id"].as_u64())?;
             let chromium = chromium::Chromium::new(
                 chromium_id,
                 id,
@@ -931,10 +935,11 @@ impl Server {
                 &self.settings.chromium,
                 Arc::clone(&self.resources),
             )?;
-            let result = json!({"chromium":format!("%{chromium_id}"),"id":chromium_id,
-                "surface":format!("%{chromium_id}"),"pane":format!("%{chromium_id}"),"tab_id":id,
+            let result = json!({"chromium":pane_address(chromium_id),"id":chromium_id,
+                "surface":chromium_id,"pane":pane_address(chromium_id),"tab_id":id,
                 "native_visible":false,"profile":chromium.state["profile"],
                 "temporary_profile":chromium.state["temporaryProfile"],"profile_template":template,"exited":false});
+            self.next_chromium = self.next_chromium.max(chromium_id + 1);
             self.chromiums.insert(chromium_id, chromium);
             let tab = self.sessions[&id].tab;
             if let Err(error) = workspace::place_chromium_beside_owner(self, &workspace, tab, id, chromium_id) {
@@ -947,7 +952,7 @@ impl Server {
             let chromium_id = params["chromium"]
                 .as_str()
                 .and_then(graffitty_workspace_core::pane_id::parse)
-                .ok_or_else(|| api::error("invalid_target", "Explicit %N required"))?;
+                .ok_or_else(|| api::error("invalid_target", "Explicit cN required"))?;
             let chromium = self
                 .chromiums
                 .get_mut(&chromium_id)
@@ -1009,7 +1014,7 @@ impl Server {
             let graph = &self.graphs[&workspace];
             let event = graph
                 .queues
-                .get(&format!("%{id}"))
+                .get(&pane_address(id))
                 .and_then(|q| q.iter().find(|e| e["event_id"] == event_id))
                 .ok_or("Pending event not found")?
                 .clone();
@@ -1028,8 +1033,8 @@ impl Server {
         if method == "graph.read" {
             let source = params["node"].as_str().ok_or("Expected node")?;
             let graph = &self.graphs[&workspace];
-            if !graph.can_read(source, &format!("%{id}")) {
-                return Err(Box::new(DispatchError(graph.read_denied(source, &format!("%{id}")))));
+            if !graph.can_read(source, &pane_address(id)) {
+                return Err(Box::new(DispatchError(graph.read_denied(source, &pane_address(id)))));
             }
             let node = graph.nodes.get(source).ok_or("Unknown node")?;
             let path = node["transcript_path"]
@@ -1043,15 +1048,15 @@ impl Server {
                 file.seek(SeekFrom::Start(offset))?;
                 let mut bytes = Vec::new();
                 file.take(512 * 1024).read_to_end(&mut bytes)?;
-                if !graph.can_read(source, &format!("%{id}")) {
-                    return Err(Box::new(DispatchError(graph.read_denied(source, &format!("%{id}")))));
+                if !graph.can_read(source, &pane_address(id)) {
+                    return Err(Box::new(DispatchError(graph.read_denied(source, &pane_address(id)))));
                 }
                 return Ok(
                     json!({"sessions":sessions,"text":String::from_utf8_lossy(&bytes),"offset":offset,"next_offset":offset+bytes.len() as u64,"size":size}),
                 );
             }
-            if !graph.can_read(source, &format!("%{id}")) {
-                return Err(Box::new(DispatchError(graph.read_denied(source, &format!("%{id}")))));
+            if !graph.can_read(source, &pane_address(id)) {
+                return Err(Box::new(DispatchError(graph.read_denied(source, &pane_address(id)))));
             }
             return Ok(json!({"sessions":sessions,"size":size,"format":"jsonl"}));
         }
@@ -1067,7 +1072,7 @@ impl Server {
                     eprintln!("[graph] %{} wiring %{} -> {}", pending.parent, id, Value::Array(failed.clone()));
                 }
             }
-            self.checkpoint_lifecycle.hook(id, &params["event"], &graph.nodes[&format!("%{id}")]);
+            self.checkpoint_lifecycle.hook(id, &params["event"], &graph.nodes[&pane_address(id)]);
             if matches!(params["event"].as_str(), Some("SessionStart" | "SessionEnd")) {
                 self.app_scan_at = Instant::now() - Duration::from_millis(400);
             }
@@ -1121,9 +1126,10 @@ impl Server {
             if value["method"] == "terminal.put" && value["token"].as_str() == Some(self.local_token.as_str()) {
                 return controller::dispatch(self, &json!({"version":value["version"],"method":value["method"],"params":value["params"]}));
             }
-            let (id, method, params) = api::request(&value, |token| {
+            let (id, method, mut params) = api::request(&value, |token| {
                 self.sessions.values().find(|s| s.token == token).map(|s| s.id)
             })?;
+            holder_upgrade::inherited_target(&self.sessions[&id], &mut params);
             self.request(id, method, &params)
         })();
         let result = result.and_then(|reply| { self.save_owner_state()?; Ok(reply) });
@@ -1147,7 +1153,7 @@ impl Server {
         let state = self.workspace_state.snapshot(workspace);
         let sessions: Vec<_> = self.sessions.values().filter(|s| s.workspace == workspace).collect();
         let panes: Vec<_> = sessions.iter().map(|s| {
-            let rect = state.layout.tabs.get(&s.tab).and_then(|t|t.window(&format!("%{}",s.id)))
+            let rect = state.layout.tabs.get(&s.tab).and_then(|t|t.window(&pane_address(s.id)))
                 .map(|w| w.rect.map(f64::from)).unwrap_or(s.rect);
             json!({"id":s.id,"tab":s.tab,"title":s.title(),"title_is_fallback":s.pinned_title.is_empty() && s.automatic_title().is_empty(),"pinned_title":s.pinned_title,"builtin_title":s.builtin_title,"automatic_title":s.automatic_title(),"rect":rect,"columns":s.columns,"rows":s.rows,"exited":s.exited,"font_size":s.font_size,"font_metrics":self.fonts.metrics(s.font_size),"content_insets":self.settings.terminal.content_insets,"pid":s.pid(),"shell":s.shell,"app":self.foreground_apps.get(&s.id).cloned().unwrap_or(json!({})),"limits":s.limits,"spawned_by":s.spawned_by,"effect_holds":s.effect_holds.snapshot(),"filetree":filetree::checkpoint(self, s.id),"filetree_owner":filetree::connection_owner(self, s.id),"filetree_open":self.filetrees.active.values().any(|tree| tree.owner == filetree::owner(self, s.id))})
         }).collect();
@@ -1594,7 +1600,7 @@ impl Server {
                 return Ok(json!({"created":created,"tab":self.sessions[&created].tab}));
             }
             if kind == "regroup" {
-                let surface = value["surface"].as_str().map(str::to_owned).unwrap_or_else(||format!("%{id}"));
+                let surface = value["pane"].as_str().map(str::to_owned).unwrap_or_else(||pane_address(id));
                 if !value["tab"].is_null() && !value["tab"].is_u64() { return Err("Expected destination tab ID or null".into()); }
                 if value.get("browser_only").is_some_and(|v| !v.is_boolean()) { return Err("browser_only must be boolean".into()); }
                 if value.get("new_tab").is_some_and(|saved| !saved.is_u64() || !value["tab"].is_null()) { return Err("new_tab names the saved ID of a tab this move creates".into()); }
@@ -2218,7 +2224,8 @@ pub fn run(options: Options, foreground_apps: fn(&Value) -> Value) -> Result<(),
     ctrlc::set_handler(move || stop.store(false, Ordering::Relaxed))?;
     let authentication = auth::Server::new(auth_config, &token)?;
     let epoch = previous.as_ref().map(|state| state.epoch.clone()).unwrap_or_else(|| uuid::Uuid::new_v4().to_string());
-    let workspace_state = workspace::Store::new(&descriptor, &epoch)?;
+    let adopting_003 = previous.as_ref().is_some_and(|owner| owner.sessions.iter().any(|s| s.inherited_percent_id));
+    let workspace_state = workspace::Store::new(&descriptor, &epoch, adopting_003)?;
     let resources = terminal_resource_monitor::Service::new()?;
     resources.set_cpu_scale(match settings.resource_monitor.cpu_percent_scale {
         settings::CpuPercentScale::OneCore => terminal_resource_monitor::CpuScale::OneCore,
@@ -2278,6 +2285,7 @@ pub fn run(options: Options, foreground_apps: fn(&Value) -> Value) -> Result<(),
         lifecycle_dirty: false,
         workspace_incarnations: HashMap::new(),
         next: 1,
+        next_chromium: graffitty_protocol::pane_id::CHROMIUM_BASE + 1,
         shell: default_shell,
         recent_font_size: None,
         fonts: fonts::Fonts::load(&settings.terminal.font, config_path.parent().unwrap_or(std::path::Path::new(".")))?,
@@ -2420,6 +2428,7 @@ pub fn run(options: Options, foreground_apps: fn(&Value) -> Value) -> Result<(),
                     let workspace = session.workspace.clone();
                     let mut id = session.id;
                     let mut value = request.value.clone();
+                    holder_upgrade::inherited_target(session, &mut value["params"]);
                     if value["method"] == "navigator.focus" {
                         if let Some(tty) = value["params"]["client_tty"].as_str() {
                             id = server.sessions.values()
@@ -2752,7 +2761,7 @@ pub struct SavedIdentity {
 }
 impl SavedIdentity {
     /// Keeps one restored file from moving every later identity out of reach.
-    const LIMIT: u64 = 1 << 32;
+    const LIMIT: u64 = graffitty_protocol::pane_id::CHROMIUM_BASE;
     pub fn parse(value: &Value) -> Result<Self, Error> {
         let field = |name: &str| match value.get(name) {
             None | Some(Value::Null) => Ok(None),
@@ -2792,7 +2801,7 @@ mod saved_identity_tests {
         assert_eq!((saved.pane, saved.tab, saved.through), (Some(4), Some(2), Some(9)));
         let saved = SavedIdentity::parse(&json!({"tab":null})).unwrap();
         assert_eq!((saved.pane, saved.tab), (None, None));
-        assert!(SavedIdentity::parse(&json!({"id":"%4"})).is_err());
+        assert!(SavedIdentity::parse(&json!({"id":"t4"})).is_err());
         assert!(SavedIdentity::parse(&json!({"id":-1})).is_err());
     }
 }
@@ -2809,7 +2818,7 @@ impl Server {
     /// so success always means the pane can be recovered.
     fn save_owner_state(&mut self) -> Result<(), Error> {
         if self.holders.is_none() { return Ok(()); }
-        let mut state = owner_state::OwnerState::new(&self.epoch, &self.owner_runtime, self.next, &self.tab_titles);
+        let mut state = owner_state::OwnerState::new(&self.epoch, &self.owner_runtime, self.next, self.next_chromium, &self.tab_titles);
         state.workspaces = self.workspaces.clone();
         state.filetrees = self.filetrees.saved();
         state.last_viewed = self.last_viewed.clone();
@@ -2831,7 +2840,7 @@ fn hand_over(server: &mut Server, runtime: &std::path::Path) {
         // forwarded is queued for its session and lands in the saved screen.
         holders.goodbye(if server.park { holder_proto::Goodbye::Park } else { holder_proto::Goodbye::Handover });
     }
-    let mut state = owner_state::OwnerState::new(&server.epoch, runtime, server.next, &server.tab_titles);
+    let mut state = owner_state::OwnerState::new(&server.epoch, runtime, server.next, server.next_chromium, &server.tab_titles);
     state.workspaces = server.workspaces.clone();
     state.filetrees = server.filetrees.saved();
     state.last_viewed = server.last_viewed.clone();
@@ -2910,6 +2919,7 @@ fn owner_state_adopt(server: &mut Server, adopted: Vec<holder_link::Adopted>, pr
         return;
     };
     server.next = server.next.max(previous.next);
+    server.next_chromium = previous.next_chromium;
     server.tab_titles = previous.tab_titles.clone();
     server.workspaces = previous.workspaces.clone();
     server.last_viewed = previous.last_viewed.clone();

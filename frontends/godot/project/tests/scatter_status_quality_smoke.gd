@@ -13,10 +13,10 @@ func status(view: SubViewport) -> Control:
 		mods.application = app
 		app.add_child(mods)
 		root.add_child(owner)
-		var sample: Dictionary = mods.pane_resources({"status": "running", "cpu_valid": true, "cpu_percent": 0.0, "memory_current": 6291456}, "%15", 1)
+		var sample: Dictionary = mods.pane_resources({"status": "running", "cpu_valid": true, "cpu_percent": 0.0, "memory_current": 6291456}, "t15", 1)
 		sample["agent"] = mods.agent_badge("codex", "idle", {}, [])
-		mods.publish_pane(owner, "%15", sample)
-	var strip: Control = mods.create_pane_strip(owner, "%15")
+		mods.publish_pane(owner, "t15", sample)
+	var strip: Control = mods.create_pane_strip(owner, "t15")
 	view.add_child(strip)
 	strip.render_now()
 	strip.size = strip.get_combined_minimum_size()

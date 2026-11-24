@@ -118,11 +118,11 @@ def test_real_host_routing(provider, custom):
                 processes.append(process)
                 def registered():
                     nodes = rpc(endpoint, 1, "graph.list", {})["nodes"]
-                    return next((n for n in nodes if n["node"] == "%2" and n.get("manifest")), None)
+                    return next((n for n in nodes if n["node"] == "t2" and n.get("manifest")), None)
                 wait_until(registered)
                 labels = list(config.get("options", {"True": "", "False": ""}))
                 for label, target in zip(labels, [3, 4]):
-                    rpc(endpoint, 1, "graph.connect", {"from": "%2", "to": f"%{target}", "from_port": label, "send": True})
+                    rpc(endpoint, 1, "graph.connect", {"from": "t2", "to": f"%{target}", "from_port": label, "send": True})
                 def healthy():
                     try:
                         return httpx.get(f"http://127.0.0.1:{port}/health").status_code == 200
@@ -133,7 +133,7 @@ def test_real_host_routing(provider, custom):
                 assert {o["id"] for o in manifest["outputs"]} == set(labels)
                 rpc(endpoint, 1, "agent.event", {"provider": provider, "event": "SessionStart",
                     "session_id": "fixture-session", "transcript_path": raw["sessions"][0]["path"]})
-                rpc(endpoint, 1, "graph.connect", {"from": "%1", "to": "%2", "from_port": "turn_completed", "to_port": "evaluate"})
+                rpc(endpoint, 1, "graph.connect", {"from": "t1", "to": "t2", "from_port": "turn_completed", "to_port": "evaluate"})
                 rpc(endpoint, 1, "agent.event", {"provider": provider, "event": "Stop", "text": raw["text"]})
                 try:
                     receipts = wait_until(lambda: rpc(endpoint, 1, "graph.list", {})["receipts"])
@@ -144,7 +144,7 @@ def test_real_host_routing(provider, custom):
                 selected, other = (4, 3) if custom else (3, 4)
                 output = rpc(endpoint, selected, "graph.take", {})["events"]
                 assert len(output) == 1
-                assert output[0]["source"] == "%2"
+                assert output[0]["source"] == "t2"
                 assert output[0]["text"] == raw["text"]
                 assert output[0]["source_port"] == ("revise" if custom else "True")
                 assert output[0]["payload"] is None
@@ -159,7 +159,7 @@ def test_real_host_routing(provider, custom):
                 assert state["last_message"] == raw["text"]
                 stop(process)
                 nodes = rpc(endpoint, 1, "graph.list", {})["nodes"]
-                assert next(n for n in nodes if n["node"] == "%2")["status"] == "offline"
+                assert next(n for n in nodes if n["node"] == "t2")["status"] == "offline"
         finally:
             for process in reversed(processes):
                 stop(process)

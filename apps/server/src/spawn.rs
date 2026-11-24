@@ -275,7 +275,7 @@ mod tests {
         .unwrap();
         session.input(b"printf '\\036%s|%s|%s|%s\\037\\n' \"$SPAWN_LITERAL_TEST\" \"$PWD\" \"$GRAFFITTY_SURFACE_ID\" \"$GRAFFITTY_TOKEN\"\r".to_vec()).unwrap();
         let expected = format!(
-            "\x1e$(exit 7);`id`|{}|%91|actual-capability\x1f",
+            "\x1e$(exit 7);`id`|{}|91|actual-capability\x1f",
             cwd.display()
         );
         let deadline = Instant::now() + Duration::from_secs(5);

@@ -1,4 +1,6 @@
 extends SceneTree
+
+const PaneAddress := preload("res://scenes/PaneAddress.gd")
 var failures: Array[String] = []
 var folder := OS.get_environment("GRAFFITTY_2D_ARTIFACTS")
 class ErrorWatch extends Logger:
@@ -72,7 +74,7 @@ func run() -> void:
 	await create_timer(.2).timeout
 	check(host.workspace_view.pane_rects.size()==2,"Multiple panes share the 2D canvas")
 	world.tab_fx = true
-	host.select_workspace(host.workspace_layout.containing("%%%d" % session))
+	host.select_workspace(host.workspace_layout.containing(PaneAddress.key(session)))
 	var handoff_seen := false
 	var deadline := Time.get_ticks_msec() + 5000
 	while Time.get_ticks_msec() < deadline:

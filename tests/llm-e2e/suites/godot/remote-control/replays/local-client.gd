@@ -1,6 +1,7 @@
 extends "../../../../replay/replay.gd"
 
 
+
 func android_client() -> bool:
 	return false
 
@@ -21,14 +22,14 @@ func play() -> void:
 	var focused: String = host.pane_focus
 	var graph: Node = app.agent_api.graph
 	var source := focused
-	var created: Dictionary = await host.session_backend.connection.request_action("create", {"kind":"pane", "session":int(source.substr(1))})
-	var target_node := "%%%d" % int(created.created)
+	var created: Dictionary = await host.session_backend.connection.request_action("create", {"kind":"pane", "session":PaneAddress.id(source)})
+	var target_node := PaneAddress.key(int(created.created))
 	await owner_at_rest()
 	host.focus_pane(focused)
 	for key in [source, target_node]:
-		await graph.dispatch(int(key.substr(1)), "agent.event", {"kind": "custom", "event": "SessionStart"})
-		await graph.dispatch(int(key.substr(1)), "agent.register", {"name": "Remote graph fixture", "inputs": [{"id": "in"}], "outputs": [{"id": "out"}]})
-	var linked: Dictionary = await graph.dispatch(int(source.substr(1)), "graph.connect", {"from": source, "from_port": "out", "to": target_node, "to_port": "in", "send": true})
+		await graph.dispatch(PaneAddress.id(key), "agent.event", {"kind": "custom", "event": "SessionStart"})
+		await graph.dispatch(PaneAddress.id(key), "agent.register", {"name": "Remote graph fixture", "inputs": [{"id": "in"}], "outputs": [{"id": "out"}]})
+	var linked: Dictionary = await graph.dispatch(PaneAddress.id(source), "graph.connect", {"from": source, "from_port": "out", "to": target_node, "to_port": "in", "send": true})
 	check(not linked.has("error"), "Create server graph connection: %s" % linked)
 	var pids := { }
 	for id in host.sessions:
@@ -83,7 +84,7 @@ func play() -> void:
 	if android_client(): child_args.append("--touch-controls")
 	var child := Background.create_godot_process(child_args)
 	create_timer(2.0).timeout.connect(func():
-		graph.dispatch(int(source.substr(1)), "agent.event", {"kind": "custom", "event": "UserPromptSubmit"})
+		graph.dispatch(PaneAddress.id(source), "agent.event", {"kind": "custom", "event": "UserPromptSubmit"})
 	)
 	check(child > 0, "Launch separate Godot client process")
 	var deadline := Time.get_ticks_msec() + 65000

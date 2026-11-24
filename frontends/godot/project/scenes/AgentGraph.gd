@@ -1,5 +1,7 @@
 extends Node
 
+const PaneAddress := preload("res://scenes/PaneAddress.gd")
+
 class RunUsage extends RefCounted:
 	var count: int
 	var limit: int
@@ -82,7 +84,7 @@ func _budget_command(edge: String, method: String, params: Dictionary) -> Dictio
 	return result
 
 func dispatch(id: int, method: String, params: Dictionary) -> Dictionary:
-	var connection: Node = remote_owners.get("%%%d" % id)
+	var connection: Node = remote_owners.get(PaneAddress.key(id))
 	if not is_instance_valid(connection): return fail("Graph server is not connected")
 	for field in ["from", "to", "node"]:
 		if params.has(field) and remote_owners.get(str(params[field])) != connection:
@@ -107,7 +109,7 @@ func connect_nodes(params: Dictionary) -> Dictionary:
 	# only the server assigns revisions or permits delivery.
 	_sync_view(_core.view())
 	changed.emit()
-	_remote_edit(remote, int(str(params.from).substr(1)), "graph.connect", params)
+	_remote_edit(remote, PaneAddress.id(str(params.from)), "graph.connect", params)
 	return preview
 
 
@@ -119,7 +121,7 @@ func disconnect_nodes(source: String, target: String, from_port := "", to_port :
 	if not is_instance_valid(connection) or remote_owners.get(target) != connection: return
 	_sync_view(_core.preview_disconnect(connection.get_instance_id(), source, target, from_port, to_port))
 	changed.emit()
-	_remote_edit(connection, int(source.substr(1)), "graph.disconnect", {"from": source, "to": target, "from_port": from_port, "to_port": to_port})
+	_remote_edit(connection, PaneAddress.id(source), "graph.disconnect", {"from": source, "to": target, "from_port": from_port, "to_port": to_port})
 
 func _remote_edit(connection: Node, id: int, method: String, params: Dictionary) -> void:
 	var result: Dictionary = await connection.remote_call(id, method, params)

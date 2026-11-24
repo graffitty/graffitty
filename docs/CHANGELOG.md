@@ -6,7 +6,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [v0.0.4] - 2026-11-24
 ### :bug: Bug Fixes
-- stabilize remote sessions, rendering, and agent read state ([#4](https://github.com/graffitty/graffitty/pull/4)).
+- distinguish pane IDs and correct remote session, rendering, and agent status issues ([#4](https://github.com/graffitty/graffitty/pull/4)).
 
 ## [v0.0.3] - 2026-11-23
 ### :bug: Bug Fixes

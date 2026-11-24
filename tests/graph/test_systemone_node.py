@@ -70,12 +70,12 @@ class SystemoneIntegration(unittest.TestCase):
                           {**self.env, "OPENROUTER_API_KEY": "test-secret", "GRAFFITTY_NODE_CONFIG": str(self.folder / "defaults.json"), "TERM": "xterm-256color", **(env or {})}, **kwargs)
 
     def manifest(self):
-        return next((n.get("manifest") for n in self.call(1,"graph.list")["nodes"] if n["node"] == "%3" and n.get("manifest",{}).get("name") == "SystemOne"), None)
+        return next((n.get("manifest") for n in self.call(1,"graph.list")["nodes"] if n["node"] == "t3" and n.get("manifest",{}).get("name") == "SystemOne"), None)
 
     def connect(self, yes="True", no="False"):
-        self.call(1,"graph.connect", **{"from":"%1","from_port":"result","to":"%3","to_port":"evaluate"})
+        self.call(1,"graph.connect", **{"from":"t1","from_port":"result","to":"t3","to_port":"evaluate"})
         for port, target in [(yes,4),(no,2)]:
-            self.call(3,"graph.connect", **{"from":"%3","from_port":port,"to":f"%{target}","to_port":"in"})
+            self.call(3,"graph.connect", **{"from":"t3","from_port":port,"to":f"t{target}","to_port":"in"})
 
     def run_mode(self, mode, answer, expected):
         self.answer = answer
@@ -120,9 +120,9 @@ class SystemoneIntegration(unittest.TestCase):
                 {"id": port, "description": port} for _, port, _ in prompts])],
             {**self.env, **env, "GRAFFITTY_NODE_CONFIG": str(self.folder / "defaults.json")})
         wait(self.manifest)
-        self.call(1, "graph.connect", **{"from": "%1", "from_port": "result", "to": "%3", "to_port": "evaluate"})
+        self.call(1, "graph.connect", **{"from": "t1", "from_port": "result", "to": "t3", "to_port": "evaluate"})
         for _, port, target in prompts:
-            self.call(3, "graph.connect", **{"from": "%3", "from_port": port, "to": f"%{target}", "to_port": "in"})
+            self.call(3, "graph.connect", **{"from": "t3", "from_port": port, "to": f"t{target}", "to_port": "in"})
         for text, _, target in prompts:
             payload = {"text": text, "original": ["한글", 42]}
             self.call(1, "graph.emit", output="result", payload=payload)

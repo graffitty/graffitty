@@ -101,7 +101,7 @@ modes, and tmux setup.
 2. Choose pane with relative ID or unique ID (uid).
   - uid stays the same when moving panes between tabs in the same session.
   - For example, `5-` will paste selection (or current line) to the .5 pane.
-  - `5<space>-` will paste selection (or current line) to the %5 pane.
+  - `5<space>-` will paste selection (or current line) to the t5 pane.
   - Use `gft pane surfaces` to see the pane unique identifier.
 3. Choose tab by giving number >= 10.
   - For example, `12-` will paste selection (or current line) to tab 1 pane 2.

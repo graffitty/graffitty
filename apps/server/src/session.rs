@@ -62,6 +62,7 @@ pub struct Session {
     /// started this one. Children close with their parent unless they
     /// asked to outlive it.
     pub spawned_by: Option<u64>,
+    pub inherited_percent_id: bool,
     pub dies_with_parent: bool,
     _shell_hooks: Option<crate::shell_hooks::Hooks>,
     #[cfg(windows)]
@@ -302,8 +303,8 @@ impl Session {
         cmd.env("GRAFFITTY_SOCKET", endpoint);
         cmd.env("GRAFFITTY_TOKEN", token);
         cmd.env("GRAFFITTY_TAB_ID", id.to_string());
-        cmd.env("GRAFFITTY_SURFACE_ID", format!("%{id}"));
-        cmd.env("GRAFFITTY_PANE", format!("%{id}"));
+        cmd.env("GRAFFITTY_SURFACE_ID", id.to_string());
+        cmd.env("GRAFFITTY_PANE", format!("t{id}"));
         cmd.env("GRAFFITTY_BIN", cli);
         for (key, value) in managed_environment { cmd.env(key, value); }
         cmd.env("TERM_PROGRAM", "graffitty");
@@ -535,6 +536,7 @@ impl Session {
             checkpoint: None,
             limits,
             spawned_by: None,
+            inherited_percent_id: false,
             dies_with_parent: false,
             _shell_hooks: shell_hooks,
             #[cfg(windows)]
@@ -620,6 +622,7 @@ impl Session {
         session.layout_extent = saved.layout_extent;
         session.program_status = saved.program_status.clone();
         session.spawned_by = saved.spawned_by;
+        session.inherited_percent_id = saved.inherited_percent_id;
         session.dies_with_parent = saved.dies_with_parent;
         // A saved screen is synthetic: nothing it asks may reach the program.
         //
@@ -656,6 +659,7 @@ impl Session {
             home_directory: self.home_directory.clone(),
             program_status: self.program_status.clone(),
             spawned_by: self.spawned_by,
+            inherited_percent_id: self.inherited_percent_id,
             dies_with_parent: self.dies_with_parent,
             #[cfg(windows)]
             console_title: self.initial_console_title.clone(),
@@ -1045,7 +1049,7 @@ impl Session {
             return self.pinned_title.clone();
         }
         let title = self.automatic_title();
-        if title.is_empty() { format!("%{}", self.id) } else { title }
+        if title.is_empty() { format!("t{}", self.id) } else { title }
     }
     pub fn reported_title(&self) -> &str {
         let title = self.vt.title().ok().and_then(|b| std::str::from_utf8(b).ok()).unwrap_or("");
@@ -1227,7 +1231,7 @@ mod windows_tests {
             "capability", "graffitty", None, Some(&options)).unwrap();
         let initial = session.cwd().unwrap();
         let report = format!("\x1b]7;file://localhost/{}\x07",
-            directory.to_string_lossy().replace('\\', "/").replace(' ', "%20"));
+            directory.to_string_lossy().replace('\\', "/").replace(' ', "t20"));
         session.vt.vt_write(report.as_bytes());
         assert_eq!(session.cwd().unwrap(), directory);
         std::fs::remove_dir(&directory).unwrap();
@@ -1299,7 +1303,7 @@ mod tests {
         let mut session = Session::new(1, 1, "titles-test", "/bin/sh", "private", "capability",
             "graffitty", None, Some(&options)).unwrap();
         session.initial_directory = None;
-        assert_eq!(session.title(), "%1");
+        assert_eq!(session.title(), "t1");
         assert_eq!(session.automatic_title(), "");
         session.initial_directory = Some("/tmp/start directory".into());
         assert_eq!(session.title(), "/tmp/start directory");

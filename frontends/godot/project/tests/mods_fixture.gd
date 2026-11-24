@@ -36,7 +36,7 @@ class Host extends Node:
 	var workspace_view := View.new()
 	var workspace_layout := Layout.new()
 	var effect_profiles := Profiles.new()
-	var pane_focus := "%1"
+	var pane_focus := "t1"
 	var active_session_id := 1
 	var application: Node
 	var world: Node = World.new()

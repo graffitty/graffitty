@@ -13,7 +13,7 @@ pub fn start(server: &mut Server, request: &Value) -> Result<api::Reply, Error> 
         .values()
         .filter(|s| !s.exited)
         .map(|s| {
-            let key = format!("%{}", s.id);
+            let key = format!("t{}", s.id);
             let node = &server.graphs[&s.workspace].nodes[&key];
             json!({"node":key,"pid":s.pid(),"foreground":s.foreground(),"agent_pid":node["pid"],
             "started":node["started"],"provider_home":node["provider_home"]})
@@ -124,31 +124,31 @@ mod tests {
     #[test]
     fn fresh_exact_thread_match_requires_a_live_unchanged_pane() {
         let context =
-            json!({"thread":"thread-a","roots":[{"node":"%1","pid":10},{"node":"%2","pid":20}]});
-        let found = json!({"%1":{"provider":"codex","session_id":"thread-b"},
-            "%2":{"provider":"codex","session_id":"thread-a"}});
+            json!({"thread":"thread-a","roots":[{"node":"t1","pid":10},{"node":"t2","pid":20}]});
+        let found = json!({"t1":{"provider":"codex","session_id":"thread-b"},
+            "t2":{"provider":"codex","session_id":"thread-a"}});
         let token =
             |id, root: &Value| (root["pid"] == json!(id * 10)).then(|| format!("token-{id}"));
         assert_eq!(
             resolve(&context, &found, token).unwrap(),
-            json!({"pane":"%2","token":"token-2"})
+            json!({"pane":"t2","token":"token-2"})
         );
         assert!(resolve(&context, &found, |_, _| None).is_err());
         let mut switched = found.clone();
-        switched["%2"]["session_id"] = json!("thread-c");
+        switched["t2"]["session_id"] = json!("thread-c");
         assert!(resolve(&context, &switched, token).is_err());
         let mut ambiguous = found.clone();
-        ambiguous["%1"]["session_id"] = json!("thread-a");
+        ambiguous["t1"]["session_id"] = json!("thread-a");
         assert!(resolve(&context, &ambiguous, token).is_err());
         let mut wrong_provider = found;
-        wrong_provider["%2"]["provider"] = json!("claude");
+        wrong_provider["t2"]["provider"] = json!("claude");
         assert!(resolve(&context, &wrong_provider, token).is_err());
     }
 
     #[test]
     fn missing_provider_evidence_and_worker_errors_are_visible() {
-        let context = json!({"thread":"thread-a","roots":[{"node":"%1","pid":10}]});
-        let found = json!({"%1":{"provider":"codex","discovery_note":"Codex listener matches 0 main threads"}});
+        let context = json!({"thread":"thread-a","roots":[{"node":"t1","pid":10}]});
+        let found = json!({"t1":{"provider":"codex","discovery_note":"Codex listener matches 0 main threads"}});
         let error = resolve(&context, &found, |_, _| Some("secret".into())).unwrap_err();
         let details = api::error_details(&error);
         assert_eq!(details["code"], "unresolved_thread");

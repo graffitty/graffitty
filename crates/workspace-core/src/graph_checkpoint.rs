@@ -133,29 +133,29 @@ mod tests {
             .dispatch(
                 1,
                 "graph.connect",
-                &json!({"from":"%1","to":"%2","send":true,"muted":true,
+                &json!({"from":"t1","to":"t2","send":true,"muted":true,
             "contains":"important","outcome":"success","stop_at":4102444800u64}),
             )
             .unwrap();
-        source.nodes.get_mut("%1").unwrap()["provider"] = json!("shell");
-        source.nodes.get_mut("%2").unwrap()["provider"] = json!("shell");
+        source.nodes.get_mut("t1").unwrap()["provider"] = json!("shell");
+        source.nodes.get_mut("t2").unwrap()["provider"] = json!("shell");
         let saved = source.checkpoint();
         let mut target = Graph::default();
         target.add(10, "New shell".into());
         target.add(20, "New shell".into());
-        let ids = HashMap::from([("%1".into(), "%10".into()), ("%2".into(), "%20".into())]);
+        let ids = HashMap::from([("t1".into(), "t10".into()), ("t2".into(), "t20".into())]);
         target.restore_checkpoint(&saved, &ids).unwrap();
         let edge = &target.checkpoint()["edges"][0];
-        assert_eq!(edge["from"], "%10");
-        assert_eq!(edge["to"], "%20");
+        assert_eq!(edge["from"], "t10");
+        assert_eq!(edge["to"], "t20");
         assert_eq!(edge["muted"], true);
         assert_eq!(edge["contains"], "important");
         assert_eq!(edge["stop_at"].as_f64(), Some(4102444800.));
-        assert_eq!(target.nodes["%10"]["provider"], "shell");
+        assert_eq!(target.nodes["t10"]["provider"], "shell");
         assert!(target.queues.is_empty());
         let before = target.snapshot();
         let mut invalid = saved;
-        invalid["edges"][0]["to"] = json!("%999");
+        invalid["edges"][0]["to"] = json!("t999");
         assert!(target.restore_checkpoint(&invalid, &ids).is_err());
         assert_eq!(target.snapshot(), before);
     }

@@ -243,7 +243,7 @@ impl Graph {
     /// A native discovery worker can finish reading a completed turn after a
     /// newer turn has started. Route its output without changing live status.
     pub fn discovered_completion(&mut self, id: u64, text: &str, checkpoint: &str, run_id: &str) -> Result<()> {
-        let key = format!("%{id}");
+        let key = format!("t{id}");
         let node = self.nodes.get(&key).ok_or("Unknown agent")?;
         let run_id = if self.runs.contains_key(run_id) { run_id } else { "" };
         let params = json!({"text":text,"session_id":node["session_id"],"run_id":run_id});
@@ -303,7 +303,7 @@ impl Graph {
     }
 
     pub fn add(&mut self, id: u64, title: String) {
-        let key = format!("%{id}");
+        let key = format!("t{id}");
         self.nodes
             .entry(key)
             .or_insert_with(|| json!({"provider":"shell","status":"unintegrated","title":title}));
@@ -311,7 +311,7 @@ impl Graph {
     /// Apply owner-side process discovery. Live integrated agents retain their
     /// hook status; discovery still records process exits and replacements.
     pub fn observe_agent(&mut self, id: u64, state: &Value) {
-        let key = format!("%{id}");
+        let key = format!("t{id}");
         let Some(node) = self.nodes.get(&key) else { return; };
         if is_custom_node(node) { return; }
         let previous = node.clone();
@@ -386,7 +386,7 @@ impl Graph {
     /// node keeps the record as `program_status`. A node without lifecycle hooks
     /// or discovery also takes its status from it; hook status stays authoritative.
     pub fn observe_program_status(&mut self, id: u64, status: Option<&Value>) {
-        let Some(node) = self.nodes.get_mut(&format!("%{id}")) else { return; };
+        let Some(node) = self.nodes.get_mut(&format!("t{id}")) else { return; };
         let previous = node.clone();
         match status {
             Some(status) => node["program_status"] = status.clone(),
@@ -417,7 +417,7 @@ impl Graph {
         if *node != previous { self.notification_revision = self.notification_revision.wrapping_add(1); }
     }
     pub fn remove(&mut self, id: u64) {
-        let key = format!("%{id}");
+        let key = format!("t{id}");
         self.nodes.remove(&key);
         self.timed_out_status.remove(&key);
         self.clear_queue(&key);
@@ -428,7 +428,7 @@ impl Graph {
     /// Preserve the moved subgraph and its queued work. Edges crossing the new
     /// session boundary lose authority and queued cross-session delivery stops.
     pub fn transfer_nodes_to(&mut self, ids: &HashSet<u64>, target: &mut Graph) {
-        let keys: HashSet<_> = ids.iter().map(|id| format!("%{id}")).collect();
+        let keys: HashSet<_> = ids.iter().map(|id| format!("t{id}")).collect();
         let internal: Vec<_> = self.edges.iter().filter(|(_, e)|
             keys.contains(string(e, "from")) && keys.contains(string(e, "to")))
             .map(|(id, edge)| (id.clone(), edge.clone())).collect();
@@ -737,7 +737,7 @@ impl Graph {
         if serde_json::to_vec(p).map_err(|e| e.to_string())?.len() > 2 * 1024 * 1024 {
             return Err("Graph message exceeds 2 MiB".into());
         }
-        let key = format!("%{id}");
+        let key = format!("t{id}");
         if !self.nodes.contains_key(&key) {
             return Err("Unknown pane".into());
         }
@@ -1190,13 +1190,13 @@ mod tests {
     use super::*;
     #[test]
     fn connected_group_follows_both_directions_cycles_and_muted_links() {
-        let edges = vec![json!({"from":"%3","to":"%2","muted":true}),
-            json!({"from":"%1","to":"%2"}), json!({"from":"%3","to":"%1"}),
-            json!({"from":"%8","to":"%9"})];
-        for start in ["%1", "%2", "%3"] {
-            assert_eq!(connected_component(start, &edges), HashSet::from(["%1".into(), "%2".into(), "%3".into()]));
+        let edges = vec![json!({"from":"t3","to":"t2","muted":true}),
+            json!({"from":"t1","to":"t2"}), json!({"from":"t3","to":"t1"}),
+            json!({"from":"t8","to":"t9"})];
+        for start in ["t1", "t2", "t3"] {
+            assert_eq!(connected_component(start, &edges), HashSet::from(["t1".into(), "t2".into(), "t3".into()]));
         }
-        assert_eq!(connected_component("%7", &edges), HashSet::from(["%7".into()]));
+        assert_eq!(connected_component("t7", &edges), HashSet::from(["t7".into()]));
     }
 
     #[test]
@@ -1207,14 +1207,14 @@ mod tests {
             graph.dispatch(id, "agent.event", &json!({"provider":"pi", "event":"SessionStart",
                 "session_id":format!("s{id}"), "transport":"inbox"})).unwrap();
         }
-        let edge = json!({"from":"%1", "to":"%2", "send":true});
+        let edge = json!({"from":"t1", "to":"t2", "send":true});
         graph.dispatch(1, "graph.connect", &edge).unwrap();
         let idle = graph.notification_revision();
         for method in ["graph.adjacent", "graph.list", "graph.take", "graph.inbox", "agent.heartbeat"] {
             graph.dispatch(2, method, &json!({})).unwrap();
             assert_eq!(graph.notification_revision(), idle, "{method} must not cause a notification loop");
         }
-        graph.dispatch(1, "graph.send", &json!({"to":"%2", "text":"test"})).unwrap();
+        graph.dispatch(1, "graph.send", &json!({"to":"t2", "text":"test"})).unwrap();
         let queued = graph.notification_revision();
         assert_ne!(queued, idle);
         assert_eq!(graph.dispatch(2, "graph.take", &json!({})).unwrap()["events"].as_array().unwrap().len(), 1);
@@ -1230,21 +1230,21 @@ mod tests {
         for id in 1..=3 { source.add(id, format!("Shell {id}")); }
         target.add(4, "Existing target".into());
         for receiver in [2, 3] {
-            let edge = json!({"from":"%1","from_port":"out",
-                "to":format!("%{receiver}"),"to_port":"in","send":true,"revision":1});
+            let edge = json!({"from":"t1","from_port":"out",
+                "to":format!("t{receiver}"),"to_port":"in","send":true,"revision":1});
             source.edges.insert(edge_key(&edge), edge);
-            source.queues.insert(format!("%{receiver}"), vec![json!({
-                "source":"%1","source_port":"out","target":format!("%{receiver}"),
+            source.queues.insert(format!("t{receiver}"), vec![json!({
+                "source":"t1","source_port":"out","target":format!("t{receiver}"),
                 "target_port":"in","type":"message","edge_revision":1,"event_id":format!("event-{receiver}")})]);
         }
         source.transfer_nodes_to(&HashSet::from([1, 2]), &mut target);
-        assert_eq!(source.nodes.keys().cloned().collect::<Vec<_>>(), vec!["%3"]);
+        assert_eq!(source.nodes.keys().cloned().collect::<Vec<_>>(), vec!["t3"]);
         assert_eq!(target.nodes.len(), 3);
         assert!(source.edges.is_empty());
         assert_eq!(target.edges.len(), 1);
-        assert!(source.queues["%3"].is_empty());
-        assert_eq!(target.queues["%2"].len(), 1);
-        assert!(target.allowed(&target.queues["%2"][0]));
+        assert!(source.queues["t3"].is_empty());
+        assert_eq!(target.queues["t2"].len(), 1);
+        assert!(target.allowed(&target.queues["t2"][0]));
     }
     #[test]
     fn another_process_in_the_same_terminal_does_not_keep_the_previous_start_time() {
@@ -1252,15 +1252,15 @@ mod tests {
         graph.add(1, "Terminal 1".to_string());
         // Discovery learned the first agent's process and when it started.
         graph.dispatch(1,"agent.event",&json!({"provider":"codex","event":"SessionStart","pid":10,"started":"Mon Sep 21 10:00:00 2026"})).unwrap();
-        assert_eq!(graph.nodes["%1"]["started"],"Mon Sep 21 10:00:00 2026");
+        assert_eq!(graph.nodes["t1"]["started"],"Mon Sep 21 10:00:00 2026");
         // The same process reporting again keeps it.
         graph.dispatch(1,"agent.event",&json!({"provider":"codex","event":"Stop","pid":10,"text":"done"})).unwrap();
-        assert_eq!(graph.nodes["%1"]["started"],"Mon Sep 21 10:00:00 2026");
+        assert_eq!(graph.nodes["t1"]["started"],"Mon Sep 21 10:00:00 2026");
         // Another process, which does not say when it started, must not look
         // like the first one: a later check compares this time with the process.
         graph.dispatch(1,"agent.event",&json!({"provider":"pi","event":"SessionStart","pid":11,"integrated":true})).unwrap();
-        assert_eq!(graph.nodes["%1"]["pid"],11);
-        assert!(graph.nodes["%1"].get("started").is_none());
+        assert_eq!(graph.nodes["t1"]["pid"],11);
+        assert!(graph.nodes["t1"].get("started").is_none());
     }
     #[test]
     fn provider_prompt_restores_only_known_causal_runs_and_stop_preserves_them() {
@@ -1269,22 +1269,22 @@ mod tests {
             graph.add(id, format!("Terminal {id}"));
             graph.dispatch(id,"agent.event",&json!({"provider":"claude","event":"SessionStart","pid":id,"session_id":format!("session-{id}")})).unwrap();
         }
-        graph.dispatch(1,"graph.connect",&json!({"from":"%1","to":"%2","send":true})).unwrap();
-        graph.dispatch(2,"graph.connect",&json!({"from":"%2","to":"%3","turn_completed":true})).unwrap();
-        let event = graph.dispatch(1,"graph.send",&json!({"to":"%2","text":"request"})).unwrap();
+        graph.dispatch(1,"graph.connect",&json!({"from":"t1","to":"t2","send":true})).unwrap();
+        graph.dispatch(2,"graph.connect",&json!({"from":"t2","to":"t3","turn_completed":true})).unwrap();
+        let event = graph.dispatch(1,"graph.send",&json!({"to":"t2","text":"request"})).unwrap();
         let run = event["run_id"].as_str().unwrap();
-        let prompt = format!("[Graffitty message from %1; event accepted; run {run}]\nrequest");
+        let prompt = format!("[Graffitty message from t1; event accepted; run {run}]\nrequest");
         graph.dispatch(2,"agent.event",&json!({"provider":"claude","event":"UserPromptSubmit","prompt":prompt})).unwrap();
-        assert_eq!(graph.nodes["%2"]["run_id"],run);
+        assert_eq!(graph.nodes["t2"]["run_id"],run);
         graph.dispatch(2,"agent.event",&json!({"provider":"claude","event":"Stop","text":"completion"})).unwrap();
-        assert_eq!(graph.queues["%3"][0]["run_id"],run);
+        assert_eq!(graph.queues["t3"][0]["run_id"],run);
         assert_eq!(graph.runs[run],2,"The forwarded completion consumes the original run budget");
-        for prompt in ["ordinary user input", "[Graffitty message from %1; run unknown]\nrequest"] {
+        for prompt in ["ordinary user input", "[Graffitty message from t1; run unknown]\nrequest"] {
             graph.dispatch(2,"agent.event",&json!({"provider":"claude","event":"UserPromptSubmit","prompt":prompt})).unwrap();
-            assert!(graph.nodes["%2"].get("run_id").is_none());
+            assert!(graph.nodes["t2"].get("run_id").is_none());
         }
         graph.dispatch(2,"agent.event",&json!({"provider":"claude","event":"Stop","text":"new user completion"})).unwrap();
-        assert_ne!(graph.queues["%3"][1]["run_id"],run);
+        assert_ne!(graph.queues["t3"][1]["run_id"],run);
     }
 
     #[test]
@@ -1293,13 +1293,13 @@ mod tests {
         let hook = |graph: &mut Graph, id| graph.dispatch(id, "agent.event", &json!({"provider":"adapter","event":"PreToolUse"})).unwrap();
         hook(&mut graph, 2);
         assert_eq!(hook(&mut graph, 2)["graph_changed"], false);
-        graph.dispatch(1, "graph.connect", &json!({"from":"%1","to":"%3","from_port":"out","to_port":"in","read":true})).unwrap();
+        graph.dispatch(1, "graph.connect", &json!({"from":"t1","to":"t3","from_port":"out","to_port":"in","read":true})).unwrap();
         assert_eq!(hook(&mut graph, 2)["graph_changed"], false);
-        graph.dispatch(1, "graph.connect", &json!({"from":"%1","to":"%2","from_port":"out","to_port":"in","read":true})).unwrap();
+        graph.dispatch(1, "graph.connect", &json!({"from":"t1","to":"t2","from_port":"out","to_port":"in","read":true})).unwrap();
         assert_eq!(hook(&mut graph, 2)["graph_changed"], true);
         assert_eq!(hook(&mut graph, 2)["graph_changed"], false);
-        graph.dispatch(1, "graph.disconnect", &json!({"from":"%1","to":"%2"})).unwrap();
-        let denied = graph.read_denied("%1", "%2");
+        graph.dispatch(1, "graph.disconnect", &json!({"from":"t1","to":"t2"})).unwrap();
+        let denied = graph.read_denied("t1", "t2");
         assert_eq!(denied["code"], "connection_changed");
         assert_eq!(denied["adjacent"]["incoming"], json!([]));
         assert_eq!(hook(&mut graph, 2)["graph_changed"], true);
@@ -1331,22 +1331,22 @@ mod tests {
         g.dispatch(1, "agent.register", &json!({"name":"Renamed composer","inputs":[],
             "outputs":[{"id":"out","line_style":"solid"}]})).unwrap();
         let snapshot = g.snapshot();
-        let source = snapshot["nodes"].as_array().unwrap().iter().find(|n| n["node"] == "%1").unwrap();
+        let source = snapshot["nodes"].as_array().unwrap().iter().find(|n| n["node"] == "t1").unwrap();
         assert_eq!(source["manifest"]["outputs"][0]["line_style"], "solid");
         let edge = g.dispatch(1, "graph.connect", &send_edge()).unwrap();
         assert_eq!(edge["send"], true);
         assert_eq!(edge["turn_completed"], false);
         g.dispatch(1, "graph.emit", &json!({"output":"out","payload":"submitted"})).unwrap();
-        assert_eq!(g.queues["%2"][0]["text"], "submitted");
+        assert_eq!(g.queues["t2"][0]["text"], "submitted");
         for style in [json!("dotted"), json!("unknown"), json!(7), Value::Null] {
             assert!(manifest(&json!({"inputs":[],"outputs":[{"id":"out","line_style":style}]})).is_err());
         }
         assert!(manifest(&json!({"inputs":[{"id":"in","line_style":"solid"}],"outputs":[]})).is_err());
     }
     #[test]
-    fn connections_use_the_same_pane_ids_as_nodes_including_zero() {
+    fn connections_use_the_same_pane_ids_as_nodes() {
         let mut graph = Graph::default();
-        for id in [0, 2] {
+        for id in [1, 2] {
             graph.add(id, format!("Pane {id}"));
             graph.dispatch(id, "agent.event", &json!({
                 "provider":"adapter", "event":"SessionStart", "pid":id
@@ -1355,12 +1355,12 @@ mod tests {
                 "name":"Fixture", "inputs":[{"id":"in"}], "outputs":[{"id":"out"}]
             })).unwrap();
         }
-        let connected = graph.dispatch(0, "graph.connect", &json!({
-            "from":"%0", "to":"%2", "from_port":"out", "to_port":"in"
+        let connected = graph.dispatch(1, "graph.connect", &json!({
+            "from":"t1", "to":"t2", "from_port":"out", "to_port":"in"
         })).unwrap();
-        assert_eq!(connected["from"], "%0");
-        assert_eq!(connected["to"], "%2");
-        assert!(graph.edges.contains_key("%0/out>%2/in"));
+        assert_eq!(connected["from"], "t1");
+        assert_eq!(connected["to"], "t2");
+        assert!(graph.edges.contains_key("t1/out>t2/in"));
         for node in graph.snapshot()["nodes"].as_array().unwrap() {
             assert_eq!(node["pane"], node["node"]);
             assert!(crate::pane_id::parse(node["node"].as_str().unwrap()).is_some());
@@ -1374,29 +1374,29 @@ mod tests {
             g.dispatch(1, "graph.emit", &json!({"output":"out","payload":"hello"}))
                 .is_err()
         );
-        let edge = json!({"from":"%1","to":"%2","from_port":"out","to_port":"in"});
+        let edge = json!({"from":"t1","to":"t2","from_port":"out","to_port":"in"});
         g.dispatch(1, "graph.connect", &edge).unwrap();
         g.dispatch(
             2,
             "graph.connect",
-            &json!({"from":"%2","to":"%3","from_port":"out","to_port":"in"}),
+            &json!({"from":"t2","to":"t3","from_port":"out","to_port":"in"}),
         )
         .unwrap();
         let result = g
             .dispatch(
                 1,
                 "graph.emit",
-                &json!({"output":"out","payload":{"text":"한글"},"source":"%3"}),
+                &json!({"output":"out","payload":{"text":"한글"},"source":"t3"}),
             )
             .unwrap();
         let id = &result["events"][0]["event_id"];
         let event = &g.dispatch(2, "graph.take", &json!({})).unwrap()["events"][0];
-        assert_eq!(event["source"], "%1");
-        assert!(!g.can_read("%1", "%2"));
+        assert_eq!(event["source"], "t1");
+        assert!(!g.can_read("t1", "t2"));
         g.dispatch(2, "graph.forward", &json!({"output":"out","event_id":id}))
             .unwrap();
         let forwarded = &g.dispatch(3, "graph.take", &json!({})).unwrap()["events"][0];
-        assert_eq!(forwarded["origin"]["source"], "%1");
+        assert_eq!(forwarded["origin"]["source"], "t1");
         assert_eq!(forwarded["text"], "한글");
         g.dispatch(1, "graph.disconnect", &edge).unwrap();
         assert!(
@@ -1413,7 +1413,7 @@ mod tests {
             g.dispatch(
                 1,
                 "graph.connect",
-                &json!({"from":"%1","to":"%99"})
+                &json!({"from":"t1","to":"t99"})
             )
             .is_err()
         );
@@ -1422,7 +1422,7 @@ mod tests {
     fn bounded_fanout_is_atomic() {
         let mut g = setup();
         for id in 2..=3 {
-            g.dispatch(1,"graph.connect",&json!({"from":"%1","to":format!("%{id}"),"from_port":"out","to_port":"in"})).unwrap();
+            g.dispatch(1,"graph.connect",&json!({"from":"t1","to":format!("t{id}"),"from_port":"out","to_port":"in"})).unwrap();
         }
         for _ in 0..QUEUE_LIMIT {
             g.dispatch(1, "graph.emit", &json!({"output":"out","payload":"hello"}))
@@ -1436,14 +1436,14 @@ mod tests {
             )
             .is_err()
         );
-        assert_eq!(g.queues["%2"].len(), QUEUE_LIMIT);
-        assert_eq!(g.queues["%3"].len(), QUEUE_LIMIT);
+        assert_eq!(g.queues["t2"].len(), QUEUE_LIMIT);
+        assert_eq!(g.queues["t3"].len(), QUEUE_LIMIT);
         g.remove(1);
-        assert!(g.queues["%2"].is_empty());
+        assert!(g.queues["t2"].is_empty());
     }
 
     fn send_edge() -> Value {
-        json!({"from":"%1","to":"%2","from_port":"out","to_port":"in"})
+        json!({"from":"t1","to":"t2","from_port":"out","to_port":"in"})
     }
 
     #[test]
@@ -1491,19 +1491,19 @@ mod tests {
             &json!({"output":"out","payload":"accepted"}),
         )
         .unwrap();
-        let event = g.queues["%2"][0].clone();
+        let event = g.queues["t2"][0].clone();
         for deadline in [now() + 600.0, now() + 60.0, 0.0] {
             params["stop_at"] = json!(deadline);
             let edge = g.dispatch(1, "graph.connect", &params).unwrap();
             assert_eq!(edge["revision"], original["revision"]);
-            assert_eq!(g.queues["%2"], vec![event.clone()]);
+            assert_eq!(g.queues["t2"], vec![event.clone()]);
             assert!(g.allowed(&event));
         }
         params["muted"] = json!(true);
         let edge = g.dispatch(1, "graph.connect", &params).unwrap();
         assert_ne!(edge["revision"], original["revision"]);
         assert!(!g.allowed(&event));
-        assert!(g.queues["%2"].is_empty());
+        assert!(g.queues["t2"].is_empty());
     }
 
     #[test]
@@ -1519,14 +1519,14 @@ mod tests {
             &json!({"output":"out","payload":"accepted"}),
         )
         .unwrap();
-        let event = g.queues["%2"][0].clone();
+        let event = g.queues["t2"][0].clone();
         assert!(g.allowed_at(&event, deadline - 0.001));
         assert!(!g.allowed_at(&event, deadline));
         let before = g.revision;
         g.expire_at(deadline - 0.001);
         assert_eq!(g.revision, before);
         g.expire_at(deadline);
-        assert!(g.queues["%2"].is_empty());
+        assert!(g.queues["t2"].is_empty());
         assert_eq!(g.edges[&edge_key(&edge)], edge);
         assert_eq!(g.revision, before + 1);
         assert_eq!(g.next_stop_at, None);
@@ -1544,7 +1544,7 @@ mod tests {
             g.dispatch(
                 1,
                 "graph.send",
-                &json!({"to":"%2","text":"blocked"})
+                &json!({"to":"t2","text":"blocked"})
             )
             .unwrap_err(),
             STOP_TIME_ERROR
@@ -1555,8 +1555,8 @@ mod tests {
             params["from_port"] = json!(output);
             g.dispatch(1, "graph.connect", &params).unwrap();
         }
-        assert!(!g.can_read("%1", "%2"));
-        assert!(g.can_read("%1", "%1"));
+        assert!(!g.can_read("t1", "t2"));
+        assert!(g.can_read("t1", "t1"));
         g.dispatch(
             1,
             "agent.event",
@@ -1565,7 +1565,7 @@ mod tests {
         .unwrap();
         assert!(g.queues.values().all(Vec::is_empty));
         params = send_edge();
-        params["to"] = json!("%3");
+        params["to"] = json!("t3");
         g.dispatch(1, "graph.connect", &params).unwrap();
         let emitted = g
             .dispatch(
@@ -1575,8 +1575,8 @@ mod tests {
             )
             .unwrap();
         assert_eq!(emitted["events"].as_array().unwrap().len(), 1);
-        assert_eq!(g.queues["%3"].len(), 1);
-        assert!(g.queues.get("%2").is_none_or(Vec::is_empty));
+        assert_eq!(g.queues["t3"].len(), 1);
+        assert!(g.queues.get("t2").is_none_or(Vec::is_empty));
     }
 
     #[test]
@@ -1586,7 +1586,7 @@ mod tests {
         let edge = g.dispatch(1, "graph.connect", &params).unwrap();
         g.dispatch(1, "graph.emit", &json!({"output":"out","payload":"old"}))
             .unwrap();
-        let old = g.queues["%2"][0].clone();
+        let old = g.queues["t2"][0].clone();
         // Move the clock boundary into the past without delivering actor expiry.
         g.edges.get_mut(&edge_key(&edge)).unwrap()["stop_at"] = json!(now() - 1.0);
         g.schedule_expiry();
@@ -1595,10 +1595,10 @@ mod tests {
         let reopened = g.dispatch(1, "graph.connect", &clear).unwrap();
         assert_ne!(reopened["revision"], edge["revision"]);
         assert!(!g.allowed(&old));
-        assert!(g.queues["%2"].is_empty());
+        assert!(g.queues["t2"].is_empty());
         g.dispatch(1, "graph.emit", &json!({"output":"out","payload":"new"}))
             .unwrap();
-        assert_eq!(g.queues["%2"][0]["text"], "new");
+        assert_eq!(g.queues["t2"][0]["text"], "new");
     }
 }
 

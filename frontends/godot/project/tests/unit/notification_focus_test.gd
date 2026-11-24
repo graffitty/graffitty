@@ -36,18 +36,18 @@ func test_original_sender_and_closed_pane_fallbacks() -> void:
 	var api := API.new()
 	app.agent_api = api
 	service.application = app
-	var event := {"source":"%2", "origin":{"source":"%1"}, "payload":{"pane_uid":999}}
+	var event := {"source":"t2", "origin":{"source":"t1"}, "payload":{"pane_uid":999}}
 	var targets: Array = service.bind_notification(3, "event", event, "original_sender").focus_targets
-	expect(targets == ["%1", "%2", "%3"], "Stored origin precedes relay and receiver; payload UID cannot override provenance")
+	expect(targets == ["t1", "t2", "t3"], "Stored origin precedes relay and receiver; payload UID cannot override provenance")
 	var job := {"id":3, "request":{"focus_targets":targets}}
 	for expected in [1, 2, 3]:
 		api.visited.clear()
 		service._focus_notification(job)
 		expect(api.visited[-1] == expected, "Closed sources fall back to the next available pane")
 		api.available.erase(expected)
-	expect(service.bind_notification(3, "previous", event, "previous_sender").focus_targets == ["%2", "%3"], "Previous sender skips origin")
-	expect(service.bind_notification(3, "self", event, "this_pane").focus_targets == ["%3"], "Receiver remains selectable")
-	expect(service.bind_notification(3, "missing", {}, "original_sender").focus_targets == ["%3"], "Missing provenance falls back to receiver")
+	expect(service.bind_notification(3, "previous", event, "previous_sender").focus_targets == ["t2", "t3"], "Previous sender skips origin")
+	expect(service.bind_notification(3, "self", event, "this_pane").focus_targets == ["t3"], "Receiver remains selectable")
+	expect(service.bind_notification(3, "missing", {}, "original_sender").focus_targets == ["t3"], "Missing provenance falls back to receiver")
 	service.free()
 	api.free()
 	app.free()

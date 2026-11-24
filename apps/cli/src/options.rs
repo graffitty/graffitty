@@ -106,7 +106,7 @@ pub struct PaneGroup {
 }
 #[derive(Subcommands)]
 pub enum PaneCommand {
-    /// List this window's panes with stable % IDs and positional targets.
+    /// List this window's panes with stable terminal and Chromium IDs and positional targets.
     List(ListPanes),
     /// List the surfaces this caller owns: its terminals and Chromium panes.
     Surfaces,
@@ -298,7 +298,7 @@ pub enum WorkspaceCommand {
     Checkpoint(Checkpoint),
     /// List workspace panes.
     Panes,
-    /// List this window's panes with stable % IDs and positional targets.
+    /// List this window's panes with stable terminal and Chromium IDs and positional targets.
     ListPanes(ListPanes),
     /// Map terminal panes to root shell PIDs; optionally include sampled processes.
     Pid(Pid),
@@ -559,7 +559,7 @@ pub enum RemoteCommand {
 pub struct RemoteConnect {
     /// SSH destinations or aliases from ~/.ssh/config.
     pub hosts: Vec<String>,
-    /// Exact CLI server alias for targets such as build/%12 (one host only).
+    /// Exact CLI server alias for targets such as build/t12 (one host only).
     #[usage(long)]
     pub alias: Option<String>,
     /// Optional session name; omitted uses the server's automatic session selection.
@@ -714,7 +714,7 @@ pub struct ListPanes {
 }
 #[derive(Args)]
 pub struct Pid {
-    /// Pane (%12, :2.1) or tab (@7, :2); omit for this window.
+    /// Pane (t12, :2.1) or tab (@7, :2); omit for this window.
     pub target: Option<String>,
     /// Include sampled process identities, names, memory and freshness metadata.
     #[usage(long)]
@@ -736,7 +736,7 @@ pub struct RenameTab {
 }
 #[derive(Args)]
 pub struct RenamePane {
-    /// Explicit pane target (%ID or :tab.pane, both numbered from 1); access remains scoped.
+    /// Explicit pane target (tN or cN or :tab.pane, both numbered from 1); access remains scoped.
     #[usage(long)]
     target: Option<String>,
     /// The title; words are joined with spaces.
@@ -766,7 +766,7 @@ pub enum EffectsCommand {
 }
 #[derive(Args)]
 pub struct EffectsHold {
-    /// Explicit pane target (%ID or :tab.pane, both numbered from 1) in this workspace.
+    /// Explicit pane target (tN or cN or :tab.pane, both numbered from 1) in this workspace.
     #[usage(long)]
     target: Option<String>,
     /// Hold id; a hold with the same id replaces the previous one.
@@ -786,7 +786,7 @@ pub struct EffectsHold {
 }
 #[derive(Args)]
 pub struct EffectsRelease {
-    /// Explicit pane target (%ID or :tab.pane, both numbered from 1) in this workspace.
+    /// Explicit pane target (tN or cN or :tab.pane, both numbered from 1) in this workspace.
     #[usage(long)]
     target: Option<String>,
     /// Hold id; omit to release every hold of the pane.
@@ -797,7 +797,7 @@ pub struct EffectsRelease {
 }
 #[derive(Args)]
 pub struct EffectsList {
-    /// Explicit pane target (%ID or :tab.pane, both numbered from 1) in this workspace.
+    /// Explicit pane target (tN or cN or :tab.pane, both numbered from 1) in this workspace.
     #[usage(long)]
     target: Option<String>,
 }
@@ -1105,7 +1105,7 @@ pub struct Placement {
     /// Put it beside another pane: left, right, above or below.
     #[usage(long, choices("left", "right", "above", "below"))]
     side: Option<String>,
-    /// The pane a side refers to (%ID or :tab.pane); omitted: this terminal.
+    /// The pane a side refers to (tN or cN or :tab.pane); omitted: this terminal.
     #[usage(long)]
     of: Option<String>,
     /// Absolute position "X,Y" in workspace pixels (floating tabs only).
@@ -1170,7 +1170,7 @@ pub struct Run {
 }
 #[derive(Args)]
 pub struct Place {
-    /// The pane to arrange (%ID or :tab.pane); omitted: this terminal.
+    /// The pane to arrange (tN or cN or :tab.pane); omitted: this terminal.
     #[usage(long)]
     target: Option<String>,
     #[usage(flatten)]
@@ -1267,7 +1267,7 @@ pub enum ChromiumCommand {
 }
 #[derive(Args)]
 pub struct Target {
-    /// Chromium pane: %ID, :tab.pane, @tab-id.pane, or session:tab.pane.
+    /// Chromium pane: cN, :tab.pane, @tab-id.pane, or session:tab.pane.
     #[usage(short = 't', long)]
     target: Option<String>,
 }
@@ -1780,7 +1780,7 @@ mod tests {
         assert!(
             OpenFile {
                 path: file.clone(),
-                target: Some("%3".into()),
+                target: Some("c3".into()),
                 new: true,
                 profile: Default::default(),
             }
@@ -1823,7 +1823,7 @@ mod tests {
         assert_eq!(open(None, empty).unwrap()["profile"], "");
         assert!(open(None, Default::default()).unwrap().get("profile").is_none());
         let template = ProfileOptions { profile: None, profile_from: Some("/profiles/work".into()) };
-        assert!(open(Some("%3"), template).is_err());
+        assert!(open(Some("c3"), template).is_err());
         let both = ProfileOptions { profile: Some("/a".into()), profile_from: Some("/b".into()) };
         assert!(open(None, both).is_err());
         std::fs::remove_dir_all(root).unwrap();
@@ -1868,17 +1868,17 @@ mod tests {
                 placement,
             }),
         });
-        let created = json!({"result": {"chromium": "%9"}});
+        let created = json!({"result": {"chromium": "c9"}});
         assert!(new(Placement::default()).placement_after_create().is_none(), "no placement: hidden as before");
-        let beside = new(Placement { side: Some("left".into()), of: Some("%2".into()), ..Placement::default() })
+        let beside = new(Placement { side: Some("left".into()), of: Some("t2".into()), ..Placement::default() })
             .placement_after_create().unwrap().unwrap();
         let (method, params) = place_created(&beside, &created).unwrap();
         assert_eq!(method, "pane.place");
-        assert_eq!(params, json!({"target": "%9", "side": "left", "of": "%2"}));
+        assert_eq!(params, json!({"target": "c9", "side": "left", "of": "t2"}));
         let floating = new(Placement { at: Some("10,20".into()), size: Some("640x480".into()), ..Placement::default() })
             .placement_after_create().unwrap().unwrap();
         assert_eq!(place_created(&floating, &created).unwrap().1,
-            json!({"target": "%9", "x": 10.0, "y": 20.0, "width": 640.0, "height": 480.0}));
+            json!({"target": "c9", "x": 10.0, "y": 20.0, "width": 640.0, "height": 480.0}));
         assert!(place_created(&beside, &json!({"error": {"code": "x"}})).is_none(), "failed creation is not placed");
         let bad = new(Placement { size: Some("big".into()), ..Placement::default() });
         assert!(bad.request().is_err(), "bad placement is rejected before creating a pane");

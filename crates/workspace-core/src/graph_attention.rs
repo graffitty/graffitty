@@ -79,7 +79,7 @@ pub struct AttentionState {
 
 impl Graph {
     pub fn attention_state(&self, id: u64) -> Option<AttentionState> {
-        let key = format!("%{id}");
+        let key = format!("t{id}");
         let node = self.nodes.get(&key)?;
         if is_custom_node(node) || (!is_agent(node) && node["attention"].is_null()) { return None; }
         let text = |field| node[field].as_str().map(str::to_owned);
@@ -96,7 +96,7 @@ impl Graph {
     /// Restore before discovery or hooks run, and only for an adopted live pane.
     pub fn restore_attention_state(&mut self, id: u64, state: &AttentionState) -> Result<()> {
         validate(&json!(state.attention))?;
-        let key = format!("%{id}");
+        let key = format!("t{id}");
         let node = self.nodes.get_mut(&key).ok_or("Unknown adopted pane")?;
         let mut fields = serde_json::to_value(state).map_err(|e| e.to_string())?;
         fields.as_object_mut().unwrap().remove("timed_out_status");
@@ -125,7 +125,7 @@ mod tests {
     fn hook(graph: &mut Graph, event: &str) {
         graph.dispatch(1, "agent.event", &json!({"event":event})).unwrap();
     }
-    fn receipt(graph: &Graph) -> Value { graph.nodes["%1"]["attention"].clone() }
+    fn receipt(graph: &Graph) -> Value { graph.nodes["t1"]["attention"].clone() }
     fn ack(graph: &mut Graph, attention: &Value) -> Value {
         graph.dispatch(1, "agent.seen", &json!({"event":attention["event"]})).unwrap()
     }
@@ -331,11 +331,11 @@ mod tests {
         for waiting in [false, true] {
             for completed in ["Stop", "Ready"] {
                 let mut graph = graph();
-                graph.nodes.get_mut("%1").unwrap()["transport"] = json!("inbox");
+                graph.nodes.get_mut("t1").unwrap()["transport"] = json!("inbox");
                 hook(&mut graph, if waiting { "AwaitingInput" } else { "UserPromptSubmit" });
                 let previous = receipt(&graph);
                 if waiting { ack(&mut graph, &previous); }
-                let heartbeat = graph.nodes["%1"]["heartbeat_at"].as_f64().unwrap();
+                let heartbeat = graph.nodes["t1"]["heartbeat_at"].as_f64().unwrap();
                 graph.expire_at(heartbeat + 16.0);
                 if waiting {
                     hook(&mut graph, "AwaitingInput");
@@ -362,7 +362,7 @@ mod tests {
             let saved: Value = serde_json::from_slice(&serde_json::to_vec(&source.checkpoint()).unwrap()).unwrap();
             let mut restored = Graph::default();
             restored.add(2, "Restored".into());
-            let mapping = HashMap::from([("%1".into(), "%2".into())]);
+            let mapping = HashMap::from([("t1".into(), "t2".into())]);
             restored.restore_checkpoint(&saved, &mapping).unwrap();
             assert_eq!(restored.snapshot()["nodes"][0]["attention"], attention);
             let before = restored.snapshot();
@@ -411,18 +411,18 @@ mod tests {
         for seen_before in [false, true] {
             for registration in [false, true] {
                 let mut source = graph();
-                source.nodes.get_mut("%1").unwrap()["transport"] = json!("inbox");
+                source.nodes.get_mut("t1").unwrap()["transport"] = json!("inbox");
                 hook(&mut source, "AwaitingInput");
                 let old = receipt(&source);
                 if seen_before { ack(&mut source, &old); }
-                let heartbeat = source.nodes["%1"]["heartbeat_at"].as_f64().unwrap();
+                let heartbeat = source.nodes["t1"]["heartbeat_at"].as_f64().unwrap();
                 source.expire_at(heartbeat + 16.0);
                 assert_eq!(receipt(&source)["event"], old["event"]);
                 let state = source.attention_state(1).unwrap();
                 let mut target = Graph::default();
                 target.add(1, "Adopted".into());
                 target.restore_attention_state(1, &state).unwrap();
-                assert_eq!(target.nodes["%1"]["status"], "offline");
+                assert_eq!(target.nodes["t1"]["status"], "offline");
                 // A pending receipt may arrive before heartbeat recovery.
                 assert_eq!(ack(&mut target, &old)["attention"]["seen"], true);
                 if registration {
@@ -431,7 +431,7 @@ mod tests {
                 } else {
                     target.dispatch(1, "agent.heartbeat", &json!({})).unwrap();
                 }
-                assert_eq!(target.nodes["%1"]["status"], "waiting");
+                assert_eq!(target.nodes["t1"]["status"], "waiting");
                 assert_eq!(receipt(&target)["event"], old["event"]);
                 assert_eq!(receipt(&target)["seen"], true);
                 hook(&mut target, "SessionEnd");

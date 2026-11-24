@@ -23,17 +23,17 @@ func test_scoped_rules_follow_focus_combine_and_release_after_config_changes() -
 	var context := Context.new()
 	context.rules = [
 		Rule.while_active({"app": ["nvim", "codex"]}, Actions.disable({"exclude": ["sparks"]})),
-		Rule.while_active({"pane": "%1"}, Actions.disable({"include": ["sparks"]})),
+		Rule.while_active({"pane": "t1"}, Actions.disable({"include": ["sparks"]})),
 	]
-	context.update(host, "%1", {"id": "nvim", "pid": 10})
+	context.update(host, "t1", {"id": "nvim", "pid": 10})
 	expect(Catalog.NAMES.all(func(name): return not host.effect_control.allows(name)), "Overlapping rules disable their union")
 	host.effect_control.pulse()
-	context.update(host, "%1", {"id": "nvim", "pid": 10, "status": "busy"})
+	context.update(host, "t1", {"id": "nvim", "pid": 10, "status": "busy"})
 	expect(not host.effect_control.allows("camera.zoom"), "Typing and status changes cannot release a hold")
-	context.update(host, "%2", {"id": "codex", "pid": 20})
+	context.update(host, "t2", {"id": "codex", "pid": 20})
 	expect(host.effect_control.allows("sparks") and not host.effect_control.allows("camera.zoom"), "Focus releases only the scope that no longer matches")
 	context.rules.clear()
-	context.update(host, "%2", {"id": "codex", "pid": 20})
+	context.update(host, "t2", {"id": "codex", "pid": 20})
 	expect(Catalog.NAMES.all(func(name): return host.effect_control.allows(name)), "Removing rules releases even without a context change")
 	host.free()
 
@@ -82,7 +82,7 @@ func test_all_keeps_functional_pane_physics_and_typing_pin() -> void:
 	view.host = host
 	view.physics_typing = true
 	view._typing_tab = 3
-	view._pane_zoom.pulse("%1", 10)
+	view._pane_zoom.pulse("t1", 10)
 	Actions.settle().call(host)
 	expect(view._pane_zoom.remaining == 0.0, "All settles decorative pane zoom")
 	expect(view.physics_typing and view._typing_tab == 3, "All preserves the functional typing pin and physics activity")

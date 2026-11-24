@@ -1,4 +1,5 @@
 //! Validate a complete membership change before changing any live session.
+use graffitty_protocol::pane_id::address as pane_address;
 use crate::{Error, Server};
 use serde_json::{Value, json};
 use std::collections::VecDeque;
@@ -73,7 +74,7 @@ fn plan(
     chromiums: &[Member<'_>],
     restorable: bool,
 ) -> Result<Plan, Error> {
-    let id = graffitty_workspace_core::pane_id::parse(surface).ok_or("Expected %N")?;
+    let id = graffitty_workspace_core::pane_id::parse(surface).ok_or("Expected a pane address")?;
     let terminal = terminals.iter().find(|m| m.id == id);
     let member = terminal.or_else(|| chromiums.iter().find(|m| m.id == id))
     .filter(|m| m.workspace == workspace)
@@ -125,14 +126,14 @@ pub fn connection_edges(server: &Server, workspace: &str) -> Vec<Value> {
     let mut edges: Vec<_> = server.graphs.get(workspace)
         .into_iter().flat_map(|g| g.edges.values().cloned()).collect();
     for chromium in server.chromiums.values().filter(|b| b.workspace == workspace && b.owner != b.id) {
-        edges.push(json!({"from":format!("%{}", chromium.owner),"to":format!("%{}", chromium.id),"kind":"chromium"}));
+        edges.push(json!({"from":pane_address(chromium.owner),"to":pane_address(chromium.id),"kind":"chromium"}));
     }
     for session in server.sessions.values().filter(|s| s.workspace == workspace) {
         if let Some(owner) = crate::filetree::connection_owner(server, session.id) {
-            edges.push(json!({"from":format!("%{owner}"),"to":format!("%{}", session.id),"kind":"filetree"}));
+            edges.push(json!({"from":pane_address(owner),"to":pane_address(session.id),"kind":"filetree"}));
         }
         if let Some(parent) = session.spawned_by.filter(|parent| server.sessions.get(parent).is_some_and(|p| p.workspace == workspace)) {
-            edges.push(json!({"from":format!("%{parent}"),"to":format!("%{}", session.id),"kind":"spawned"}));
+            edges.push(json!({"from":pane_address(parent),"to":pane_address(session.id),"kind":"spawned"}));
         }
     }
     edges
@@ -172,7 +173,7 @@ pub fn apply(
     browser_only: bool,
     saved_tab: Option<u64>,
 ) -> Result<Value, Error> {
-    if browser_only && !server.chromiums.values().any(|b| b.workspace == workspace && surface == format!("%{}", b.id)) {
+    if browser_only && !server.chromiums.values().any(|b| b.workspace == workspace && surface == pane_address(b.id)) {
         return Err("Moving a surface alone requires a Chromium pane".into());
     }
     let terminals: Vec<_> = server
@@ -221,8 +222,8 @@ pub fn apply(
         let id = graffitty_workspace_core::pane_id::parse(key);
         !terminals.iter().chain(&chromiums).any(|m| Some(m.id) == id && m.workspace == workspace && m.tab == plan.source)
     }) { return Err("Connected group spans tabs; repair its connections before moving".into()); }
-    let companions: Vec<_> = terminals.iter().filter(|m| Some(m.id) != plan.terminal && moving.contains(&format!("%{}", m.id))).map(|m| m.id).collect();
-    plan.chromiums = chromiums.iter().filter(|m| moving.contains(&format!("%{}", m.id))).map(|m| m.id).collect();
+    let companions: Vec<_> = terminals.iter().filter(|m| Some(m.id) != plan.terminal && moving.contains(&pane_address(m.id))).map(|m| m.id).collect();
+    plan.chromiums = chromiums.iter().filter(|m| moving.contains(&pane_address(m.id))).map(|m| m.id).collect();
     let remaining: Vec<_> = terminals.iter().copied().filter(|m| !companions.contains(&m.id)).collect();
     let empty = plan.source_empty(&remaining, &chromiums);
     let preserve = moving.len() > 1;
@@ -251,7 +252,7 @@ pub fn apply(
         server.tab_titles.insert(plan.destination, title);
     }
     Ok(
-        json!({"surface":surface,"tab":plan.destination,"previous_tab":plan.source,"source_empty":empty,"chromiums":plan.chromiums,"companions":companions}),
+        json!({"pane":surface,"tab":plan.destination,"previous_tab":plan.source,"source_empty":empty,"chromiums":plan.chromiums,"companions":companions}),
     )
 }
 
@@ -311,7 +312,7 @@ mod tests {
         assert_eq!(
             plan(
                 "main",
-                "%1",
+                "t1",
                 Some(2),
                 20,
                 &terminals,
@@ -330,7 +331,7 @@ mod tests {
         assert!(
             plan(
                 "main",
-                "%1",
+                "t1",
                 Some(3),
                 20,
                 &terminals,
@@ -342,7 +343,7 @@ mod tests {
         assert!(
             plan(
                 "other",
-                "%1",
+                "t1",
                 Some(3),
                 20,
                 &terminals,
@@ -354,7 +355,7 @@ mod tests {
         assert_eq!(chromiums[0].owner, Some(1));
         let moved = plan(
             "main",
-            "%1",
+            "t1",
             Some(2),
             20,
             &terminals,
@@ -363,7 +364,7 @@ mod tests {
         )
         .unwrap();
         assert!(moved.source_empty(&terminals, &chromiums));
-        let chromium = plan("main", "%10", None, 20, &terminals, &chromiums, false).unwrap();
+        let chromium = plan("main", "t10", None, 20, &terminals, &chromiums, false).unwrap();
         assert_eq!(
             chromium,
             Plan {
@@ -400,7 +401,7 @@ mod tests {
         assert!(
             plan(
                 "main",
-                "%1",
+                "t1",
                 Some(20),
                 40,
                 &terminals,
@@ -409,10 +410,10 @@ mod tests {
             )
             .is_ok()
         );
-        assert!(plan("main", "%11", None, 40, &terminals, &chromiums, false).is_err());
+        assert!(plan("main", "t11", None, 40, &terminals, &chromiums, false).is_err());
         let moved = plan(
             "main",
-            "%10",
+            "t10",
             Some(1),
             40,
             &terminals,
@@ -446,11 +447,11 @@ mod tests {
             workspace: "main",
             owner: None,
         }];
-        assert!(plan("main", "%1", Some(8), 50, &terminals, &[], false).is_err());
+        assert!(plan("main", "t1", Some(8), 50, &terminals, &[], false).is_err());
         assert!(
             plan(
                 "main",
-                "%1",
+                "t1",
                 Some(8),
                 50,
                 &terminals,
@@ -473,6 +474,6 @@ mod tests {
                 owner: None,
             },
         ];
-        assert!(plan("main", "%1", Some(8), 50, &occupied, &[], true).is_err());
+        assert!(plan("main", "t1", Some(8), 50, &occupied, &[], true).is_err());
     }
 }

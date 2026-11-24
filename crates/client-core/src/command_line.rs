@@ -42,7 +42,7 @@ pub struct Model {
 }
 
 pub fn number_mode(query: &str) -> bool {
-    query.starts_with(['%', '@']) || query.as_bytes().first().is_some_and(u8::is_ascii_digit)
+    matches!(query, "t" | "c") || graffitty_protocol::pane_id::parse(query).is_some() || query.starts_with('@') || query.as_bytes().first().is_some_and(u8::is_ascii_digit)
 }
 
 impl Model {
@@ -165,7 +165,7 @@ mod tests {
         model.refresh(vec![candidate("split","new-pane-right"),alias]);
         assert_eq!(model.rows.len(),1);
         assert!(model.accepted().is_none());
-        assert!(number_mode("%18"));assert!(number_mode("@7.2"));assert!(number_mode("2.1"));
+        assert!(number_mode("t18"));assert!(number_mode("@7.2"));assert!(number_mode("2.1"));
         assert!(!number_mode("$work"));
     }
 }

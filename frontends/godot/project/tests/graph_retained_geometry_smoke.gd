@@ -1,4 +1,6 @@
 extends SceneTree
+
+const PaneAddress := preload("res://scenes/PaneAddress.gd")
 ## Geometry invariants, not machine-dependent FPS thresholds.
 const Graph := preload("res://tests/support/ServerGraph.gd")
 const Overlay := preload("res://scenes/AgentGraphOverlay.gd")
@@ -17,11 +19,11 @@ func run() -> void:
 	root.add_child(canvas)
 	var rectangles := {}
 	for i in 14:
-		var key := "%%%d" % i
+		var key := PaneAddress.key(i)
 		graph.nodes[key] = {"provider": "adapter", "manifest": {"inputs": [{"id": "in"}], "outputs": [{"id": "out", "mode": "send", "line_style": "dashed"}]}}
 		rectangles[key] = Rect2(100 + (i % 4) * 200, 100 + (i / 4) * 150, 120, 100)
 	for i in 14:
-		for step in [1, 3, 5]: graph.connect_nodes({"from": "%%%d" % i, "to": "%%%d" % ((i + step) % 14), "send": true})
+		for step in [1, 3, 5]: graph.connect_nodes({"from": PaneAddress.key(i), "to": PaneAddress.key(((i + step) % 14)), "send": true})
 	var overlay := Overlay.new()
 	canvas.add_child(overlay)
 	overlay.graph = graph
@@ -41,7 +43,7 @@ func run() -> void:
 	check(overlay.geometry_rebuilds == geometry and overlay.tools.route_builds == builds, "Camera movement never rebuilds geometry or routes")
 	check(overlay.sheet_links == original, "Camera movement preserves authored sheet geometry")
 	check(overlay.wire_layer.draw_count == draws, "Camera movement does not repaint retained wires")
-	var event: Dictionary = graph.enqueue("%0", "%1", "queued", "message")
+	var event: Dictionary = graph.enqueue("t0", "t1", "queued", "message")
 	check(event.has("result") and overlay.waiting.size() == 1, "Fixture really has a queued message")
 	await settle()
 	draws = overlay.wire_layer.draw_count
@@ -51,7 +53,7 @@ func run() -> void:
 	check(overlay.marker_layer.draw_count > marker_draws or DisplayServer.get_name() == "headless", "Only animated marker layer repaints")
 	builds = overlay.tools.route_builds
 	var wire_draws: int = overlay.wire_layer.wire_draw_count()
-	rectangles["%0"].position += Vector2(10, 5)
+	rectangles["t0"].position += Vector2(10, 5)
 	overlay.sync(rectangles, graph.edges.values(), func(p): return p, true)
 	var rebuilt: int = overlay.tools.route_builds - builds
 	check(rebuilt > 0 and rebuilt < 42, "Dragging one pane rebuilds only dependent routes (%d/42)" % rebuilt)

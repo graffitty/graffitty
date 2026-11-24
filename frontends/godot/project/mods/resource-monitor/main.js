@@ -456,8 +456,8 @@ export default class ResourceMonitor extends View {
     for (const g of groups) {
       // "This Computer" names the local server, as the Sessions list does.
       const server = g.local ? tr("This Computer") : g.server;
-      // `pane` sorts %2 before %10; the cell shows the key itself.
-      const decorate = (r) => ({ ...r, server, session: g.session, pane: Number(String(r.key).replace(/^%/, "")) || null });
+      // `pane` sorts t2 before t10; the cell shows the key itself.
+      const decorate = (r) => ({ ...r, server, session: g.session, pane: Number(String(r.key).replace(/^[tc]/, "")) || null });
       for (const r of g.rows) all.push({ ...decorate(r), members: (r.members ?? []).map(decorate) });
     }
     const servers = [...new Set(all.map((r) => r.server))];

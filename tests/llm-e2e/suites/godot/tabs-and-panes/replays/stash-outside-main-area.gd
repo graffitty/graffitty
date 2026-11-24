@@ -1,6 +1,7 @@
 extends "main-area-tiling.gd"
 
 
+
 func drag_to_layout(key: String, position: Vector2) -> void:
 	var view: Control = host.workspace_view
 	var handle: Control = view.panes[key].handle
@@ -59,7 +60,7 @@ func play() -> void:
 		return
 	await type("echo STASH_ALIVE $$ {enter}")
 	await camera_at_rest()
-	var id := int(beta.substr(1))
+	var id := PaneAddress.id(beta)
 	var pid: int = host.sessions[id].term.get_shell_pid()
 	await say("Overview: the border is the main area, not the world wall")
 	await pinch_overview()

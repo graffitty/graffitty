@@ -1,4 +1,5 @@
 extends "main-area-tiling.gd"
+
 const Application := preload("res://scenes/TerminalApplication.gd")
 var expected := {}
 var pids := {}
@@ -8,7 +9,7 @@ func _initialize() -> void:
 	super._initialize()
 
 func terminal(key: String) -> Node:
-	return host.sessions[int(key.substr(1))].term
+	return host.sessions[PaneAddress.id(key)].term
 
 func remember(key: String, size: int) -> void:
 	expected[key] = size
@@ -88,7 +89,7 @@ func play() -> void:
 	if snapshot.has("result"):
 		for window in snapshot.result.windows:
 			for pane in window.panes:
-				check(int(pane.font_size) == expected["%%%d" % int(pane.id)], "Saved pane retains its individual font size")
+				check(int(pane.font_size) == expected[PaneAddress.key(int(pane.id))], "Saved pane retains its individual font size")
 		var saved: Dictionary = snapshot.result.windows[0]
 		terminal(a).set_meta("pane_font_size", 30)
 		terminal(a).set_live_font_size(30)

@@ -92,7 +92,7 @@ def main():
                         samples.append((time.perf_counter_ns() - start) / 1e6)
                     time.sleep(.03)
                 request = root / "scan.json"
-                request.write_text(json.dumps(dict(op="scan", roots=[dict(node="%1", pid=pane["pid"])])))
+                request.write_text(json.dumps(dict(op="scan", roots=[dict(node="t1", pid=pane["pid"])])))
                 scans = []
                 for i in range(22):
                     start = time.perf_counter_ns()

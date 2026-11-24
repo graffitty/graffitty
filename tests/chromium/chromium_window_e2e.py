@@ -109,7 +109,7 @@ def main():
                 panes = topology()["chromiums"]
                 primary = next(p for p in panes if p["state"].get("mainWindow"))
                 secondary = next(p for p in panes if not p["state"].get("mainWindow"))
-                child = f'%{secondary["id"]}'
+                child = f'c{secondary["id"] - (1 << 30)}'
                 deadline = time.monotonic() + 15
                 while True:
                     detached = command(child, "chrome-state")

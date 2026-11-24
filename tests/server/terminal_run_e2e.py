@@ -48,7 +48,7 @@ def main():
             client.has_output(root, "RUN_DONE")
             result = json.loads((tmp / "run.json").read_text())["result"]
             child = int(result["pane"][1:])
-            assert result["spawned_by"] == f"%{root}" and result["dies_with_parent"] is True, result
+            assert result["spawned_by"] == f"t{root}" and result["dies_with_parent"] is True, result
             client.until(lambda: any(p["id"] == child for p in client.topology["panes"]))
             client.until(lambda: pane(client, child).get("spawned_by") == root)
             parent_rect, child_rect = pane(client, root)["rect"], pane(client, child)["rect"]
@@ -70,7 +70,7 @@ def main():
             client.has_output(root, "FREE_DONE")
             free = int(json.loads((tmp / "free.json").read_text())["result"]["pane"][1:])
             client.until(lambda: any(p["id"] == free and p["rect"] == [40.0, 900.0, 600.0, 300.0] for p in client.topology["panes"]))
-            client.text(root, f'"$GRAFFITTY_BIN" pane place --target %{free} --side below --of %{child} > {tmp}/place.json; echo PLACE_DONE\r')
+            client.text(root, f'"$GRAFFITTY_BIN" pane place --target t{free} --side below --of t{child} > {tmp}/place.json; echo PLACE_DONE\r')
             client.has_output(root, "PLACE_DONE")
             placed = json.loads((tmp / "place.json").read_text())
             assert "result" in placed, placed
@@ -80,7 +80,7 @@ def main():
             client.action("create", root, kind="tab")
             client.until(lambda: len(client.topology["tabs"]) == 2)
             other = next(p["id"] for p in client.topology["panes"] if p["tab"] != pane(client, root)["tab"])
-            client.text(root, f'"$GRAFFITTY_BIN" pane place --target %{other} --side right > {tmp}/foreign.json; echo FOREIGN_DONE\r')
+            client.text(root, f'"$GRAFFITTY_BIN" pane place --target t{other} --side right > {tmp}/foreign.json; echo FOREIGN_DONE\r')
             client.has_output(root, "FOREIGN_DONE")
             assert json.loads((tmp / "foreign.json").read_text())["error"]["code"] == "forbidden"
             checks.append("placement in another tab is refused")

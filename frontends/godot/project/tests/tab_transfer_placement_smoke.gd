@@ -1,4 +1,5 @@
 extends "res://tests/tab_window_session_smoke.gd"
+
 ## A cross-session drop must preserve both the grab and the rendered proposal.
 
 func run() -> void:
@@ -38,7 +39,7 @@ func run() -> void:
 		source.get_window().position = root.position + Vector2i(root.size.x + 200, 0)
 		check(source != target, kind + ": separate source session exists")
 		var key: String = source.pane_focus
-		var id := int(key.substr(1))
+		var id := PaneAddress.id(key)
 		var pid: int = source.sessions[id].term.get_shell_pid()
 		var original := Rect2(240, 140, 480, 320)
 		var source_tree: Dictionary = source.workspace_layout.tab(source.workspace_layout.active).tree

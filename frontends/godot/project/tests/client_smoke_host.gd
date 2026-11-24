@@ -1,4 +1,5 @@
 extends "../../../../tests/llm-e2e/replay/replay.gd"
+
 ## Runs the shared CLI/MCP fixtures in real owner-backed PTYs.
 
 func quote_shell(value: String) -> String:
@@ -35,12 +36,12 @@ func play() -> void:
 	var agent_result := directory.path_join("agent.json")
 	host.sessions[source].term.send_text("python3 %s %s %s\r" % [
 		quote_shell(repo.path_join("tests/fixtures/agent_client_smoke.py")), quote_shell(agent_result),
-		quote_shell("%%%d" % foreign.session_id)])
+		quote_shell(PaneAddress.key(foreign.session_id))])
 	var result: Dictionary = await wait_result(agent_result)
 	check(result.get("ok", false), "Agent CLI/MCP fixture passes: " + str(result))
 	# Chromium creation intentionally reveals that chromium. The next independent
 	# fixture exercises physical terminal input, which requires its pane selected.
-	host.focus_pane("%%%d" % source)
+	host.focus_pane(PaneAddress.key(source))
 	await process_frame
 	var terminal_result := directory.path_join("terminal.json")
 	host.sessions[source].term.send_text("python3 %s %s\r" % [

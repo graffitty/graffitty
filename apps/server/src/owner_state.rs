@@ -15,6 +15,9 @@ use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
 
+fn old_pane_environment() -> bool { true }
+fn first_chromium() -> u64 { graffitty_protocol::pane_id::CHROMIUM_BASE + 1 }
+
 const VERSION: u32 = 1;
 
 #[derive(Serialize, Deserialize, Clone, PartialEq)]
@@ -24,6 +27,8 @@ pub struct OwnerState {
     /// The private runtime directory holding the IPC endpoint.
     pub runtime: PathBuf,
     pub next: u64,
+    #[serde(default = "first_chromium")] // 0.0.3 owner handover
+    pub next_chromium: u64,
     pub tab_titles: HashMap<u64, String>,
     pub sessions: Vec<SavedSession>,
     pub workspaces: crate::session_registry::Registry,
@@ -58,6 +63,9 @@ pub struct SavedSession {
     /// The pane that ran `gft pane run` to create this one, as herdr's parent.
     #[serde(default)]
     pub spawned_by: Option<u64>,
+    /// Existing 0.0.3 processes still have %N in their environment.
+    #[serde(default = "old_pane_environment")]
+    pub inherited_percent_id: bool,
     #[serde(default)]
     pub dies_with_parent: bool,
     /// Windows: the title the console starts with. A program did not set it.
@@ -141,12 +149,13 @@ pub fn clear(descriptor: &Path) {
 }
 
 impl OwnerState {
-    pub fn new(epoch: &str, runtime: &Path, next: u64, tab_titles: &HashMap<u64, String>) -> Self {
+    pub fn new(epoch: &str, runtime: &Path, next: u64, next_chromium: u64, tab_titles: &HashMap<u64, String>) -> Self {
         Self {
             version: VERSION,
             epoch: epoch.into(),
             runtime: runtime.into(),
             next,
+            next_chromium,
             tab_titles: tab_titles.clone(),
             sessions: Vec::new(),
             workspaces: Default::default(),
@@ -173,10 +182,10 @@ mod tests {
         for event in ["SessionStart", "UserPromptSubmit", "Stop"] {
             graph.dispatch(1, "agent.event", &json!({"provider":"pi","event":event,"pid":10})).unwrap();
         }
-        let event = graph.nodes["%1"]["attention"]["event"].clone();
+        let event = graph.nodes["t1"]["attention"]["event"].clone();
         for seen in [false, true] {
             if seen { graph.dispatch(1, "agent.seen", &json!({"event":event})).unwrap(); }
-            let mut state = OwnerState::new("test-owner", &directory, 2, &HashMap::new());
+            let mut state = OwnerState::new("test-owner", &directory, 2, graffitty_protocol::pane_id::CHROMIUM_BASE + 1, &HashMap::new());
             state.agent_attention.insert(1, graph.attention_state(1).unwrap());
             save(&descriptor, &state).unwrap();
             let loaded = load(&descriptor).unwrap();
@@ -184,14 +193,14 @@ mod tests {
             let mut adopted = Graph::default();
             adopted.add(1, "Adopted task".into());
             adopted.restore_attention_state(1, &loaded.agent_attention[&1]).unwrap();
-            assert_eq!(adopted.nodes["%1"]["attention"], graph.nodes["%1"]["attention"]);
+            assert_eq!(adopted.nodes["t1"]["attention"], graph.nodes["t1"]["attention"]);
             adopted.observe_agent(1, &json!({"provider":"pi","pid":10,"status":"unknown"}));
-            assert_eq!(adopted.nodes["%1"]["attention"]["seen"], seen);
-            assert_eq!(adopted.nodes["%1"]["attention"]["event"], event);
+            assert_eq!(adopted.nodes["t1"]["attention"]["seen"], seen);
+            assert_eq!(adopted.nodes["t1"]["attention"]["event"], event);
         }
         // Optional app data is absent for panes with no agent; it is not a
         // separate schema generation or a reason to reject their owner state.
-        let mut empty = serde_json::to_value(OwnerState::new("test-owner", &directory, 1, &HashMap::new())).unwrap();
+        let mut empty = serde_json::to_value(OwnerState::new("test-owner", &directory, 1, graffitty_protocol::pane_id::CHROMIUM_BASE + 1, &HashMap::new())).unwrap();
         empty.as_object_mut().unwrap().remove("agent_attention");
         let empty: OwnerState = serde_json::from_value(empty).unwrap();
         assert!(empty.agent_attention.is_empty());

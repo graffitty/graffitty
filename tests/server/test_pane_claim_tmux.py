@@ -102,15 +102,15 @@ class PaneClaimTmuxTests(unittest.TestCase):
 
     def test_attaching_from_another_pane_claims_the_displaying_pane(self):
         first, second = self.scenario("detached")
-        self.assertEqual(self.pane(first)[:2], ("%1", "%1"))
+        self.assertEqual(self.pane(first)[:2], ("t1", "t1"))
         inherited, claimed, _ = self.pane(second)
-        self.assertEqual(inherited, "%1", "tmux keeps the first pane's variables")
-        self.assertEqual(claimed, "%2")
+        self.assertEqual(inherited, "t1", "tmux keeps the first pane's variables")
+        self.assertEqual(claimed, "t2")
 
     def test_closed_origin_pane_falls_back_to_the_local_capability(self):
         _, second = self.scenario("closed")
         inherited, claimed, _ = self.pane(second)
-        self.assertEqual((inherited, claimed), ("%2", "%3"))
+        self.assertEqual((inherited, claimed), ("t2", "t3"))
 
     def test_session_attached_from_two_panes_is_ambiguous(self):
         _, second = self.scenario("shared")

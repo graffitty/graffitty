@@ -20,25 +20,25 @@ func test_camera_snapshots_cannot_mutate_native_state() -> void:
 func test_remote_mapping_accepts_nested_typed_collections() -> void:
 	var core: RefCounted = ClassDB.instantiate("RemoteClientCore")
 	core.bind_id(7, 70)
-	var node: Dictionary[String, String] = {"pane": "%7"}
+	var node: Dictionary[String, String] = {"pane": "t7"}
 	var rows: Array[Dictionary] = [node]
 	var graph: Dictionary[String, Array] = {"nodes": rows}
 	var mapped: Dictionary = core.map_graph(graph, true, "", Callable())
-	expect(mapped.nodes[0].pane == "%70", "Nested typed dictionaries cross the native boundary without conversion errors")
-	expect(node.pane == "%7", "Mapping leaves the caller's typed graph intact")
+	expect(mapped.nodes[0].pane == "t70", "Nested typed dictionaries cross the native boundary without conversion errors")
+	expect(node.pane == "t7", "Mapping leaves the caller's typed graph intact")
 
 func test_remote_mapping_accepts_string_name_keys_and_values() -> void:
 	var core: RefCounted = ClassDB.instantiate("RemoteClientCore")
 	core.bind_id(7, 70)
-	var node: Dictionary[StringName, StringName] = {&"pane": &"%7", &"title": &"Named pane"}
+	var node: Dictionary[StringName, StringName] = {&"pane": &"t7", &"title": &"Named pane"}
 	var graph := {"nodes": [node]}
-	graph.focus = &"%7"
+	graph.focus = &"t7"
 	var mapped: Variant = core.map_graph(graph, true, "", Callable())
 	if not expect(mapped is Dictionary, "StringName keys and values cross the native JSON boundary"):
 		return
-	expect(mapped.nodes[0].pane == "%70" and mapped.focus == "%70", "Typed and dot-assigned keys preserve identifier translation")
+	expect(mapped.nodes[0].pane == "t70" and mapped.focus == "t70", "Typed and dot-assigned keys preserve identifier translation")
 	expect(mapped.nodes[0].title == "Named pane" and typeof(mapped.nodes[0].keys()[0]) == TYPE_STRING, "StringName values and keys become ordinary JSON strings")
-	expect(node.pane == &"%7", "Conversion does not modify the original dictionary")
+	expect(node.pane == &"t7", "Conversion does not modify the original dictionary")
 
 func test_remote_mapping_rejects_non_string_keys() -> void:
 	var core: RefCounted = ClassDB.instantiate("RemoteClientCore")

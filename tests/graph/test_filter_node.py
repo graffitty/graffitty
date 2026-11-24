@@ -57,12 +57,12 @@ class FilterIntegration(unittest.TestCase):
         return self.start([os.environ.get("GRAFFITTY_TEST_CLI", str(ROOT / "dist/bin/gft")), "node", "filter", *args], {**self.env, **(env or {})}, **kwargs)
 
     def manifest(self):
-        return next((n.get("manifest") for n in self.call(1, "graph.list")["nodes"] if n["node"] == "%3" and n.get("manifest", {}).get("inputs", [{}])[0].get("id") == "in" and len(n.get("manifest", {}).get("outputs", [])) == 2), None)
+        return next((n.get("manifest") for n in self.call(1, "graph.list")["nodes"] if n["node"] == "t3" and n.get("manifest", {}).get("inputs", [{}])[0].get("id") == "in" and len(n.get("manifest", {}).get("outputs", [])) == 2), None)
 
     def connect(self):
-        self.call(1, "graph.connect", **{"from":"%1", "from_port":"result", "to":"%3", "to_port":"in"})
+        self.call(1, "graph.connect", **{"from":"t1", "from_port":"result", "to":"t3", "to_port":"in"})
         for port, target in [("matched",4),("unmatched",2)]:
-            self.call(3, "graph.connect", **{"from":"%3", "from_port":port, "to":f"%{target}", "to_port":"in"})
+            self.call(3, "graph.connect", **{"from":"t3", "from_port":port, "to":f"t{target}", "to_port":"in"})
 
     def inbox(self, token):
         return self.call(token, "graph.take")["events"]
@@ -77,13 +77,13 @@ class FilterIntegration(unittest.TestCase):
         self.connect()
         inspector = self.start([os.environ.get("GRAFFITTY_TEST_CLI", str(ROOT / "dist/bin/gft")), "node", "payload-inspector", "--json", "--once"], {**self.env,"GRAFFITTY_TOKEN":"5"})
         wait(lambda: any(n.get("manifest",{}).get("name") == "Payload Inspector" for n in self.call(1,"graph.list")["nodes"]))
-        self.call(1,"graph.connect", **{"from":"%1","from_port":"result","to":"%5","to_port":"payload"})
+        self.call(1,"graph.connect", **{"from":"t1","from_port":"result","to":"t5","to_port":"payload"})
         original = {"text":"check", "score":0.2,"custom":{"nested":[True,None,"한글"]}}
         self.call(1,"graph.emit",output="result",payload=original)
         event = wait(lambda: self.inbox(4))[0]
         self.assertEqual(event["text"],"Review: check")
         self.assertEqual(event["payload"],original)
-        self.assertEqual(event["origin"]["source"],"%1")
+        self.assertEqual(event["origin"]["source"],"t1")
         self.assertTrue(event["caused_by"])
         inspector.wait(timeout=10)
         self.assertEqual(inspector.returncode,0)
@@ -121,7 +121,7 @@ class FilterIntegration(unittest.TestCase):
         path = self.folder / "session.jsonl"
         path.write_text('{"custom":"retain file path"}\n')
         self.call(1,"agent.event",provider="codex",event="SessionStart",session_id="codex-session",transcript_path=str(path))
-        self.call(1,"graph.connect",**{"from":"%1","from_port":"turn_completed","to":"%3","to_port":"in"})
+        self.call(1,"graph.connect",**{"from":"t1","from_port":"turn_completed","to":"t3","to_port":"in"})
         self.call(1,"agent.event",provider="codex",event="Stop",text="finished")
         node = self.filter("--condition","true","--once")
         node.wait(timeout=10)

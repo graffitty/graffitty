@@ -1,5 +1,6 @@
 extends "../../../../replay/replay.gd"
 
+
 var chromium: Node
 
 func ready(predicate: Callable, label: String) -> bool:
@@ -48,7 +49,7 @@ func play() -> void:
 	var chromium_pid: int = chromium.pid
 	var first: int = chromium.selected_page_id
 	var page_ids: Array[int] = [first]
-	var key := "%%%d" % chromium.session_id
+	var key := PaneAddress.key(chromium.session_id)
 	var pane: Control = host.workspace_view.panes[key]
 	var group: Dictionary = host.workspace_layout.tab(host.workspace_layout.active)
 	group.tree["tiling"] = false

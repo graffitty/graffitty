@@ -1,5 +1,6 @@
 extends "../../../../replay/replay.gd"
 
+
 var chromium: Node
 var pane: Control
 var waiting_result: Dictionary = { }
@@ -155,7 +156,7 @@ func play() -> void:
 	var group: Dictionary = host.workspace_layout.tab(host.workspace_layout.active)
 	group.tree["tiling"] = false
 	group.tree["physics"] = false
-	var key := "%%%d" % chromium.session_id
+	var key := PaneAddress.key(chromium.session_id)
 	pane = host.workspace_view.panes[key]
 	host.workspace_view.set_window_rect(key, Rect2(40, 100, 850, 650), true)
 	host.workspace_view.toggle_fit_pane(key)

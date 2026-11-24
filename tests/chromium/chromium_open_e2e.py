@@ -67,7 +67,7 @@ def main():
                 assert cloned_state["temporaryProfile"] and profile != template, cloned_state
                 assert (profile / "Default" / "marker").read_text() == "template"
                 assert not (template / "SingletonLock").exists()
-                for params in [dict(path=str(path), chromium=f"%{source}"),
+                for params in [dict(path=str(path), chromium=f"t{source}"),
                                dict(path=str(path), chromium=chromium, profile_template=str(template)),
                                dict(path=str(path), new=True, profile="/a", profile_template=str(template)),
                                dict(path=str(path), chromium="other:1.2"),

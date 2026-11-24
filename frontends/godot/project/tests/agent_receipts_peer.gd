@@ -1,4 +1,6 @@
 extends SceneTree
+
+const PaneAddress := preload("res://scenes/PaneAddress.gd")
 ## One real client per process, driven by test_agent_receipts.py. The only
 ## injected behavior delays an outgoing receipt to exercise an old mobile read.
 var client: Node
@@ -59,7 +61,7 @@ func run() -> void:
 			await client.connection.request_action("session_new", {"name": "elsewhere"})
 		if is_instance_valid(client.host):
 			var app: Node = client.host.application
-			var key: String = "%%%d" % client.connection.local_id(int(control.wire_pane)) if control.has("wire_pane") else client.host.pane_focus
+			var key: String = PaneAddress.key(client.connection.local_id(int(control.wire_pane))) if control.has("wire_pane") else client.host.pane_focus
 			if viewed and control.has("wire_pane") and client.host.pane_focus != key:
 				client.host.focus_pane(key)
 			app.agents._sounds = {"enabled": false}

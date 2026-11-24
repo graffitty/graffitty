@@ -1,4 +1,6 @@
 extends RefCounted
+
+const PaneAddress := preload("res://scenes/PaneAddress.gd")
 ## Scoped commands for the calling terminal's tab; no implicit world opt-in.
 const Layout := preload("res://scenes/WorkspaceLayout.gd")
 const MODES := ["tiles", "tiling", "floating", "horizontal", "vertical", "h_tiles", "v_tiles"]
@@ -49,7 +51,7 @@ static func dispatch(
 ) -> Dictionary:
 	if host.workspace_view == null:
 		return error("unsupported_layout", "This world has not opted into TerminalSpace")
-	var id: int = host.workspace_layout.containing("%%%d" % terminal_id)
+	var id: int = host.workspace_layout.containing(PaneAddress.key(terminal_id))
 	var group: Dictionary = host.workspace_layout.tab(id)
 	if group.is_empty():
 		return error("no_tab", "The calling terminal has no tab")
@@ -177,7 +179,7 @@ static func dispatch(
 		panes.append(
 			{
 				"id": item.pane,
-				"pane": "%%%s" % str(item.pane).substr(1),
+				"pane": item.pane,
 				"stashed": item.get("stashed", false),
 				"shown": item.get("shown", true),
 				"rect": {

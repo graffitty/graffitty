@@ -65,7 +65,7 @@ A crash can leave temporary files behind.
 gft chromium open ~/Downloads/result.pdf
 ```
 
-This reuses the associated browser or creates one. Add `-t %3` or
+This reuses the associated browser or creates one. Add `-t c3` or
 `-t main:1.2` to choose a pane, or `--new` to create a browser; these choices
 cannot be combined. Profile flags affect creation only, so use `--new` to ensure
 one applies rather than combining it with `-t`.

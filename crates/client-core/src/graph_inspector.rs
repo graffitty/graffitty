@@ -255,18 +255,18 @@ mod tests {
     use super::*;
     #[test]
     fn hover_uses_authoritative_metadata_without_expanding_queued_content() {
-        let mut graph=json!({"nodes":[{"node":"%1","title":"Source","manifest":{"outputs":[{"id":"out","name":"Answer"}]}},
-            {"node":"%2","manifest":{"name":"Reviewer","inputs":[{"id":"in","name":"Prompt"}]}}],
-            "edges":[{"from":"%1","from_port":"out","to":"%2","to_port":"in","muted":true,"stop_at":1,"contains":"APPROVED"}],
-            "journal":{"by_edge":{"%1/out>%2/in":{"pending":2,"total":7}},"events":[{"edge":"%1/out>%2/in","text":"PRIVATE_MESSAGE"}]},
-            "queues":{"%2":[{"text":"PRIVATE_MESSAGE"}]},"receipts":[{"edge":"%1/out>%2/in","status":"submitted","message":"Native transport accepted"}]});
-        let before=graph.clone();let hint=edge_hint(&graph,"%1/out>%2/in","en-US");
+        let mut graph=json!({"nodes":[{"node":"t1","title":"Source","manifest":{"outputs":[{"id":"out","name":"Answer"}]}},
+            {"node":"t2","manifest":{"name":"Reviewer","inputs":[{"id":"in","name":"Prompt"}]}}],
+            "edges":[{"from":"t1","from_port":"out","to":"t2","to_port":"in","muted":true,"stop_at":1,"contains":"APPROVED"}],
+            "journal":{"by_edge":{"t1/out>t2/in":{"pending":2,"total":7}},"events":[{"edge":"t1/out>t2/in","text":"PRIVATE_MESSAGE"}]},
+            "queues":{"t2":[{"text":"PRIVATE_MESSAGE"}]},"receipts":[{"edge":"t1/out>t2/in","status":"submitted","message":"Native transport accepted"}]});
+        let before=graph.clone();let hint=edge_hint(&graph,"t1/out>t2/in","en-US");
         for expected in ["Source · Answer","→ Reviewer · Prompt","2 pending · 7 recorded deliveries","Paused","Stopped: stop time reached","Contains: APPROVED","Last delivery: submitted","Native transport accepted"] {
             assert!(hint.contains(expected),"Missing {expected}: {hint}");
         }
         assert!(!hint.contains("PRIVATE_MESSAGE"));assert_eq!(graph,before);
-        assert!(edge_hint(&graph,"%1/out>%2/in","ko").contains("대기"));
-        graph["edges"]=json!([]);assert!(edge_hint(&graph,"%1/out>%2/in","en-US").is_empty());
+        assert!(edge_hint(&graph,"t1/out>t2/in","ko").contains("대기"));
+        graph["edges"]=json!([]);assert!(edge_hint(&graph,"t1/out>t2/in","en-US").is_empty());
     }
     fn graph() -> Value {json!({"limits":{"run_messages":100},"runs":{"r":{"count":3,"limit":10,"available":true}},
         "journal":{"events":[{"event_id":"a","edge":"wire","run_id":"r","pending":true,"queued_at":0,"status":"queued in Graffitty"},

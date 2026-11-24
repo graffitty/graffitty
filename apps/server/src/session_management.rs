@@ -86,7 +86,7 @@ fn agents(server: &Server, key: &str) -> Vec<Value> {
     let mut titles = server.agent_title_cache.borrow_mut();
     titles.retain(|pane, _| server.sessions.get(pane).is_some_and(|s| !s.exited));
     let mut result: Vec<Value> = graph.nodes.iter().filter_map(|(node, value)| {
-        let pane: u64 = node.strip_prefix('%')?.parse().ok()?;
+        let pane: u64 = node.strip_prefix('t')?.parse().ok()?;
         let session = server.sessions.get(&pane).filter(|s| s.workspace == key && !s.exited)?;
         let status = value["status"].as_str().unwrap_or("");
         let entry = titles.entry(pane).or_default();
@@ -117,7 +117,7 @@ fn agent_summary(pane: u64, value: &Value, title: &str) -> Option<Value> {
 /// A title without animated leading glyphs (spinners, stars); its `%N`
 /// fallback means "no title".
 fn turn_title(title: &str, pane: u64) -> String {
-    if title == format!("%{pane}") { return String::new(); }
+    if title == format!("t{pane}") { return String::new(); }
     title.trim_start_matches(|c: char| !c.is_alphanumeric()).trim().to_owned()
 }
 
@@ -296,11 +296,11 @@ mod tests {
                     graph.dispatch(7, "agent.event", &json!({"provider":"pi","event":event})).unwrap();
                 }
             }
-            let first = super::agent_summary(7, &graph.nodes["%7"], "Task").unwrap();
+            let first = super::agent_summary(7, &graph.nodes["t7"], "Task").unwrap();
             assert_eq!(first["attention"], graph.snapshot()["nodes"][0]["attention"]);
             assert_eq!(first["attention"]["kind"], "completed");
             graph.dispatch(7, "agent.seen", &json!({"event":first["attention"]["event"]})).unwrap();
-            let seen = super::agent_summary(7, &graph.nodes["%7"], "Task").unwrap();
+            let seen = super::agent_summary(7, &graph.nodes["t7"], "Task").unwrap();
             assert_eq!(seen["attention"]["seen"], true);
             assert_eq!(seen["attention"]["event"], first["attention"]["event"]);
             assert_eq!(seen["attention"], graph.snapshot()["nodes"][0]["attention"]);
@@ -314,6 +314,6 @@ mod tests {
         assert_eq!(super::turn_title("⠐ Fix the build", 3), "Fix the build");
         assert_eq!(super::turn_title("✳ Claude Code", 3), "Claude Code");
         assert_eq!(super::turn_title("π Fix black", 3), "π Fix black");
-        assert_eq!(super::turn_title("%3", 3), "");
+        assert_eq!(super::turn_title("t3", 3), "");
     }
 }

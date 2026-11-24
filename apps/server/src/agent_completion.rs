@@ -78,7 +78,7 @@ impl Completions {
         let Some(graph) = graphs.get_mut(&pending.workspace) else {
             return;
         };
-        let Some(node) = graph.nodes.get(&format!("%{}", pending.id)) else {
+        let Some(node) = graph.nodes.get(&format!("t{}", pending.id)) else {
             return;
         };
         if identity(node) != pending.identity || node["integrated"] == true {
@@ -106,10 +106,10 @@ mod tests {
             .dispatch(
                 1,
                 "graph.connect",
-                &json!({"from":"%1","to":"%2","turn_completed":true}),
+                &json!({"from":"t1","to":"t2","turn_completed":true}),
             )
             .unwrap();
-        let node = graph.nodes.get_mut("%1").unwrap();
+        let node = graph.nodes.get_mut("t1").unwrap();
         node["started"] = json!("stable process start");
         node["transcript_path"] = json!("/private/test/session.jsonl");
         node["status"] = json!("busy");
@@ -125,7 +125,7 @@ mod tests {
     fn failed_and_interrupted_discovery_do_not_emit_success_completions() {
         for status in ["failed", "interrupted"] {
             let (mut completions, mut graphs, before) = fixture();
-            let node = graphs.get_mut("main").unwrap().nodes.get_mut("%1").unwrap();
+            let node = graphs.get_mut("main").unwrap().nodes.get_mut("t1").unwrap();
             node["observed_turn"] = json!({"id":"turn","status":status});
             completions.observe("main", 1, &before, node);
             assert!(completions.requests().is_empty());
@@ -136,15 +136,15 @@ mod tests {
     fn idle_to_idle_checkpoint_detects_a_turn_missed_between_polls() {
         let (mut completions, mut graphs, _) = fixture();
         let graph = graphs.get_mut("main").unwrap();
-        graph.nodes.get_mut("%1").unwrap()["completion_checkpoint"] = json!(100);
-        let before = graph.nodes["%1"].clone();
-        graph.nodes.get_mut("%1").unwrap()["completion_checkpoint"] = json!(200);
-        completions.observe("main", 1, &before, &graph.nodes["%1"]);
+        graph.nodes.get_mut("t1").unwrap()["completion_checkpoint"] = json!(100);
+        let before = graph.nodes["t1"].clone();
+        graph.nodes.get_mut("t1").unwrap()["completion_checkpoint"] = json!(200);
+        completions.observe("main", 1, &before, &graph.nodes["t1"]);
         let requests = completions.requests();
         assert_eq!(requests.len(), 1);
         completions.finish(&requests[0].0, &json!({"last_message":"fast answer","size":250,"completion_checkpoint":200}), &mut graphs);
-        assert_eq!(graphs["main"].queues["%2"][0]["text"], "fast answer");
-        let after = graphs["main"].nodes["%1"].clone();
+        assert_eq!(graphs["main"].queues["t2"][0]["text"], "fast answer");
+        let after = graphs["main"].nodes["t1"].clone();
         completions.observe("main", 1, &after, &after);
         assert!(completions.requests().is_empty());
         let mut initial = after.clone();
@@ -155,7 +155,7 @@ mod tests {
     #[test]
     fn discovered_stop_reads_once_and_preserves_newer_busy_status() {
         let (mut completions, mut graphs, before) = fixture();
-        let idle = graphs["main"].nodes["%1"].clone();
+        let idle = graphs["main"].nodes["t1"].clone();
         completions.observe("main", 1, &before, &idle);
         completions.observe("main", 1, &idle, &idle);
         let requests = completions.requests();
@@ -170,21 +170,21 @@ mod tests {
             .get_mut("main")
             .unwrap()
             .nodes
-            .get_mut("%1")
+            .get_mut("t1")
             .unwrap()["status"] = json!("busy");
         completions.finish(
             &requests[0].0,
             &json!({"last_message":"actual assistant output","size":500}),
             &mut graphs,
         );
-        assert_eq!(graphs["main"].nodes["%1"]["status"], "busy");
-        assert_eq!(graphs["main"].queues["%2"].len(), 1);
+        assert_eq!(graphs["main"].nodes["t1"]["status"], "busy");
+        assert_eq!(graphs["main"].queues["t2"].len(), 1);
         assert_eq!(
-            graphs["main"].queues["%2"][0]["text"],
+            graphs["main"].queues["t2"][0]["text"],
             "actual assistant output"
         );
         assert_eq!(
-            graphs["main"].queues["%2"][0]["type"],
+            graphs["main"].queues["t2"][0]["type"],
             "turn.completed"
         );
         completions.finish(
@@ -192,20 +192,20 @@ mod tests {
             &json!({"last_message":"actual assistant output","size":500}),
             &mut graphs,
         );
-        assert_eq!(graphs["main"].queues["%2"].len(), 1);
+        assert_eq!(graphs["main"].queues["t2"].len(), 1);
     }
     #[test]
     fn replaced_process_or_integrated_hooks_cannot_deliver_stale_discovery() {
         for change in ["pid", "session_id", "transcript_path", "integrated"] {
             let (mut completions, mut graphs, before) = fixture();
-            let idle = graphs["main"].nodes["%1"].clone();
+            let idle = graphs["main"].nodes["t1"].clone();
             completions.observe("main", 1, &before, &idle);
             let key = completions.requests()[0].0.clone();
             graphs
                 .get_mut("main")
                 .unwrap()
                 .nodes
-                .get_mut("%1")
+                .get_mut("t1")
                 .unwrap()[change] = if change == "integrated" {
                 json!(true)
             } else {
@@ -222,7 +222,7 @@ mod tests {
             );
         }
         let (mut completions, graphs, before) = fixture();
-        let mut idle = graphs["main"].nodes["%1"].clone();
+        let mut idle = graphs["main"].nodes["t1"].clone();
         idle["integrated"] = json!(true);
         completions.observe("main", 1, &before, &idle);
         assert!(completions.requests().is_empty());
@@ -235,18 +235,18 @@ mod tests {
             .dispatch(
                 1,
                 "graph.connect",
-                &json!({"from":"%1","to":"%2","send":true}),
+                &json!({"from":"t1","to":"t2","send":true}),
             )
             .unwrap();
         let event = graph
-            .dispatch(1, "graph.send", &json!({"to":"%2","text":"start"}))
+            .dispatch(1, "graph.send", &json!({"to":"t2","text":"start"}))
             .unwrap();
         let run = event["run_id"].as_str().unwrap().to_owned();
         graph.queues.clear();
         graph.dispatch(1,"agent.event",&json!({"provider":"codex","event":"UserPromptSubmit","prompt":format!("[Graffitty message; run {run}]\nstart")})).unwrap();
-        let before = graph.nodes["%1"].clone();
-        graph.nodes.get_mut("%1").unwrap()["status"] = json!("idle");
-        completions.observe("main", 1, &before, &graph.nodes["%1"]);
+        let before = graph.nodes["t1"].clone();
+        graph.nodes.get_mut("t1").unwrap()["status"] = json!("idle");
+        completions.observe("main", 1, &before, &graph.nodes["t1"]);
         let key = completions.requests()[0].0.clone();
         graph
             .dispatch(
@@ -255,21 +255,21 @@ mod tests {
                 &json!({"provider":"codex","event":"UserPromptSubmit","prompt":"new user input"}),
             )
             .unwrap();
-        assert!(graph.nodes["%1"].get("run_id").is_none());
+        assert!(graph.nodes["t1"].get("run_id").is_none());
         completions.finish(
             &key,
             &json!({"last_message":"prior turn result","size":700}),
             &mut graphs,
         );
-        assert_eq!(graphs["main"].queues["%2"][0]["run_id"], run);
-        assert_eq!(graphs["main"].nodes["%1"]["status"], "busy");
+        assert_eq!(graphs["main"].queues["t2"][0]["run_id"], run);
+        assert_eq!(graphs["main"].nodes["t1"]["status"], "busy");
     }
 
     #[test]
     fn repeated_answer_in_a_later_checkpoint_is_a_distinct_turn() {
         let (mut completions, mut graphs, before) = fixture();
         for size in [500, 500, 800] {
-            let idle = graphs["main"].nodes["%1"].clone();
+            let idle = graphs["main"].nodes["t1"].clone();
             completions.observe("main", 1, &before, &idle);
             let key = completions.requests()[0].0.clone();
             completions.finish(
@@ -278,6 +278,6 @@ mod tests {
                 &mut graphs,
             );
         }
-        assert_eq!(graphs["main"].queues["%2"].len(), 2);
+        assert_eq!(graphs["main"].queues["t2"].len(), 2);
     }
 }

@@ -5,7 +5,7 @@ use usage_rs::Args;
 
 #[derive(Args)]
 pub struct Options {
-    /// Pane target; server-alias/%ID selects an attached remote server.
+    /// Pane target; server-alias/tN or cN selects an attached remote server.
     /// Omit for the calling terminal; explicit local targets use the local server capability.
     #[usage(short = 't', long)]
     target: Option<String>,

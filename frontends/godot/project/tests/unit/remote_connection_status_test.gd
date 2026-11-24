@@ -182,11 +182,11 @@ func test_regroup_maps_pane_destination_and_reply_between_namespaces() -> void:
 	connection.socket = peer
 	connection.connected = true
 	connection.namespace_ids = true
-	connection.local_ids = {0: 70, 8: 80}
-	connection.send_action("regroup", -1, {"surface": "%70", "tab": 80})
-	expect(peer.sent[0].surface == "%0" and int(peer.sent[0].tab) == 8,
-		"Regroup sends the server's pane and tab IDs, including pane zero")
-	connection.send_action("regroup", -1, {"surface": "%70", "tab": null})
+	connection.local_ids = {7: 70, 8: 80}
+	connection.send_action("regroup", -1, {"pane": "t70", "tab": 80})
+	expect(peer.sent[0].pane == "t7" and int(peer.sent[0].tab) == 8,
+		"Regroup sends the server's pane and tab IDs")
+	connection.send_action("regroup", -1, {"pane": "t70", "tab": null})
 	expect(peer.sent[1].tab == null, "Creating a tab preserves the null destination")
 	var replies := []
 	connection.acknowledged.connect(func(reply): replies.append(reply))
@@ -217,16 +217,16 @@ func test_tab_switch_discards_late_scene_and_gpu_fallback_requests() -> void:
 func test_graph_connections_map_canonical_pane_ids_and_keep_port_names() -> void:
 	var connection := Connection.new()
 	connection.namespace_ids = true
-	connection.local_ids = {0: 70, 8: 80}
-	var graph := {"nodes": [{"node": "%0", "pane": "%0"}, {"node": "%8"}],
-		"edges": [{"from": "%0", "to": "%8", "from_port": "out", "to_port": "in", "edge": "%0/out>%8/in"}],
-		"queues": {"%8": [{"source": "%0", "target": "%8", "edge": "%0/out>%8/in"}]},
-		"by_edge": {"%0/out>%8/in": {"count": 1}}}
+	connection.local_ids = {7: 70, 8: 80}
+	var graph := {"nodes": [{"node": "t7", "pane": "t7"}, {"node": "t8"}],
+		"edges": [{"from": "t7", "to": "t8", "from_port": "out", "to_port": "in", "edge": "t7/out>t8/in"}],
+		"queues": {"t8": [{"source": "t7", "target": "t8", "edge": "t7/out>t8/in"}]},
+		"by_edge": {"t7/out>t8/in": {"count": 1}}}
 	var mapped: Dictionary = connection.map_graph(graph, true)
-	expect(mapped.nodes[0].node == "%70" and mapped.nodes[0].pane == "%70", "Node and pane use one canonical ID, including pane zero")
-	expect(mapped.edges[0].from == "%70" and mapped.edges[0].to == "%80", "Connections use canonical pane endpoints")
-	expect(mapped.edges[0].edge == "%70/out>%80/in", "Socket IDs preserve their port suffixes")
-	expect(mapped.queues["%80"][0].source == "%70" and mapped.by_edge.has("%70/out>%80/in"), "Queue and edge map keys use the same namespace")
+	expect(mapped.nodes[0].node == "t70" and mapped.nodes[0].pane == "t70", "Node and pane use one canonical ID")
+	expect(mapped.edges[0].from == "t70" and mapped.edges[0].to == "t80", "Connections use canonical pane endpoints")
+	expect(mapped.edges[0].edge == "t70/out>t80/in", "Socket IDs preserve their port suffixes")
+	expect(mapped.queues["t80"][0].source == "t70" and mapped.by_edge.has("t70/out>t80/in"), "Queue and edge map keys use the same namespace")
 	expect(connection.map_graph(mapped, false) == graph, "Returning to the owner preserves the entire graph")
 	connection.free()
 
@@ -234,10 +234,10 @@ func test_terminal_targets_and_pid_rows_keep_server_namespaces() -> void:
 	var connection := Connection.new()
 	connection.namespace_ids = true
 	connection.local_ids = {7: 70, 8: 80}
-	expect(connection.map_graph({"target":"%70"}, false).target == "%7", "Pane aliases use the owner's IDs")
+	expect(connection.map_graph({"target":"t70"}, false).target == "t7", "Pane aliases use the owner's IDs")
 	expect(connection.map_graph({"target":"@80.1"}, false).target == "@8.1", "Tab aliases preserve pane numbers")
-	var row: Dictionary = connection.map_graph({"pane":"%7", "id":"%7", "tab":"@8", "root_pid":123}, true)
-	expect(row.pane == "%70" and row.id == "%70" and row.tab == "@80", "PID rows map identifiers back to the view")
+	var row: Dictionary = connection.map_graph({"pane":"t7", "id":"t7", "tab":"@8", "root_pid":123}, true)
+	expect(row.pane == "t70" and row.id == "t70" and row.tab == "@80", "PID rows map identifiers back to the view")
 	expect(row.root_pid == 123, "Operating system PIDs are never remapped")
 	connection.free()
 

@@ -11,7 +11,7 @@ This prevents accidental cross-workspace targeting; it is not an OS sandbox.
 The local API uses version 1 JSON requests with object params:
 
 ```json
-{"version":1,"id":"request-id","token":"<inherited capability>","method":"chromium.snapshot","params":{"chromium":"%3"}}
+{"version":1,"id":"request-id","token":"<inherited capability>","method":"chromium.snapshot","params":{"chromium":"c3"}}
 ```
 
 Responses contain the matching ID and either `result` or `error:{code,message}`.

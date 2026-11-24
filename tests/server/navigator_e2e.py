@@ -72,7 +72,7 @@ def main():
 
         def rpc(method, params=None, source=pane):
             if method == "navigator.input" and params is None:
-                params = {"key": "ctrl+h", "context": {"origin": f"%{source}", "rects": {f"%{source}": [0, 0, 100, 100]}}}
+                params = {"key": "ctrl+h", "context": {"origin": f"t{source}", "rects": {f"t{source}": [0, 0, 100, 100]}}}
             return client.action("rpc", source, method=method, params=params or {})
 
         def lua(code):
@@ -136,7 +136,7 @@ def main():
         print("PASS Neovim-owned mappings, gft only at edges, insert mode, suspend/resume", flush=True)
 
         tree_result = rpc("filetree.toggle", {"focus": True})
-        tree = int(tree_result.get("pane", tree_result.get("focus")).lstrip("%"))
+        tree = int(tree_result.get("pane", tree_result.get("focus")).removeprefix("t"))
         before = len(client.moves)
         deadline = time.monotonic() + 60
         while len(client.moves) == before:

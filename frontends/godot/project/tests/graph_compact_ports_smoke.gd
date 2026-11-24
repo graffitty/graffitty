@@ -13,12 +13,12 @@ func run() -> void:
 	var outputs := []
 	for i in 5:
 		outputs.append({"id": "out%d" % i, "name": "Output %d" % i, "mode": "send", "color": ["#ff0000", "#00ff00", "#0000ff", "#ffff00", "#ff00ff"][i], "line_style": "solid" if i % 2 else "dashed"})
-	for key in ["%1", "%2", "%3"]:
+	for key in ["t1", "t2", "t3"]:
 		graph.nodes[key] = {"provider": "adapter", "manifest": {"inputs": [{"id": "in"}], "outputs": outputs}}
 	for i in 5:
-		graph.connect_nodes({"from": "%1", "to": "%2", "from_port": "out%d" % i, "to_port": "in", "send": true})
-	graph.connect_nodes({"from": "%1", "to": "%3", "from_port": "out0", "to_port": "in", "send": true})
-	graph.edges["%1/out4>%2/in"].muted = true
+		graph.connect_nodes({"from": "t1", "to": "t2", "from_port": "out%d" % i, "to_port": "in", "send": true})
+	graph.connect_nodes({"from": "t1", "to": "t3", "from_port": "out0", "to_port": "in", "send": true})
+	graph.edges["t1/out4>t2/in"].muted = true
 	var saved: Dictionary = graph.edges.duplicate(true)
 	var canvas := Control.new()
 	# Exercise a theme minimum taller than the nominal socket hit target.
@@ -28,7 +28,7 @@ func run() -> void:
 	var overlay := Overlay.new()
 	canvas.add_child(overlay)
 	overlay.graph = graph
-	var rectangles := {"%1": Rect2(0, 0, 120, 60), "%2": Rect2(300, 0, 120, 60), "%3": Rect2(300, 180, 120, 60)}
+	var rectangles := {"t1": Rect2(0, 0, 120, 60), "t2": Rect2(300, 0, 120, 60), "t3": Rect2(300, 180, 120, 60)}
 	overlay.sync(rectangles, graph.edges.values(), func(p): return p, true)
 	for i in 4: await process_frame
 	check(overlay.compact_nodes.size() == 3, "Short nodes collapse without changing bounds")
@@ -37,14 +37,14 @@ func run() -> void:
 	check(overlay.tools.route_builds == 2, "Only one route is built per destination")
 	var visible := 0
 	for key in overlay.sockets(true):
-		if key.begins_with("%1/") and overlay.sockets(true)[key].visible: visible += 1
+		if key.begins_with("t1/") and overlay.sockets(true)[key].visible: visible += 1
 	check(visible == 1, "Exactly one output connector is visible")
-	var connector: Button = overlay.sockets(true)["%1/out0"]
+	var connector: Button = overlay.sockets(true)["t1/out0"]
 	check(connector.get_meta("bundle_colors").size() == 5 and connector.get_meta("stack_pitch") == 6.0, "Compact connector stacks all five colors with slightly overlapping dots")
 	check(connector.size.y >= 32, "Hit target contains the entire overlapping stack")
 	var shared: PackedVector2Array = overlay.sheet_links[0].points
 	for link in overlay.sheet_links:
-		if link.target == "%2": check(link.points == shared, "Bundle members share exact geometry")
+		if link.target == "t2": check(link.points == shared, "Bundle members share exact geometry")
 	var copy: Node2D = overlay.wire_layer.still_copy(false)
 	check(copy.commands.size() > 0, "Compact texture produces retained draw commands")
 	var texture: Texture2D = copy.commands[0][1][3]
@@ -67,12 +67,12 @@ func run() -> void:
 	overlay.sync(rectangles, graph.edges.values(), func(p): return p * 4, true)
 	check(overlay.compact_nodes.is_empty() and overlay.compact_bundles.is_empty(), "Zooming in restores separate ports and wires")
 	for key in overlay.sockets(true):
-		if key.begins_with("%1/"):
+		if key.begins_with("t1/"):
 			var center: Vector2 = overlay.port_center(key, true)
 			check(center.y >= 0 and center.y <= 240, "Expanded port stays within projected terminal height")
-	check(graph.edges == saved and rectangles["%1"].size.y == 60, "Presentation never mutates graph or terminal dimensions")
+	check(graph.edges == saved and rectangles["t1"].size.y == 60, "Presentation never mutates graph or terminal dimensions")
 	overlay.sync(rectangles, graph.edges.values(), func(p): return p, true)
-	overlay._connect_compact("%1/out0", "%3/in")
+	overlay._connect_compact("t1/out0", "t3/in")
 	var menu: PopupMenu
 	for child in overlay.get_children():
 		if child is PopupMenu: menu = child
@@ -80,12 +80,12 @@ func run() -> void:
 	if menu != null:
 		menu.index_pressed.emit(3)
 		menu.hide()
-	check(graph.edges.has("%1/out3>%3/in"), "Chosen output connects to another terminal without replacing existing connections")
+	check(graph.edges.has("t1/out3>t3/in"), "Chosen output connects to another terminal without replacing existing connections")
 	canvas.add_theme_font_size_override("font_size", 10)
 	var touch := preload("res://scenes/input/InteractionProfile.gd").touch_controls()
 	var min_pitch := 44.0 if touch else 28.0
 	var connected: Dictionary = graph.edges.duplicate(true)
-	var large := {"%1": Rect2(0, 0, 400, 800), "%2": Rect2(700, 0, 400, 800), "%3": Rect2(1400, 0, 400, 800)}
+	var large := {"t1": Rect2(0, 0, 400, 800), "t2": Rect2(700, 0, 400, 800), "t3": Rect2(1400, 0, 400, 800)}
 	overlay.sync(large, graph.edges.values(), func(p): return p * .25, true)
 	check(overlay.compact_nodes.is_empty(), "A 200-pixel pane spreads five usable ports even at quarter zoom")
 	var previous_bottom := -INF
@@ -108,7 +108,7 @@ func run() -> void:
 	check(overlay.compact_nodes.size() == 3, "An 80-pixel pane compacts when independent targets cannot fit")
 	check(graph.edges == connected, "Zoom changes only presentation")
 	root.gui_snap_controls_to_pixels = true
-	rectangles["%1"].size.y = 26.4
+	rectangles["t1"].size.y = 26.4
 	overlay.sync(rectangles, graph.edges.values(), func(p): return p, true)
 	for i in 4: await process_frame
 	check(connector.size.y == (44 if touch else 27), "Fractional compact stack settles at a whole-pixel hit target")

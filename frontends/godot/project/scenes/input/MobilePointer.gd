@@ -1,4 +1,6 @@
 extends Control
+
+const PaneAddress := preload("res://scenes/PaneAddress.gd")
 ## Direct Android touch routed through the shared pane and graph hit testing.
 ## Every contact has one owner while it is down: the workspace recognizer or
 ## the surface it landed on.
@@ -301,7 +303,7 @@ func _dispatch_pointer(event: InputEvent, generation: int) -> void:
 ## at an end, `null` when the surface cannot tell (Chromium pages and others).
 func _fling_scrolled(sequence: int) -> Variant:
 	if not is_instance_valid(view) or view.host == null or not view.host.is_terminal_pane(scroll_target): return null
-	var term = view.host.sessions.get(int(scroll_target.substr(1)), {}).get("term")
+	var term = view.host.sessions.get(PaneAddress.id(scroll_target), {}).get("term")
 	return term.touch_scrolled(sequence) if is_instance_valid(term) else null
 
 func _scroll(anchor: Vector2, delta: Vector2, stage: String) -> void:

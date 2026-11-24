@@ -22,19 +22,19 @@ func test_explicit_rule_settles_once_per_foreground_identity_not_per_status_or_p
 	for app in ["nvim", "claude", "codex", "pi", "opencode"]:
 		var state := {"id": app, "pid": 20, "started": "now"}
 		var before := host.calls.size()
-		context.update(host, "%1", state)
+		context.update(host, "t1", state)
 		expect(host.calls.size() == before + 1, "Explicit foreground rule settles once")
 		for status in ["busy", "idle", "waiting", "offline"]:
 			state.status = status
-			context.update(host, "%1", state)
+			context.update(host, "t1", state)
 		expect(host.calls.size() == before + 1, "Status and identical polls never settle again")
-		context.update(host, "%2", {"id": "bash", "pid": 2})
-	context.update(host, "%1", {"id": "nvim", "pid": 20, "started": "now"})
+		context.update(host, "t2", {"id": "bash", "pid": 2})
+	context.update(host, "t1", {"id": "nvim", "pid": 20, "started": "now"})
 	var before := host.calls.size()
-	context.update(host, "%1", {"id": "nvim", "pid": 20, "started": "later"})
+	context.update(host, "t1", {"id": "nvim", "pid": 20, "started": "later"})
 	expect(host.calls.size() == before + 1, "A fresh process with the same PID is a new app entry")
-	context.update(host, "%1", {"id": "zsh", "pid": 10})
-	context.update(host, "%1", {"id": "nvim", "pid": 20, "started": "later"})
+	context.update(host, "t1", {"id": "zsh", "pid": 10})
+	context.update(host, "t1", {"id": "nvim", "pid": 20, "started": "later"})
 	expect(host.calls.size() == before + 3, "Explicit unconditional rule also observes the intervening shell")
 	host.free()
 
@@ -45,7 +45,7 @@ func test_agent_entry_does_not_implicitly_settle_effects() -> void:
 	context.rules = preload("res://config/UserConfig.gd").context_rules(PackedStringArray())
 	for app in ["nvim", "claude", "codex", "pi", "opencode", "zsh"]:
 		for status in ["busy", "idle", "waiting"]:
-			context.update(host, "%1", {"id": app, "pid": 20, "status": status})
+			context.update(host, "t1", {"id": app, "pid": 20, "status": status})
 	expect(host.calls.is_empty(), "Agent/editor entry and status updates leave typing effects alone")
 	host.free()
 
@@ -53,19 +53,19 @@ func test_conditions_actions_and_focus_events_are_independent() -> void:
 	var host := Recorder.new()
 	var context := Context.new()
 	context.rules = [
-		Settings.Rule.on("app_changed", {"app": ["nvim"], "pane": "%2"},
+		Settings.Rule.on("app_changed", {"app": ["nvim"], "pane": "t2"},
 			Settings.Actions.settle({"include": ["camera", "sheet", "lighting"]})),
-		Settings.Rule.on("focus_changed", {"pane": "%3"},
+		Settings.Rule.on("focus_changed", {"pane": "t3"},
 			func(target): target.set_meta("focused", true)),
 	]
-	context.update(host, "%1", {"id": "nvim"})
+	context.update(host, "t1", {"id": "nvim"})
 	expect(host.calls.is_empty(), "All conditions must match")
-	context.update(host, "%2", {"id": "nvim"})
+	context.update(host, "t2", {"id": "nvim"})
 	expect(host.calls == [Catalog.resolve({"include": ["camera", "sheet", "lighting"]})], "The action chooses its own effect targets")
-	context.update(host, "%3", {})
+	context.update(host, "t3", {})
 	expect(host.get_meta("focused", false), "A different event can run an arbitrary host callback")
 	context.rules.clear()
-	context.update(host, "%2", {"id": "nvim"})
+	context.update(host, "t2", {"id": "nvim"})
 	expect(host.calls.size() == 1, "An empty rule list disables automatic actions")
 	host.free()
 
@@ -105,24 +105,24 @@ func test_settle_preserves_animation_then_new_typing_reactivates_immediately() -
 	world.fx_typing = 0.8
 	effects.last_key = 12
 	effects.typing = 0.7
-	view._pane_zoom.pulse("%1", 10)
-	view._pane_zoom.advance(0.1, "%1", 0.3, 0.8)
-	var previous: float = view._pane_zoom.weights["%1"]
+	view._pane_zoom.pulse("t1", 10)
+	view._pane_zoom.advance(0.1, "t1", 0.3, 0.8)
+	var previous: float = view._pane_zoom.weights["t1"]
 	Settings.Actions.settle({"include": ["typing"]}).call(host)
 	expect(world.fx_last_key < 0 and effects.last_key < 0, "Only activity triggers expire")
 	expect(world.fx_typing == 0.8 and effects.typing == 0.7, "World animation weights do not jump")
-	expect(view._pane_zoom.weights["%1"] == previous, "Pane zoom does not jump")
-	view._pane_zoom.advance(0.01, "%1", 0.3, 0.8)
-	var resting: float = view._pane_zoom.weights["%1"]
+	expect(view._pane_zoom.weights["t1"] == previous, "Pane zoom does not jump")
+	view._pane_zoom.advance(0.01, "t1", 0.3, 0.8)
+	var resting: float = view._pane_zoom.weights["t1"]
 	expect(resting < previous and resting > 0, "The normal leave animation starts")
-	view._pane_zoom.pulse("%1", 10)
-	view._pane_zoom.advance(0.01, "%1", 0.3, 0.8)
-	expect(view._pane_zoom.weights["%1"] > resting, "Typing immediately reverses the return animation")
+	view._pane_zoom.pulse("t1", 10)
+	view._pane_zoom.advance(0.01, "t1", 0.3, 0.8)
+	expect(view._pane_zoom.weights["t1"] > resting, "Typing immediately reverses the return animation")
 	# Individual targets leave the other trigger alone.
 	world.fx_last_key = 12
 	Settings.Actions.settle({"include": ["pane_zoom"]}).call(host)
 	expect(world.fx_last_key == 12, "Workspace-only action leaves world activity unchanged")
-	view._pane_zoom.pulse("%1", 10)
+	view._pane_zoom.pulse("t1", 10)
 	Settings.Actions.settle({"include": ["camera", "sheet", "lighting"]}).call(host)
 	expect(view._pane_zoom.remaining == 10, "World-only action leaves pane zoom activity unchanged")
 	effects.free()

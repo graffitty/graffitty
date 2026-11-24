@@ -9,13 +9,13 @@ class Owner extends Node:
 		return response
 
 func snapshot(limit := 17) -> Dictionary:
-	return {"nodes": [{"node": "%1", "provider": "codex"}, {"node": "%2", "provider": "codex"}], "edges": [], "queues": {}, "receipts": [], "limits": {"pending_per_node": 7, "run_messages": limit}, "runs": {}}
+	return {"nodes": [{"node": "t1", "provider": "codex"}, {"node": "t2", "provider": "codex"}], "edges": [], "queues": {}, "receipts": [], "limits": {"pending_per_node": 7, "run_messages": limit}, "runs": {}}
 
 func test_unowned_nodes_never_start_a_local_graph() -> void:
 	var graph: Node = Graph.new()
-	graph.nodes = {"%1": {"provider": "codex"}, "%2": {"provider": "codex"}}
-	expect(graph.dispatch(1, "graph.send", {"to": "%2", "text": "hello"}).has("error"), "Missing owner fails rather than enqueuing locally")
-	expect(graph.connect_nodes({"from": "%1", "to": "%2", "send": true}).has("error"), "An unowned connection cannot become authoritative")
+	graph.nodes = {"t1": {"provider": "codex"}, "t2": {"provider": "codex"}}
+	expect(graph.dispatch(1, "graph.send", {"to": "t2", "text": "hello"}).has("error"), "Missing owner fails rather than enqueuing locally")
+	expect(graph.connect_nodes({"from": "t1", "to": "t2", "send": true}).has("error"), "An unowned connection cannot become authoritative")
 	expect(graph.queues.is_empty() and graph.edges.is_empty(), "No fallback queue or edge is created")
 	graph.free()
 
@@ -23,12 +23,12 @@ func test_requests_are_forwarded_and_cross_owner_targets_are_rejected() -> void:
 	var graph: Node = Graph.new()
 	var owner := Owner.new()
 	graph.import_remote(owner, snapshot())
-	var params := {"to": "%2", "text": "hello"}
+	var params := {"to": "t2", "text": "hello"}
 	expect(graph.dispatch(1, "graph.send", params).has("result"), "Owner receives the send")
 	expect(owner.calls == [{"id": 1, "method": "graph.send", "params": params}], "The owning connection receives the original command")
 	expect(graph.queues.is_empty(), "Forwarding never queues locally")
 	var other := Owner.new()
-	graph.remote_owners["%2"] = other
+	graph.remote_owners["t2"] = other
 	expect(graph.dispatch(1, "graph.send", params).has("error") and owner.calls.size() == 1, "Cross-workspace targets fail before transport")
 	graph.free()
 	owner.free()
@@ -40,16 +40,16 @@ func test_budget_controls_use_the_selected_server_and_its_reported_limits() -> v
 	var second := Owner.new()
 	graph.import_remote(first, snapshot(17))
 	var another := snapshot(23)
-	another.nodes = [{"node": "%3", "provider": "codex"}]
+	another.nodes = [{"node": "t3", "provider": "codex"}]
 	graph.import_remote(second, another)
-	expect(graph.default_run_usage("%1/send>%2/in").limit == 17, "Limit comes from the first server")
-	expect(graph.default_run_usage("%3/send>%3/in").limit == 23, "Another server retains its own limit")
+	expect(graph.default_run_usage("t1/send>t2/in").limit == 17, "Limit comes from the first server")
+	expect(graph.default_run_usage("t3/send>t3/in").limit == 23, "Another server retains its own limit")
 	first.response = {"result": {"limits": {"pending_per_node": 7, "run_messages": 5}, "runs": {}}}
-	graph.set_default_run_limit(5, "%1/send>%2/in")
+	graph.set_default_run_limit(5, "t1/send>t2/in")
 	expect(first.calls[0].method == "graph.run.default" and second.calls.is_empty(), "Only the selected server receives the edit")
-	expect(graph.default_run_usage("%1/send>%2/in").limit == 5, "Acknowledged server value updates the UI")
+	expect(graph.default_run_usage("t1/send>t2/in").limit == 5, "Acknowledged server value updates the UI")
 	graph.import_remote(first, {})
-	expect(not graph.default_run_usage("%1/send>%2/in").available, "Disconnect disables budget controls")
+	expect(not graph.default_run_usage("t1/send>t2/in").available, "Disconnect disables budget controls")
 	expect(graph.dispatch(1, "graph.list", {}).has("error"), "Disconnect never activates a fallback engine")
 	graph.free()
 	first.free()
@@ -61,7 +61,7 @@ func test_failed_preview_restores_the_last_server_snapshot() -> void:
 	var owner := Owner.new()
 	graph.import_remote(owner, snapshot())
 	owner.response = {"error": {"message": "server rejected connection"}}
-	graph.connect_nodes({"from": "%1", "to": "%2", "send": true})
+	graph.connect_nodes({"from": "t1", "to": "t2", "send": true})
 	expect(graph.edges.is_empty() and owner.calls.size() == 1, "Server rejection removes the tentative wire")
 	graph.free()
 	owner.free()
@@ -76,7 +76,7 @@ func test_native_receiver_preserves_integer_metadata_and_rejects_partial_graphs(
 	var unchanged: Dictionary = core.receive(1, snapshot())
 	expect(not unchanged.changes.changed and unchanged.view == null and unchanged.snapshot == null, "Identical snapshots do not serialize a redundant graph view")
 	expect(core.view() == received.view, "Skipping the redundant result preserves the complete graph")
-	var invalid: Dictionary = core.receive(1, {"nodes": [{"node": "%1", "provider": 42}]})
+	var invalid: Dictionary = core.receive(1, {"nodes": [{"node": "t1", "provider": 42}]})
 	expect(invalid.has("error") and core.view() == received.view, "A malformed update leaves the last complete graph intact")
 
 

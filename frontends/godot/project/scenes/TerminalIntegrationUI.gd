@@ -43,7 +43,7 @@ func _clipboard_read_requested(id: int, _selection: String) -> void:
 	if is_instance_valid(host):
 		for pane_id in host.sessions:
 			if host.sessions[pane_id].term == terminal:
-				identity = "%%%d: %s" % [pane_id, host.session_model(pane_id).title]
+				identity = "t%d: %s" % [pane_id, host.session_model(pane_id).title]
 				break
 	if identity.is_empty(): identity = "Terminal"
 	dialog.dialog_text = tr("%s requests clipboard access.\nAllow this request?") % identity.left(200)

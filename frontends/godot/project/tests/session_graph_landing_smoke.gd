@@ -1,4 +1,5 @@
 extends "res://tests/session_landing_smoke.gd"
+
 ## Off-canvas graph chrome must be present before the live-view handoff.
 
 func prepare(host: Node, name: String, offset: float) -> void:
@@ -12,7 +13,7 @@ func prepare(host: Node, name: String, offset: float) -> void:
 	var graph: Node = host.agent_api.graph
 	graph.set_process(false)
 	for key in keys:
-		await graph.dispatch(int(key.substr(1)), "agent.event", {"provider":"claude", "event":"SessionStart", "integrated":true})
+		await graph.dispatch(PaneAddress.id(key), "agent.event", {"provider":"claude", "event":"SessionStart", "integrated":true})
 	await graph.dispatch(int(keys[0].substr(1)), "graph.connect", {"from":keys[0], "to":keys[1], "turn_completed":true})
 	var group: Dictionary = host.workspace_layout.tab(host.workspace_layout.active)
 	group.tree["tiling"] = false

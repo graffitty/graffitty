@@ -26,7 +26,7 @@ With alias `build`:
 
 ```sh
 gft pane list -t build/
-gft terminal type -t 'build/%12' --text 'hello'
+gft terminal type -t 'build/t12' --text 'hello'
 ```
 
 Use the pane IDs returned by `list-panes`. The target needs no network port.

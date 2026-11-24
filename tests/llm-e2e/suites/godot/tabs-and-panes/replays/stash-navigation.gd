@@ -1,6 +1,7 @@
 extends "stash-outside-main-area.gd"
 
 
+
 func center_stash(key: String) -> void:
 	var view: Control = host.workspace_view
 	var midpoint: Vector2 = view.get_global_transform_with_canvas() * (view.size * 0.5)
@@ -55,7 +56,7 @@ func play() -> void:
 	var beta := await add_window(alpha, "h")
 	if beta.is_empty():
 		return
-	var id := int(beta.substr(1))
+	var id := PaneAddress.id(beta)
 	var pid: int = host.sessions[id].term.get_shell_pid()
 	await type("echo NAV_STASH $$ {enter}")
 	await camera_at_rest()

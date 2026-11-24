@@ -30,10 +30,10 @@ agents' pane IDs, then connect the sender's completed turns to the receiver:
 
 ```sh
 gft graph list
-gft graph connect --from %1 --to %2 --turn-completed
+gft graph connect --from t1 --to t2 --turn-completed
 ```
 
-Replace `%1` and `%2` with the sender and receiver IDs from the listing.
+Replace `t1` and `t2` with the sender and receiver IDs from the listing.
 Use `--send` for agent-chosen messages or `--read` to grant conversation access
 without an automatic trigger.
 

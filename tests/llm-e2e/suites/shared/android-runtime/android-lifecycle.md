@@ -29,6 +29,6 @@ Android lifecycle and native keyboard checks above.
 
 Run `mise run android:test android-lifecycle --serial SERIAL`.
 
-On Flat 2D startup, restore the remembered pane before activating a terminal; selecting the first pane in tree order would overwrite the saved focus before the workspace opens. Cover a remembered pane with stable ID %1 appearing second in tree order.
+On Flat 2D startup, restore the remembered pane before activating a terminal; selecting the first pane in tree order would overwrite the saved focus before the workspace opens. Cover a remembered pane with stable ID t1 appearing second in tree order.
 
 Use a short output marker that fits narrow phone terminal columns, constructed from separate printf arguments so echoed command text cannot satisfy the background-output assertion.

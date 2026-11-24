@@ -29,7 +29,7 @@ pub fn split_target(target: &str) -> Result<Option<(&str, &str)>, &'static str> 
         return Ok(None);
     };
     if !valid_alias(alias) || pane.contains('/') {
-        return Err("Use server-alias/%ID or server-alias/session:tab.pane");
+        return Err("Use server-alias/tN or server-alias/session:tab.pane");
     }
     Ok(Some((alias, pane)))
 }
@@ -62,7 +62,7 @@ mod tests {
     #[test]
     fn agent_receipts_use_the_current_controller_envelope() {
         let value = serde_json::json!({"version":1,"method":"agent.seen",
-            "params":{"target":"%2","event":"23b9956a-0448-4c23-89ac-d7238491b608"}});
+            "params":{"target":"t2","event":"23b9956a-0448-4c23-89ac-d7238491b608"}});
         let request: Request = serde_json::from_value(value.clone()).unwrap();
         request.validate().unwrap();
         for (field, invalid) in [("version", serde_json::json!(2)),
@@ -75,20 +75,20 @@ mod tests {
     }
     #[test]
     fn remote_prefix_is_explicit_and_exact() {
-        assert_eq!(split_target("%12"), Ok(None));
+        assert_eq!(split_target("t12"), Ok(None));
         assert_eq!(split_target("project:1.2"), Ok(None));
-        assert_eq!(split_target("Build/%12"), Ok(Some(("Build", "%12"))));
+        assert_eq!(split_target("Build/t12"), Ok(Some(("Build", "t12"))));
         assert_eq!(
             split_target("build/project:1.2"),
             Ok(Some(("build", "project:1.2")))
         );
         assert_eq!(split_target("build/"), Ok(Some(("build", ""))));
         for target in [
-            "/%12",
-            "../%12",
-            "host:7183/%12",
-            "build/a/%12",
-            "-build/%12",
+            "/t12",
+            "../t12",
+            "host:7183/t12",
+            "build/a/t12",
+            "-build/t12",
         ] {
             assert!(split_target(target).is_err(), "{target}");
         }

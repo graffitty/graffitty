@@ -7,7 +7,7 @@ class Monitor extends Node:
 	func snapshot() -> Dictionary: return {}
 
 class Host extends Node:
-	func is_terminal_pane(key: String) -> bool: return key in ["%4", "%9"]
+	func is_terminal_pane(key: String) -> bool: return key in ["t4", "t9"]
 	var workspace_layout := preload("res://scenes/WorkspaceLayout.gd").new()
 	var agent_api: Node
 	var monitor := Monitor.new()
@@ -18,31 +18,31 @@ func test_status_strip_identifies_pane_without_title() -> void:
 	var host := Host.new()
 	var view := View.new()
 	view.host = host
-	expect(view._compact_resources("%0", 1).label == ".1 (%0)", "Status strip uses only ordinal and stable ID, never the pane title")
+	expect(view._compact_resources("t0", 1).label == ".1 (t0)", "Status strip uses only ordinal and stable ID, never the pane title")
 	view.free()
 	host.monitor.free()
 	host.free()
 
 func test_status_position_updates_without_waiting_for_resource_sample() -> void:
 	var host := Host.new()
-	host.workspace_layout.add(4, {"windows": [{"pane": "%4", "shown": false}, {"pane": "%9"}]})
+	host.workspace_layout.add(4, {"windows": [{"pane": "t4", "shown": false}, {"pane": "t9"}]})
 	var view := View.new()
 	view.host = host
-	view.panes["%9"] = Control.new()
+	view.panes["t9"] = Control.new()
 	var strip := Control.new()
-	view.status_strips["%9"] = strip
+	view.status_strips["t9"] = strip
 	view._sync_status_sources()
-	expect(view.pane_status["%9"].label == ".1 (%9)", "Main panes precede hidden panes in the status strip too")
+	expect(view.pane_status["t9"].label == ".1 (t9)", "Main panes precede hidden panes in the status strip too")
 	var tree: Dictionary = host.workspace_layout.tab(4).tree
 	tree.tiling = true
 	tree.windows[0].shown = true
-	tree.tiles = {"axis": "h", "children": [{"pane": "%4"}, {"pane": "%9"}]}
+	tree.tiles = {"axis": "h", "children": [{"pane": "t4"}, {"pane": "t9"}]}
 	view._sync_status_sources()
-	expect(view.pane_status["%9"].label == ".2 (%9)", "Changing Main updates numbers without waiting for resource samples")
-	host.workspace_layout.take_pane("%4")
+	expect(view.pane_status["t9"].label == ".2 (t9)", "Changing Main updates numbers without waiting for resource samples")
+	host.workspace_layout.take_pane("t4")
 	view._sync_status_sources()
-	expect(view.pane_status["%9"].label == ".1 (%9)", "Closing the preceding pane updates the ordinal while preserving the stable ID")
-	view.panes["%9"].free()
+	expect(view.pane_status["t9"].label == ".1 (t9)", "Closing the preceding pane updates the ordinal while preserving the stable ID")
+	view.panes["t9"].free()
 	strip.free()
 	view.free()
 	host.monitor.free()
@@ -52,7 +52,7 @@ func test_optional_agent_status_never_repeats_metrics() -> void:
 	var host := Host.new()
 	var view := View.new()
 	view.host = host
-	expect(view._compact_resources("%4", 1).agent == null, "A shell has no duplicate status row")
+	expect(view._compact_resources("t4", 1).agent == null, "A shell has no duplicate status row")
 	var badge: Dictionary = Mods.agent_badge("claude", "idle", {}, [])
 	expect(badge.tooltip == "Claude · " + TranslationServer.translate("Done") and badge.logo == "claude-code.svg" and not badge.spinning, "An agent badge identifies provider and status")
 	expect(Mods.agent_badge("codex", "busy", {}, []).spinning, "A running agent's glyph spins")
@@ -63,11 +63,11 @@ func test_optional_agent_status_never_repeats_metrics() -> void:
 
 func test_resource_summary_distinguishes_live_zero_from_unknown() -> void:
 	var live := {"status": "running", "root_pid": 1234, "cpu_valid": true, "cpu_percent": 0.0, "memory_current": 10485760}
-	expect(View.overview_resource_text(live, "%3") == "%3 · CPU 0% · RAM 10M", "Live zero CPU and MiB are displayed")
-	expect(View.overview_resource_text(live, "%3", 1) == ".1 (%3) · CPU 0% · RAM 10M", "The pane's ordered position appears alongside its stable ID")
+	expect(View.overview_resource_text(live, "t3") == "t3 · CPU 0% · RAM 10M", "Live zero CPU and MiB are displayed")
+	expect(View.overview_resource_text(live, "t3", 1) == ".1 (t3) · CPU 0% · RAM 10M", "The pane's ordered position appears alongside its stable ID")
 	live.status = "paused"
-	expect(View.overview_resource_text(live, "%3") == "%3 · CPU — · RAM —", "Paused samples never masquerade as current measurements")
-	expect(View.overview_resource_text({}, "%8") == "%8 · CPU — · RAM —", "Unavailable sampler values are explicit")
+	expect(View.overview_resource_text(live, "t3") == "t3 · CPU — · RAM —", "Paused samples never masquerade as current measurements")
+	expect(View.overview_resource_text({}, "t8") == "t8 · CPU — · RAM —", "Unavailable sampler values are explicit")
 
 func test_status_strips_stay_outside_all_terminal_content() -> void:
 	var owners: Array[Rect2] = [Rect2(130, 120, 240, 180), Rect2(380, 40, 180, 160)]

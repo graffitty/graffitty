@@ -1,5 +1,6 @@
 extends "session-defaults.gd"
 
+
 func play() -> void:
 	directory = OS.get_environment("GRAFFITTY_INPUT_EVIDENCE")
 	terminal = host.active_terminal()
@@ -14,7 +15,7 @@ func play() -> void:
 	if not check(DirAccess.remove_absolute(deleted)==OK,"Delete real directory reported over OSC 7 without native cwd lock"):return
 	var created: Array[int] = []
 	for tab in [false,true]:
-		host.focus_pane("%%%d" % original)
+		host.focus_pane(PaneAddress.key(original))
 		await camera_at_rest()
 		terminal = host.active_terminal()
 		if not await new_shell(tab):return
@@ -24,14 +25,14 @@ func play() -> void:
 	for id in created:host._close_terminal_pane(id)
 	var deadline := Time.get_ticks_msec()+5000
 	while host.sessions.size()!=1 and Time.get_ticks_msec()<deadline:await process_frame
-	host.focus_pane("%%%d" % original)
+	host.focus_pane(PaneAddress.key(original))
 	await camera_at_rest()
 	terminal = host.active_terminal()
 	var home := preload("res://graffitty/paths.gd").expand_home("~")
 	await shell_receipt("Set-Location -LiteralPath '%s'; [Environment]::CurrentDirectory='%s'; [Console]::Write(([char]27)+']7;file:///%s'+([char]7)); " % [home.replace("'","''"),home.replace("'","''"),deleted.replace("\\","/")])
 	if not check(DirAccess.remove_absolute(launch)==OK,"Delete original GUI directory after releasing native handles"):return
 	for tab in [false,true]:
-		host.focus_pane("%%%d" % original)
+		host.focus_pane(PaneAddress.key(original))
 		await camera_at_rest()
 		terminal = host.active_terminal()
 		if not await new_shell(tab):return

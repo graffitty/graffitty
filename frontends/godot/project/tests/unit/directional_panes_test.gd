@@ -1,4 +1,6 @@
 extends "res://tests/unit/test_case.gd"
+
+const PaneAddress := preload("res://scenes/PaneAddress.gd")
 const Layout := preload("res://scenes/WorkspaceLayout.gd")
 const Physics := preload("res://scenes/WorkspacePhysics.gd")
 const Prefix := preload("res://scenes/WorkspacePrefix.gd")
@@ -18,10 +20,10 @@ class TerminalStub extends RefCounted:
 class Host extends Node:
 	var chromiums := {}
 	func is_terminal_pane(key: String) -> bool:
-		return preload("res://scenes/PaneTargets.gd").valid(key) and sessions.has(int(key.substr(1)))
+		return preload("res://scenes/PaneTargets.gd").valid(key) and sessions.has(PaneAddress.id(key))
 	signal ui_changed
 	var workspace_view := View.new()
-	var pane_focus := "%1"
+	var pane_focus := "t1"
 	var terminal := TerminalStub.new()
 	var sessions := {1: {"term": terminal}}
 	var opened: Array[String] = []

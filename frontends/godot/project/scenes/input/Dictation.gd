@@ -1,4 +1,6 @@
 extends Node
+
+const PaneAddress := preload("res://scenes/PaneAddress.gd")
 ## One recording, one pinned destination. Hold/release sends; tap latches the
 ## recorder, then the square stops and sends. Cancel never inserts anything.
 const DesktopText := preload("res://scenes/DesktopText.gd")
@@ -188,14 +190,14 @@ func _press() -> void:
 	press_stopping = bar.visible
 	if not bar.visible:
 		target = host.pane_focus
-		server_owner = int(target.substr(1))
+		server_owner = PaneAddress.id(target)
 		server_connection = host.session_backend.connection
 		if host.is_chromium_pane(target): server_owner = host.chromiums[server_owner].tab_id
 		if "owners" in server_connection: server_connection = server_connection.owners.get(server_owner)
 		server_epoch = server_connection.epoch if is_instance_valid(server_connection) else ""
 		host.prefix_commands.cancel()
 		chromium_tab = ""
-		if host.is_chromium_pane(target): chromium_tab = host.chromiums[int(target.substr(1))].primary_target_id
+		if host.is_chromium_pane(target): chromium_tab = host.chromiums[PaneAddress.id(target)].primary_target_id
 		bar.show()
 		start()
 	slide_hint.visible = capture.recording
@@ -364,7 +366,7 @@ func send() -> void:
 	if not server_epoch.is_empty() and (not is_instance_valid(server_connection) or server_connection.epoch != server_epoch):
 		_error("The destination pane is closed. Your draft is still here.")
 		return
-	var id := int(target.substr(1))
+	var id := PaneAddress.id(target)
 	var text := preview.text
 	var current := generation
 	var destination := target

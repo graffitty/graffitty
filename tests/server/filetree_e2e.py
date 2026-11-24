@@ -236,7 +236,7 @@ def main():
                     assert nvim(viewer["address"], "bufnr('%')") == first_buffer
             print("File opens reuse Neovim process, pane, window and tab with two reusable buffers PASS", flush=True)
             chromium = rpc("filetree.open_file", {"path": str(image)}, session=pane)
-            chromium_id = int(chromium["pane"][1:])
+            chromium_id = (1 << 30) + int(chromium["pane"][1:])
             assert chromium["kind"] == "chromium" and chromium["created"]
 
             def chromium_command(controller, action, args=None):
@@ -301,7 +301,7 @@ def main():
             request("close", viewer_id)
             assert not Path(viewer["address"]).parent.exists()
             print("Filetree close detaches viewer, preserving its process and unsaved edits PASS", flush=True)
-            assert closed["focus"] == f"%{source}"
+            assert closed["focus"] == f"t{source}"
             reopened = rpc("filetree.toggle", {"focus": True})
             assert reopened["focus"] == reopened["pane"]
             wait(lambda: nvim(reopened["address"], "&filetype") == "fyler_finder")
@@ -353,9 +353,9 @@ def main():
             wait(lambda: nvim(viewer["address"], "getpid()") != "")
             viewer_pid = nvim(viewer["address"], "getpid()")
             chromium = rpc("filetree.open_file", {"path": str(html)}, session=moved_tree)
-            chromium_id = int(chromium["pane"][1:])
+            chromium_id = (1 << 30) + int(chromium["pane"][1:])
             chromium_pid = chromium_command(moved_tree, "chrome-state")["pid"]
-            moved = request("regroup", surface=f"%{source}")
+            moved = request("regroup", pane=f"t{source}")
             assert moved["source_empty"]
             assert all(p["tab"] == moved["tab"] for p in latest()["panes"])
             request("create")

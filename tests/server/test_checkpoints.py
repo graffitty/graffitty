@@ -39,8 +39,8 @@ class Checkpoints(unittest.TestCase):
                     "tabs": [
                         {
                             "id": 1,
-                            "focused": "%1",
-                            "tree": {"pane": "%1"},
+                            "focused": "t1",
+                            "tree": {"pane": "t1"},
                         }
                     ],
                     "panes": [{"id": 1, "pid": 100, "cwd": "/tmp"}],
@@ -319,7 +319,7 @@ class Checkpoints(unittest.TestCase):
         tree = {"id": 2, "pid": 200, "cwd": "/tmp", "filetree": {"owner": 1, "root": str(self.root / "missing")}}
         window = self.document["windows"][0]
         window["panes"].append(tree)
-        window["tabs"][0]["tree"] = {"windows": [{"pane": "%1"}, {"pane": "%2"}]}
+        window["tabs"][0]["tree"] = {"windows": [{"pane": "t1"}, {"pane": "t2"}]}
         self.layout.write_text(json.dumps(self.document))
         prepared = self.run_cli("restore", "--prepare-only", "--checkpoint", str(self.layout))
         saved = json.loads(Path(prepared["prepared"]).read_text())

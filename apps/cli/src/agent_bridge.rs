@@ -584,14 +584,14 @@ mod codex_discovery_tests {
         let pid = i64::from(child.id());
         let started = crate::sessions::process(pid).unwrap().started;
         // An exited pane has no shell root. Its registered agent may still live.
-        let roots = |start: &str| json!([{"node":"%1","agent_pid":pid,"started":start}]);
+        let roots = |start: &str| json!([{"node":"t1","agent_pid":pid,"started":start}]);
         let live = scan(&roots(&started));
         let reused = scan(&roots("different birth time"));
         child.kill().unwrap();
         child.wait().unwrap();
         assert_eq!(live, json!({}));
-        assert_eq!(reused["%1"]["status"], "offline");
-        assert_eq!(scan(&roots(&started))["%1"]["status"], "offline");
+        assert_eq!(reused["t1"]["status"], "offline");
+        assert_eq!(scan(&roots(&started))["t1"]["status"], "offline");
     }
 
     #[test]

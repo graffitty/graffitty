@@ -140,14 +140,14 @@ func test_remote_pointer_and_key_events_cross_native_message_mapping() -> void:
 	chromium.release_input()
 	var connection := preload("res://scenes/remote/RemoteConnection.gd").new()
 	connection.namespace_ids = true
-	connection.local_ids = {7: 70}
+	connection.local_ids = {(1 << 30) + 7: (1 << 30) + 70}
 	expect(chromium.events.size() >= 9, "Exercise motion, clicks, scrolling, typing and focus-loss release")
 	for event in chromium.events:
-		var mapped: Variant = connection.map_graph({"chromium": "%70", "event": event}, false)
+		var mapped: Variant = connection.map_graph({"chromium": "c70", "event": event}, false)
 		if expect(mapped is Dictionary, "Chromium %s input survives native message conversion" % event.params.type):
 			# Compare wire values: Godot's JSON parser makes every number a float.
 			var wire_event: Variant = JSON.parse_string(JSON.stringify(mapped.event))
-			expect(mapped.chromium == "%7" and wire_event == JSON.parse_string(JSON.stringify(event)), "Remote input retains every CDP field and maps the owning pane")
+			expect(mapped.chromium == "c7" and wire_event == JSON.parse_string(JSON.stringify(event)), "Remote input retains every CDP field and maps the owning pane")
 	connection.free()
 	chromium.free()
 
@@ -627,11 +627,11 @@ func test_only_main_chromium_window_owns_the_session_status_strip() -> void:
 	main.apply_state({"mainWindow": true})
 	child.apply_state({"mainWindow": false})
 	host.chromiums = {7: main, 8: child}
-	expect(view._has_session_status("%1"), "Terminal retains its own status strip")
-	expect(view._has_session_status("%7"), "Main Chromium window has session status")
-	expect(not view._has_session_status("%8"), "Detached window has no duplicate session status")
+	expect(view._has_session_status("t1"), "Terminal retains its own status strip")
+	expect(view._has_session_status("t7"), "Main Chromium window has session status")
+	expect(not view._has_session_status("t8"), "Detached window has no duplicate session status")
 	child.apply_state({"mainWindow": true})
-	expect(view._has_session_status("%8"), "Promoted window takes over session status")
+	expect(view._has_session_status("t8"), "Promoted window takes over session status")
 	view.free()
 	main.free()
 	child.free()
@@ -654,7 +654,7 @@ func test_detached_window_uses_terminal_controller_but_links_to_main_chromium() 
 	main.tab_id = 1
 	child.tab_id = 1
 	host.chromiums = {7: main, 8: child}
-	expect(view._chromium_owners() == {"%7": "%1", "%8": "%7"}, "Graph distinguishes sessions from windows")
+	expect(view._chromium_owners() == {"t7": "t1", "t8": "t7"}, "Graph distinguishes sessions from windows")
 	view.free()
 	main.free()
 	child.free()

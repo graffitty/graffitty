@@ -29,11 +29,11 @@ class Layout extends RefCounted:
 	func tab(_id): return {"tree": {"tiling": true}}
 class View extends RefCounted:
 	var revealed: Array = []
-	var pane_rects := {"%1": Rect2(100,100,100,100), "%tree": Rect2(0,100,100,100),
+	var pane_rects := {"t1": Rect2(100,100,100,100), "%tree": Rect2(0,100,100,100),
 		"%right": Rect2(200,100,100,100), "%up": Rect2(100,0,100,100), "%down": Rect2(100,200,100,100)}
 	func reveal_navigation_target(key): revealed.append(key)
 class Host extends Node:
-	var pane_focus := "%1"
+	var pane_focus := "t1"
 	var terminal := TerminalStub.new()
 	var sessions := {1: {"term": terminal}}
 	var connection := Connection.new()
@@ -60,7 +60,7 @@ func test_ctrl_and_cmd_directions_and_filetree() -> void:
 		host.connection.topology.navigator.bindings["meta+" + OS.get_keycode_string(pair[0]).to_lower()] = pair[2]
 		host.connection.destination = pair[1]
 		for meta in [false,true]:
-			host.pane_focus = "%1"
+			host.pane_focus = "t1"
 			press(nav,pair[0],meta)
 			expect(host.pane_focus == pair[1], "Correct directional pane including filetree")
 	expect(host.terminal.keys.is_empty(), "Handled navigation emits no PTY keys")
@@ -78,7 +78,7 @@ func test_pass_preserves_custom_key_and_does_not_move() -> void:
 	expect(host.connection.calls[0][1] == "navigator.input", "Server decides input routing and destination")
 	host.connection.result = "canceled"
 	press(nav,KEY_H)
-	expect(host.terminal.keys.size() == 2 and host.pane_focus == "%1", "Canceled input never moves outward")
+	expect(host.terminal.keys.size() == 2 and host.pane_focus == "t1", "Canceled input never moves outward")
 	host.connection.free(); host.free()
 
 func test_literal_navigation_key_keeps_effects_without_querying_owner() -> void:
@@ -100,7 +100,7 @@ func test_forwarded_repeat_has_a_real_release() -> void:
 	event.ctrl_pressed = true
 	event.pressed = true
 	event.echo = true
-	nav._forward_key("%1", event)
+	nav._forward_key("t1", event)
 	expect(host.terminal.keys[0].echo and host.terminal.keys[0].pressed, "Repeated press is preserved")
 	expect(not host.terminal.keys[1].echo and not host.terminal.keys[1].pressed, "Synthetic release cannot encode another repeat")
 	host.connection.free(); host.free()
@@ -135,7 +135,7 @@ func test_stale_server_decision_does_not_move_or_replay() -> void:
 	nav.host = host
 	host.connection.before_reply = func(): nav.focus_changed()
 	press(nav, KEY_L)
-	expect(host.pane_focus == "%1", "Focus epoch changes cancel in-flight decisions")
+	expect(host.pane_focus == "t1", "Focus epoch changes cancel in-flight decisions")
 	expect(host.terminal.keys.is_empty(), "Canceled keys are not replayed")
 	host.connection.free(); host.free()
 
@@ -146,7 +146,7 @@ func test_layout_context_is_geometry_only() -> void:
 	press(nav, KEY_H)
 	var params: Dictionary = host.connection.calls[0][2]
 	expect(params.key == "ctrl+h", "Request sends original key, not client-selected direction")
-	expect(params.context.origin == "%1", "Opaque presentation origin is preserved")
+	expect(params.context.origin == "t1", "Opaque presentation origin is preserved")
 	expect(params.context.rects["%right"] == [200.0, 100.0, 100.0, 100.0], "Server receives shown layout coordinates")
 	expect(host.pane_focus == "%right", "Presentation applies the server decision even if key points elsewhere")
 	host.connection.free(); host.free()

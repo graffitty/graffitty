@@ -1,4 +1,6 @@
 extends SceneTree
+
+const PaneAddress := preload("res://scenes/PaneAddress.gd")
 ## A replay drives the real application the way a person would, at a person's
 ## pace, with the pointer, clicks and keys drawn on screen, so its Movie Maker
 ## recording reads like a screen recording.
@@ -460,7 +462,7 @@ func _key(code: Key, unicode: int, modifiers: Dictionary, label: String) -> void
 ## follow typing still see every key. {enter}, {tab}, {escape} ... name keys.
 func type(text: String) -> void:
 	if OS.get_name() == "Windows" and host.is_terminal_pane(host.pane_focus):
-		var id := int(host.pane_focus.substr(1))
+		var id := PaneAddress.id(host.pane_focus)
 		if host.sessions.has(id):
 			var terminal: Node = host.sessions[id].term
 			var deadline := Time.get_ticks_msec() + 15000
@@ -680,7 +682,7 @@ func terminal_text(id: int) -> String:
 
 ## A terminal window's pane on the canvas, and its drag handle.
 func window(title: String) -> Control:
-	return host.workspace_view.panes.get("%%%d" % terminal_id(title))
+	return host.workspace_view.panes.get(PaneAddress.key(terminal_id(title)))
 
 
 func handle(title: String) -> Control:

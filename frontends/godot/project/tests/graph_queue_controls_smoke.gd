@@ -1,4 +1,5 @@
 extends "../../../../tests/llm-e2e/replay/replay.gd"
+
 ## Exercise the budget/deadline controls on a real, embedded inspector.
 
 
@@ -8,14 +9,14 @@ func play() -> void:
 	root.add_child(graph)
 	graph.set_process(false)
 	for id in [1, 2]:
-		var key := "%%%d" % id
+		var key := PaneAddress.key(id)
 		graph.nodes[key] = { "provider": "adapter" }
 		graph.register_ports(key, { "inputs": [{ "id": "in" }], "outputs": [{ "id": "out" }] })
 	graph.connect_nodes(
 		{
-			"from": "%1",
+			"from": "t1",
 			"from_port": "out",
-			"to": "%2",
+			"to": "t2",
 			"to_port": "in",
 			"send": true,
 		}
@@ -42,8 +43,8 @@ func play() -> void:
 		(await screen_image()).save_png(capture.get_basename() + "-empty.png")
 	for i in 3:
 		graph.enqueue(
-			"%1",
-			"%2",
+			"t1",
+			"t2",
 			"Message %d" % i,
 			"message",
 			"inspector-controls",
@@ -80,7 +81,7 @@ func play() -> void:
 		"Stop-time control stores a future connection deadline",
 	)
 	check(
-		graph.queues["%2"].size() == 3,
+		graph.queues["t2"].size() == 3,
 		"Changing a future stop time preserves queued deliveries",
 	)
 	inspector.stop_editor.mode.select(1)
@@ -111,7 +112,7 @@ func play() -> void:
 	inspector.reset_count_button.pressed.emit()
 	check(inspector.run_usage_label.text.ends_with("0/25"), "Reset updates the selected run count")
 	check(
-		graph.queues["%2"].size() == 3 and graph.queue_log.snapshot() == history,
+		graph.queues["t2"].size() == 3 and graph.queue_log.snapshot() == history,
 		"Reset keeps queued work and delivery history",
 	)
 	var edge: Dictionary = graph.edges[key].duplicate()
@@ -119,7 +120,7 @@ func play() -> void:
 	graph.connect_nodes(edge)
 	await hold(0.5)
 	check(
-		graph.queues["%2"].is_empty(),
+		graph.queues["t2"].is_empty(),
 		"One-shot deadline expires pending deliveries without graph polling",
 	)
 	check(

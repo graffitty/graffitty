@@ -1,10 +1,11 @@
 extends "terminal-tools.gd"
 
+
 func play() -> void:
 	directory = OS.get_environment("GRAFFITTY_INPUT_EVIDENCE")
 	terminal = host.active_terminal()
 	var original: int = host.active_session_id
-	var key := "%%%d" % original
+	var key := PaneAddress.key(original)
 	await host.set_pane_title(key,"Status lifecycle")
 	var release: Callable = host.effect_control.hold(preload("res://graffitty/effects.gd").NAMES)
 	await camera_at_rest()

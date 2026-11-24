@@ -7,10 +7,10 @@ For options, run `gft --help` or `gft <command> --help`.
 
 ```sh
 gft pane list
-gft pane select -t %3
+gft pane select -t t3
 ```
 
-Replace `%3` with an ID from the listing.
+Replace `t3` with an ID from the listing.
 Use `-L`, `-R`, `-U`, or `-D` to focus a neighboring pane, including floating panes.
 For targets and editor integration, see [Select a pane](select-pane.md).
 
@@ -40,8 +40,8 @@ gft skill chromium
 
 ```sh
 gft terminal get-text --scrollback > terminal.txt
-gft terminal type -t %3 --text 'hello'
-gft terminal send-key -t %3 Enter
+gft terminal type -t t3 --text 'hello'
+gft terminal send-key -t t3 Enter
 ```
 
 Typing does not press Enter. See [Terminal commands](terminal-commands.md)

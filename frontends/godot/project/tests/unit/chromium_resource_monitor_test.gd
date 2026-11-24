@@ -87,18 +87,18 @@ func test_monitor_follows_chromium_and_terminal_focus() -> void:
 	var chromium_monitor := Monitor.new()
 	chromium_monitor._accept_sample(sample(1000))
 	chromium.resource_monitor = chromium_monitor
-	host.chromiums[7] = chromium
+	host.chromiums[(1 << 30) + 7] = chromium
 	var terminal_monitor := Monitor.new()
 	host.sessions[2] = {"resource_monitor": terminal_monitor}
 	host.active_session_id = 2
 	var describe := func() -> String: return preload("res://scenes/mods/ModService.gd")._resources(host).tooltip
-	host.pane_focus = "%7"
-	expect("Chromium 7" in describe.call(), "Chromium focus selects its own session")
+	host.pane_focus = "c7"
+	expect("Chromium c7" in describe.call(), "Chromium focus selects its own session")
 	expect("Chromium host PID 4321" in describe.call(), "Chromium root is not labelled a shell")
-	host.pane_focus = "%2"
-	expect("Pane %2" in describe.call(), "Terminal focus restores the pane monitor")
+	host.pane_focus = "t2"
+	expect("Pane t2" in describe.call(), "Terminal focus restores the pane monitor")
 	chromium_monitor._accept_sample({"error": "Tracker unavailable"})
-	host.pane_focus = "%7"
+	host.pane_focus = "c7"
 	expect("Tracker unavailable" in describe.call() and not "MiB" in describe.call(), "Unavailable accounting must not display zero usage")
 	chromium_monitor.free()
 	terminal_monitor.free()

@@ -2,8 +2,8 @@ extends RefCounted
 ## Candidates, ranking and actions for the prefix command line; CommandLine.gd
 ## draws them.
 ##
-## Input starting with a digit, `%` or `@` lists tabs and panes the tmux way
-## (`2`, `2.1`, `%ID`, `@ID`, `@ID.1`; numbers start at 1).
+## Input starting with a pane address, digit or `@` lists tabs and panes the tmux way
+## (`2`, `2.1`, `tN`, `cN`, `@ID`, `@ID.1`; numbers start at 1).
 ##
 ## Anything starting with `$` lists live sessions by name; anything else lists
 ## menu commands.
@@ -52,7 +52,7 @@ static func identity(candidate: Dictionary) -> String:
 
 
 static func number_mode(value: String) -> bool:
-	return not value.is_empty() and (value[0] in ["%", "@"] or value[0] in "0123456789")
+	return not value.is_empty() and (value in ["t", "c"] or preload("res://scenes/PaneAddress.gd").id(value) > 0 or value[0] == "@" or value[0] in "0123456789")
 
 
 static func checkpoint_arg_query(value: String) -> bool:
@@ -63,7 +63,7 @@ static func checkpoint_arg_query(value: String) -> bool:
 
 
 func placeholder_text() -> String:
-	# Words are translated; the %id, @id and $session syntax stays literal.
+	# Words are translated; the pane, @id and $session syntax stays literal.
 	var parts := PackedStringArray([tr("command")])
 	var tabs: Array = host.get_tabs()
 	if not tabs.is_empty():
@@ -72,7 +72,7 @@ func placeholder_text() -> String:
 		parts.append(tr("%d tab") % tabs.size())
 		if panes > 0:
 			parts.append(tr("%d.%d pane") % [tabs.size(), panes])
-	parts.append_array(["%id", "@id", "$session"])
+	parts.append_array(["tN", "cN", "@id", "$session"])
 	return "   ·   ".join(parts)
 
 
@@ -132,7 +132,7 @@ func refresh() -> void:
 	if sessions:
 		candidates = _sessions()
 	elif targets:
-		candidates = _targets(query[0] if query[0] in ["%", "@"] else "")
+		candidates = _targets(query[0] if query[0] in ["t", "c", "@"] else "")
 	elif checkpoint_args:
 		candidates = _checkpoints()
 	else:
@@ -500,7 +500,7 @@ func _raise(owner: Node) -> void:
 	window.grab_focus()
 
 
-## Tabs and panes. Plain numbers address this window by position; `%` and `@`
+## Tabs and panes. Plain numbers address this window by position; typed pane addresses and `@`
 ## address stable IDs in every window, the way PaneTargets resolves them.
 func _targets(sigil: String) -> Array[Dictionary]:
 	var hosts: Array = [host]
@@ -513,7 +513,7 @@ func _targets(sigil: String) -> Array[Dictionary]:
 			position += 1
 			var id := int(tab.id)
 			var where := str(position) if owner == host else "other window"
-			if sigil != "%":
+			if sigil not in ["t", "c"]:
 				result.append({
 					"kind": "tab", "host": owner, "id": id, "title": str(tab.title), "hidden": false,
 					"label": Targets.tab_id(id) if sigil == "@" else str(position),
@@ -530,7 +530,8 @@ func _targets(sigil: String) -> Array[Dictionary]:
 				var detail := key
 				if sigil == "@":
 					label = "%s.%d" % [Targets.tab_id(id), index + 1]
-				elif sigil == "%":
+				elif sigil in ["t", "c"]:
+					if not key.begins_with(sigil): continue
 					label = key
 					detail = number if owner == host else "other window"
 				result.append({

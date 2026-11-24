@@ -1,4 +1,5 @@
 extends "fit-to-pane.gd"
+
 ## Replays the Main View regression: split above, close, then type again.
 
 
@@ -24,13 +25,13 @@ func close_pane(key: String) -> void:
 	var pane: Control = host.workspace_view.panes[key]
 	pane.title_menu.id_pressed.emit(0)
 	var deadline := Time.get_ticks_msec() + 10000
-	while host.sessions.has(int(key.substr(1))) and not is_instance_valid(host.close_dialog) and Time.get_ticks_msec() < deadline:
+	while host.sessions.has(PaneAddress.id(key)) and not is_instance_valid(host.close_dialog) and Time.get_ticks_msec() < deadline:
 		await process_frame
 	if is_instance_valid(host.close_dialog):
 		host.close_dialog.confirmed.emit()
 		host.close_dialog.hide()
 	await owner_at_rest()
-	check(not host.sessions.has(int(key.substr(1))), "Close removes the requested pane")
+	check(not host.sessions.has(PaneAddress.id(key)), "Close removes the requested pane")
 
 
 func add_above(source: String) -> String:

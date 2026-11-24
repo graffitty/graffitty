@@ -1,4 +1,6 @@
 extends "res://tests/client_scenarios/scenario.gd"
+
+const PaneAddress := preload("res://scenes/PaneAddress.gd")
 ## Desktop workspace regressions adapted to the production Android remote UI.
 const Layout := preload("res://scenes/WorkspaceLayout.gd")
 var case_name := ""
@@ -33,7 +35,7 @@ func until(condition: Callable, message: String, seconds := 12.0) -> bool:
 	return expect(condition.call(), message)
 
 func terminal(key := "") -> Node:
-	return host.sessions[host.active_session_id if key.is_empty() else int(key.substr(1))].term
+	return host.sessions[host.active_session_id if key.is_empty() else PaneAddress.id(key)].term
 
 func text_in(key := "", history := false) -> String:
 	return str(terminal(key).get_text(history).get("text", ""))
@@ -157,7 +159,7 @@ func split(from: String, axis := "h", chrome := false) -> String:
 	for id in host.sessions:
 		if id not in before:
 			await wait(.3)
-			return "%%%d" % id
+			return PaneAddress.key(id)
 	return ""
 
 func new_tab() -> int:
@@ -576,7 +578,7 @@ func list_docking() -> void:
 	expect(resources.load_error.is_empty() and "readout" in resources.view.hit_keys(), "Docked Pane Status renders its panel readout")
 	host.application.mods.publish_resources(host)
 	await wait()
-	# The label is localized ("Pane %0 · running", "Panneau %0 · en cours"); the pane ID is not.
+	# The label is localized ("Pane t0 · running", "Panneau t0 · en cours"); the pane ID is not.
 	var readout: Array = resources.texts()
 	expect(not readout.is_empty() and str(readout[0]).contains(host.pane_focus), "Docked readout names the focused pane (focus=%s texts=%s)" % [host.pane_focus, readout])
 	# Exercise the real manager boundary with docked tools and a floating list.
@@ -878,10 +880,10 @@ func text_size() -> void:
 		host.layout_root.offset_bottom = previous_bottom
 	var result: Dictionary = await host.session_backend.create_chromium_remote(host, initial_id, "about:blank", true, null)
 	if not expect(result.has("result"), "Creates Chrome for native page zoom"): return
-	var id := int(str(result.result.chromium).trim_prefix("%"))
+	var id := PaneAddress.id(str(result.result.chromium))
 	if not await until(func(): return host.chromiums.has(id) and host.chromiums[id].chromium_ready, "Chrome is ready for page zoom"): return
 	var chromium: Node = host.chromiums[id]
-	host.focus_pane("%%%d" % id)
+	host.focus_pane(PaneAddress.key(id))
 	await wait(.4)
 	# A page handler must not block native chromium zoom.
 	await chromium_eval(chromium, "document.onkeydown=e=>e.preventDefault(); window.devicePixelRatio")
@@ -944,12 +946,12 @@ func pane_controls() -> void:
 	await until(func(): return "PANE_INPUT_ONLY" in text_in(c), "New pane receives input")
 	expect(not "PANE_INPUT_ONLY" in text_in(a) and not "PANE_INPUT_ONLY" in text_in(b), "Input does not leak into other panes")
 	for k in [a,b,c]:
-		var id := int(k.substr(1))
+		var id := PaneAddress.id(k)
 		var owner: Dictionary = transport.topology.panes.filter(func(pane): return int(pane.id) == id).front()
 		expect(terminal(k).remote_mode and int(owner.pid) > 0 and terminal(k).get_shell_pid() == int(owner.pid), "Android pane mirrors the existing owner shell")
 		expect(view.panes[k].header.view.last_error().is_empty(), "Pane-header mod and its split icons are packaged")
-	host._close_terminal_pane(int(c.substr(1)))
-	await until(func(): return not host.sessions.has(int(c.substr(1))), "Close only newly created pane")
+	host._close_terminal_pane(PaneAddress.id(c))
+	await until(func(): return not host.sessions.has(PaneAddress.id(c)), "Close only newly created pane")
 	expect(host.sessions.size() == 2, "Other two panes remain alive")
 
 func close_nearest() -> void:
@@ -967,7 +969,7 @@ func close_nearest() -> void:
 	var typing_events := [0]
 	var on_typed := func(): typing_events[0] += 1
 	host.world.workspace_typed.connect(on_typed)
-	host._close_terminal_pane(int(closing.substr(1)))
+	host._close_terminal_pane(PaneAddress.id(closing))
 	if not await until(func(): return not view.panes.has(closing), "Remote close removes target pane"): return
 	expect(host.pane_focus == near, "Remote close chooses nearest survivor")
 	for sample in 10:
@@ -989,12 +991,12 @@ func fit_restore() -> void:
 	await wait(.12)
 	expect(not same_frame(frame(),original), "Fit has an intermediate animation frame")
 	var canvas_extent: Vector2i = view.canvas.size
-	var terminal_extent: Vector2i = host.sessions[int(k.substr(1))].vp.size
+	var terminal_extent: Vector2i = host.sessions[PaneAddress.id(k)].vp.size
 	var resized_during_fit := false
 	while view._inspect_tween != null and view._inspect_tween.is_running():
 		await host.get_tree().process_frame
 		resized_during_fit = resized_during_fit or view.canvas.size != canvas_extent \
-			or host.sessions[int(k.substr(1))].vp.size != terminal_extent
+			or host.sessions[PaneAddress.id(k)].vp.size != terminal_extent
 	expect(not resized_during_fit, "Animated fit reuses canvas and terminal render targets")
 	await wait(.4)
 	view.toggle_fit_pane(k)
@@ -1250,7 +1252,7 @@ func pane_resize() -> void:
 	for grid in [Vector2i(55,16),Vector2i(92,30),Vector2i(65,20)]:
 		var rect: Rect2 = view.pane_rects[a]
 		# The owner defines grid metrics and content insets, independently of DPI.
-		var owner_pane: Dictionary = transport.topology.panes.filter(func(p): return int(p.id) == int(a.substr(1)))[0]
+		var owner_pane: Dictionary = transport.topology.panes.filter(func(p): return int(p.id) == PaneAddress.id(a))[0]
 		var metrics: Dictionary = owner_pane.font_metrics
 		var insets: Array = owner_pane.content_insets
 		rect.size = Vector2(grid.x * metrics.width + insets[0] + insets[2], grid.y * metrics.height + insets[1] + insets[3])
@@ -1804,10 +1806,10 @@ func chromium_hardware_backend() -> void:
 func chromium_backend() -> void:
 	var created: Dictionary = await host.session_backend.create_chromium_remote(host, initial_id, "about:blank", true, null)
 	if not expect(created.has("result"), "Client creates a browser on the server"): return
-	var id := int(str(created.result.chromium).trim_prefix("%"))
+	var id := PaneAddress.id(str(created.result.chromium))
 	if not await until(func(): return host.chromiums.has(id) and host.chromiums[id].chromium_ready, "Browser is ready", 30.0): return
 	var chromium: Node = host.chromiums[id]
-	var pane: Control = view.panes["%%%d" % id]
+	var pane: Control = view.panes[PaneAddress.key(id)]
 	if not await until(func(): return pane.chrome != null and chromium.texture != null and chromium.selected_page_id >= 0, "Remote client receives browser chrome and pixels", 30.0): return
 	var hardware_required := bool(settings.get("require_hardware_video", false))
 	if hardware_required:
@@ -1867,7 +1869,7 @@ func chromium_multi_stream() -> void:
 	for index in int(settings.get("chromium_streams", 3)):
 		var created: Dictionary = await host.session_backend.create_chromium_remote(host, initial_id, "about:blank", true, null)
 		if not expect(created.has("result"), "Client creates browser %d" % index): return
-		var id := int(str(created.result.chromium).trim_prefix("%"))
+		var id := PaneAddress.id(str(created.result.chromium))
 		if not await until(func(): return host.chromiums.has(id) and host.chromiums[id].chromium_ready, "Browser %d is ready" % index, 30.0): return
 		browsers.append(host.chromiums[id])
 	# Readable floating panes stacked down the view: tiles on a phone are
@@ -1878,14 +1880,14 @@ func chromium_multi_stream() -> void:
 	if current_tree().get("tiling", false): await toggle_tiling()
 	var area: Rect2 = view.content_rect()
 	for index in browsers.size():
-		var key := "%%%d" % int(browsers[index].session_id)
+		var key := PaneAddress.key(int(browsers[index].session_id))
 		view.set_window_rect(key, Rect2(area.position + Vector2(4, 4 + index * 170), Vector2(320, 290)))
 		host.session_backend.move_pane(host, key, Vector2.INF)
 	await camera(area.get_center(), 1.0)
 	await wait(1.0)
 	if not browsers.all(func(c): return not c.stream_paused):
 		for chromium in browsers:
-			var pane: Control = view.panes["%%%d" % int(chromium.session_id)]
+			var pane: Control = view.panes[PaneAddress.key(int(chromium.session_id))]
 			var shown: Vector2 = preload("res://scenes/remote/RemoteClient.gd").chromium_display_size(view, pane.texture)
 			print("CHROMIUM_PAUSE ", JSON.stringify({"paused": chromium.stream_paused, "size": str(shown), "density": host.get_window().content_scale_factor, "visible": pane.is_visible_in_tree(), "rect": str(view.pane_rects.get(pane.key)), "texture": str(pane.texture.size)}))
 	expect(browsers.all(func(c): return not c.stream_paused), "Readable stacked browsers all stream")
@@ -2049,11 +2051,11 @@ func chromium_native_clipboard(chromium: Node) -> void:
 func chromium_find() -> void:
 	var created: Dictionary = await host.session_backend.create_chromium_remote(host, initial_id, "about:blank", true, null)
 	if not expect(created.has("result"), "Client creates a find browser"): return
-	var id := int(str(created.result.chromium).trim_prefix("%"))
+	var id := PaneAddress.id(str(created.result.chromium))
 	if not await until(func(): return host.chromiums.has(id) and host.chromiums[id].chromium_ready and host.chromiums[id].texture != null, "Find browser reaches client", 30.0): return
 	var chromium: Node = host.chromiums[id]
-	var pane: Control = view.panes["%%%d" % id]
-	host.focus_pane("%%%d" % id)
+	var pane: Control = view.panes[PaneAddress.key(id)]
+	host.focus_pane(PaneAddress.key(id))
 	await chromium_eval(chromium, "document.body.innerHTML='<p style=\"font:24px sans-serif\">needle one, Needle two, needle three</p>';true")
 	pane.texture.focus_mode = Control.FOCUS_ALL
 	pane.texture.grab_focus()
@@ -2085,13 +2087,13 @@ func chromium_find() -> void:
 func chromium_clipboard() -> void:
 	var result: Dictionary = await host.session_backend.create_chromium_remote(host, initial_id, "about:blank", true, null)
 	if not expect(result.has("result"), "Client creates clipboard browser"): return
-	var id := int(str(result.result.chromium).trim_prefix("%"))
+	var id := PaneAddress.id(str(result.result.chromium))
 	if not await until(func(): return host.chromiums.has(id) and host.chromiums[id].chromium_ready and host.chromiums[id].texture != null, "Clipboard browser reaches client"): return
 	var chromium: Node = host.chromiums[id]
-	host.focus_pane("%%%d" % id)
+	host.focus_pane(PaneAddress.key(id))
 	await chromium_eval(chromium, "document.body.innerHTML='<input id=field style=\"width:300px;height:70px\">';true")
 	if not await chromium_unicode_input(chromium, "Clipboard fixture receives frontend input"): return
-	var surface: Control = view.panes["%%%d" % id].texture
+	var surface: Control = view.panes[PaneAddress.key(id)].texture
 	surface.focus_mode = Control.FOCUS_ALL
 	surface.grab_focus()
 	expect(surface.has_focus(), "Browser surface owns frontend keyboard focus")
@@ -2193,13 +2195,13 @@ func chromium_navigation() -> void:
 	if not expect(result.has("result"),"Client creates chromium on authoritative server"): return
 	# Federation remaps the canonical chromium target into this client's ID
 	# namespace. The result's numeric id still belongs to the server.
-	var id := int(str(result.result.chromium).trim_prefix("%"))
+	var id := PaneAddress.id(str(result.result.chromium))
 	if not await until(func(): return host.chromiums.has(id) and host.chromiums[id].chromium_ready,"Chromium reaches ready state"): return
 	var chromium: Node = host.chromiums[id]
 	await until(func(): return chromium.texture!=null and chromium.selected_page_id>=0,"Chromium frames and native chrome reach client")
 	# A small overview pane deliberately uses PNG while video is paused. Fit
 	# the browser before requiring hardware streaming on phone/tablet geometry.
-	var stream_target: Dictionary = view._inspection_target("%%%d" % id)
+	var stream_target: Dictionary = view._inspection_target(PaneAddress.key(id))
 	await camera(stream_target.center, stream_target.zoom)
 	var video_codecs := preload("res://scenes/remote/ChromiumVideoSupport.gd").codecs()
 	print("Chromium hardware codecs: ", video_codecs, "; selected: ", chromium.video_codec)
@@ -2222,7 +2224,7 @@ func chromium_navigation() -> void:
 		return absf(color.r - 20.0/255) < .08 and absf(color.g - 80.0/255) < .08 and absf(color.b - 160.0/255) < .08,
 		"Decoded chromium pixels preserve page colors")
 	await chromium_eval(chromium, "location.hash='before-address'; 1")
-	var pane: Control = view.panes["%%%d" % id]
+	var pane: Control = view.panes[PaneAddress.key(id)]
 	if not await until(func(): return pane.chrome != null, "Chromium chrome is attached to its workspace pane"): return
 	if OS.has_feature("android"):
 		expect(not chromium.can_open_native(), "Android cannot present a browser window on the server")
@@ -2353,7 +2355,7 @@ func chromium_navigation() -> void:
 func chromium_scroll_stability() -> void:
 	var created: Dictionary = await host.session_backend.create_chromium_remote(host, initial_id, "about:blank", true, null)
 	if not expect(created.has("result"), "Scroll fixture creates Chromium"): return
-	var id := int(str(created.result.chromium).trim_prefix("%"))
+	var id := PaneAddress.id(str(created.result.chromium))
 	if not await until(func(): return host.chromiums.has(id) and host.chromiums[id].chromium_ready, "Scroll Chromium is ready"): return
 	var chromium: Node = host.chromiums[id]
 	if not await until(func(): return chromium.texture != null, "Scroll fixture receives pixels"): return
@@ -2362,7 +2364,7 @@ func chromium_scroll_stability() -> void:
 		if not await until(func(): return chromium.video_codec in codecs, "Scroll fixture negotiates hardware video"): return
 	# A remote browser often starts after its pane is laid out. The website
 	# viewport must still follow the pane, not Chromium's default window.
-	var pane: Control = view.panes["%%%d" % id]
+	var pane: Control = view.panes[PaneAddress.key(id)]
 	var fitted: Vector2i = chromium.viewport_for(pane.texture.size)
 	var page_size: Variant = null
 	for attempt in 40:
@@ -2475,11 +2477,11 @@ func chromium_scroll_stability() -> void:
 func chromium_touch() -> void:
 	var created: Dictionary = await host.session_backend.create_chromium_remote(host, initial_id, "about:blank", true, null)
 	if not expect(created.has("result"), "Touch fixture creates Chromium"): return
-	var id := int(str(created.result.chromium).trim_prefix("%"))
+	var id := PaneAddress.id(str(created.result.chromium))
 	if not await until(func(): return host.chromiums.has(id) and host.chromiums[id].chromium_ready, "Touch Chromium is ready"): return
 	var chromium: Node = host.chromiums[id]
 	if not await until(func(): return chromium.texture != null, "Touch fixture receives pixels"): return
-	var pane: Control = view.panes["%%%d" % id]
+	var pane: Control = view.panes[PaneAddress.key(id)]
 	host.focus_pane(pane.key)
 	if pane.chrome != null: pane.chrome.address.release_focus()
 	var target: Dictionary = view._inspection_target(pane.key)
@@ -2551,10 +2553,10 @@ func chromium_touch() -> void:
 func chromium_url() -> void:
 	var created: Dictionary = await host.session_backend.create_chromium_remote(host, initial_id, "about:blank", true, null)
 	if not expect(created.has("result"), "URL fixture creates Chromium"): return
-	var id := int(str(created.result.chromium).trim_prefix("%"))
+	var id := PaneAddress.id(str(created.result.chromium))
 	if not await until(func(): return host.chromiums.has(id) and host.chromiums[id].chromium_ready, "URL Chromium is ready"): return
 	var chromium: Node = host.chromiums[id]
-	var pane: Control = view.panes["%%%d" % id]
+	var pane: Control = view.panes[PaneAddress.key(id)]
 	if not await until(func(): return pane.chrome != null, "URL Chromium shows its address bar"): return
 	var address: LineEdit = pane.chrome.address
 	var connection: Node = host.session_backend.connection
@@ -2598,7 +2600,7 @@ var chromium_kills := 0
 func chromium_resume() -> void:
 	var created: Dictionary = await host.session_backend.create_chromium_remote(host, initial_id, "about:blank", true, null)
 	if not expect(created.has("result"), "Resume fixture creates Chromium"): return
-	var id := int(str(created.result.chromium).trim_prefix("%"))
+	var id := PaneAddress.id(str(created.result.chromium))
 	if not await until(func(): return host.chromiums.has(id) and host.chromiums[id].chromium_ready, "Resume browser is ready"): return
 	var chromium: Node = host.chromiums[id]
 	if not await until(func(): return chromium.texture != null and chromium.video_decoder != null, "Resume fixture uses hardware video"): return
@@ -2640,7 +2642,7 @@ func kill_chromium(host_pid: int, process: String) -> void:
 func chromium_crash_recovery() -> void:
 	var created: Dictionary = await host.session_backend.create_chromium_remote(host, initial_id, "about:blank", true, null)
 	if not expect(created.has("result"), "Crash fixture creates Chromium"): return
-	var id := int(str(created.result.chromium).trim_prefix("%"))
+	var id := PaneAddress.id(str(created.result.chromium))
 	if not await until(func(): return host.chromiums.has(id) and host.chromiums[id].chromium_ready, "Crash fixture Chromium is ready"): return
 	var chromium: Node = host.chromiums[id]
 	if not await until(func(): return chromium.texture != null and chromium.pid > 0, "Crash fixture receives pixels"): return
@@ -2651,10 +2653,10 @@ func chromium_crash_recovery() -> void:
 	if not await until(func(): return not chromium.failure_reason.is_empty(), "Killed Chromium host is reported to the client", 30.0): return
 	var alerts: Array = notices.history.slice(notified).filter(func(entry): return entry.level == "error")
 	expect(alerts.size() == 1, "An unexpected stop posts exactly one error notification")
-	var pane: Control = view.panes.get("%%%d" % id)
+	var pane: Control = view.panes.get(PaneAddress.key(id))
 	if not expect(pane != null and pane.chromium_failure.visible and pane.chromium_restart_button.visible,
 			"The stopped pane offers Restart instead of a frozen page"): return
-	var target: Dictionary = view._inspection_target("%%%d" % id)
+	var target: Dictionary = view._inspection_target(PaneAddress.key(id))
 	await camera(target.center, target.zoom)
 	# The pane draws inside the workspace canvas: aim through its camera.
 	await tap(pane.chromium_restart_button)
@@ -2676,7 +2678,7 @@ func chromium_crash_recovery() -> void:
 	if not expect(pane.chromium_failure.visible and pane.chromium_reload_button.visible and not pane.chromium_restart_button.visible,
 			"The crashed page offers Reload instead of a frozen page"): return
 	await wait()
-	target = view._inspection_target("%%%d" % id)
+	target = view._inspection_target(PaneAddress.key(id))
 	await camera(target.center, target.zoom)
 	await tap(pane.chromium_reload_button)
 	if not await until(func(): return not chromium.page_crashed, "Reload replaces the crashed renderer", 20.0): return
@@ -2700,7 +2702,7 @@ func chromium_crash_recovery() -> void:
 	if not expect(pane.chromium_failure.visible and pane.chromium_reload_button.visible and not pane.chromium_restart_button.visible,
 			"The stuck pane offers Reload"): return
 	await wait()
-	target = view._inspection_target("%%%d" % id)
+	target = view._inspection_target(PaneAddress.key(id))
 	await camera(target.center, target.zoom)
 	var stuck_frames: int = chromium.frames
 	await tap(pane.chromium_reload_button)

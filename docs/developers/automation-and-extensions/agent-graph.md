@@ -68,8 +68,8 @@ Inspect the graph before granting access:
 ```sh
 gft graph list
 gft graph adjacent
-gft graph connect --from %1 --to %2 --send --turn-completed
-gft graph read --node %1
+gft graph connect --from t1 --to t2 --send --turn-completed
+gft graph read --node t1
 ```
 
 - `graph read` returns a session-file reference by default, avoiding a full transcript in the model's context.

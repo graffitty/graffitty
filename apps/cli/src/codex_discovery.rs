@@ -210,6 +210,8 @@ pub fn select(records: &[Value], ports: &HashSet<u16>, home: &Path) -> Result<Va
         {
             "waiting"
         }
+        // A quota failure can leave the thread in systemError at the input prompt.
+        "systemError" if record["turn"]["status"] == "failed" => "idle",
         "active" => "busy",
         _ => "unknown",
     };
@@ -315,6 +317,20 @@ mod tests {
             let record = json!({"port":54726,"thread":{"id":"main","status":{"type":kind,"activeFlags":flags}}});
             assert_eq!(select(&[record], &ports, home).unwrap()["status"], expected);
         }
+    }
+
+    #[test]
+    fn system_error_after_a_failed_turn_stops_working_and_resumes_on_retry() {
+        let mut record = json!({"port":54726,"thread":{"id":"main","status":{"type":"systemError"}},
+            "turn":{"id":"first","status":"failed","error":{"codexErrorInfo":"usageLimitExceeded"}}});
+        let ports = HashSet::from([54726]);
+        let read = |record| select(&[record], &ports, Path::new("/codex")).unwrap();
+        let stopped = read(record.clone());
+        assert_eq!(stopped["status"], "idle");
+        assert_eq!(stopped["observed_turn"]["error"]["codexErrorInfo"], "usageLimitExceeded");
+        record["thread"]["status"] = json!({"type":"active","activeFlags":[]});
+        record["turn"] = json!({"id":"retry","status":"inProgress"});
+        assert_eq!(read(record)["status"], "busy");
     }
 
     #[test]

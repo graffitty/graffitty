@@ -139,14 +139,14 @@ class RestoreRuntime(unittest.TestCase):
             fixture["windows"][0]["panes"][1]["filetree"] = {"owner": fixture["windows"][0]["panes"][0]["id"], "root": str(tree_root)}
             ports = {"inputs": [{"id": "in"}], "outputs": [{"id": "out", "mode": "send"}]}
             fixture["windows"][1]["graph"] = {
-                "nodes": [{"node": f"%{i}", "manifest": ports} for i in (10, 11)],
-                "edges": [{"from": "%10", "to": "%11", "from_port": "out", "to_port": "in",
+                "nodes": [{"node": f"t{i}", "manifest": ports} for i in (10, 11)],
+                "edges": [{"from": "t10", "to": "t11", "from_port": "out", "to_port": "in",
                            "muted": True, "contains": "keep", "outcome": "success", "stop_at": 4102444800}],
                 "run_messages": 42,
             }
             fixture["windows"][1]["tabs"][0]["graph_visual"] = {
                 "reroutes": {"r1": {"position": {"vec2": [650, 120]}}},
-                "routes": {"%10/out>%11/in": ["r1"]},
+                "routes": {"t10/out>t11/in": ["r1"]},
             }
             # Chromiums reopen from their pages and profile: one beside its
             # owner, one alone in a tab of the other window, without an owner,
@@ -166,11 +166,11 @@ class RestoreRuntime(unittest.TestCase):
             fixture["windows"][0]["chromiums"] = [{"id": 20, "owner": fixture["windows"][0]["panes"][0]["id"], "title": "Docs", "profile": "",
                                                   "urls": [base + "/second.html", base + "/first.html"]}]
             fixture["windows"][0]["tabs"][0]["tree"]["windows"].append(
-                {"pane": "%20", "shown": True, "rect": {"rect2": [920, 80, 420, 500]}})
+                {"pane": "t20", "shown": True, "rect": {"rect2": [920, 80, 420, 500]}})
             fixture["windows"][1]["chromiums"] = [{"id": 21, "owner": None, "title": "", "profile_template": str(template),
                                                   "urls": [base + "/third.html"]}]
-            fixture["windows"][1]["tabs"].append({"id": 21, "focused": "%21",
-                "tree": {"windows": [{"pane": "%21", "shown": True, "rect": {"rect2": [20, 80, 600, 400]}}],
+            fixture["windows"][1]["tabs"].append({"id": 21, "focused": "t21",
+                "tree": {"windows": [{"pane": "t21", "shown": True, "rect": {"rect2": [20, 80, 600, 400]}}],
                          "physics": False, "tiling_gap": 8.0},
                 "graph_visual": {"reroutes": {}, "routes": {}, "serial": 0}})
             # An opted-in node relaunches with its command, directory,
@@ -223,7 +223,7 @@ class RestoreRuntime(unittest.TestCase):
             self.assertEqual(node_log.read_text().splitlines(), ["--strict", str(node_dir), "judge", '{"cursor":3}'])
 
             self.assertEqual(tree_log.read_text().splitlines()[1], str(tree_root))
-            self.assertTrue(tree_log.read_text().splitlines()[0].startswith("%"))
+            self.assertTrue(tree_log.read_text().splitlines()[0].startswith("t"))
             self.assertEqual(
                 agent_log.read_text().splitlines(),
                 [

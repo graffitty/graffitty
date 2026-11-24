@@ -1027,7 +1027,7 @@ pub fn run(command: CheckpointCommand) -> Result<Value> {
             // A saved ID that a live pane already has was replaced by a new one.
             let renumbered: serde_json::Map<String, Value> = result["panes"].as_object().into_iter().flatten()
                 .filter(|(saved, restored)| restored.as_u64().map(|id| id.to_string()).as_ref() != Some(*saved))
-                .map(|(saved, restored)| (format!("%{saved}"), json!(format!("%{restored}")))).collect();
+                .filter_map(|(saved, restored)| Some((graffitty_protocol::pane_id::address(saved.parse().ok()?), json!(graffitty_protocol::pane_id::address(restored.as_u64()?))))).collect();
             Ok(json!({"pid":child.id(),"checkpoint":path,"renumbered":renumbered}))
         }
     }
@@ -1063,7 +1063,7 @@ mod tests {
         assert_eq!(background_session(&commands(&["claude --resume old-id --fork-session", "/bin/zsh -li"])), None, "A fork typed in a pane runs in that pane");
     }
     fn fixture() -> Value {
-        json!({"version":1,"windows":[{"active":3,"position":[10,20],"size":[900,700],"tabs":[{"id":3,"focused":"%3","tree":{"pane":"%3"}}],"panes":[{"id":3,"pid":-1,"cwd":"/tmp"}],"chromiums":[]}]})
+        json!({"version":1,"windows":[{"active":3,"position":[10,20],"size":[900,700],"tabs":[{"id":3,"focused":"t3","tree":{"pane":"t3"}}],"panes":[{"id":3,"pid":-1,"cwd":"/tmp"}],"chromiums":[]}]})
     }
     #[cfg(windows)]
     #[test]

@@ -1,5 +1,6 @@
 extends RefCounted
-## Public addresses use the application's shared, monotonic session allocator.
+
+const PaneAddress := preload("res://scenes/PaneAddress.gd")
 const Layout := preload("res://scenes/WorkspaceLayout.gd")
 
 
@@ -8,7 +9,7 @@ static func number(value: String) -> bool:
 
 
 static func valid(key: String) -> bool:
-	return key.begins_with("%") and number(key.substr(1))
+	return PaneAddress.id(key) > 0
 
 
 static func label(key: String) -> String:
@@ -31,8 +32,8 @@ static func resolve_tab(host: Node, target: String) -> int:
 
 
 static func resolve(application: Node, host: Node, target: String) -> String:
-	if target.begins_with("%") and number(target.substr(1)):
-		var id := int(target.substr(1))
+	if valid(target):
+		var id := PaneAddress.id(target)
 		var terminal_host: Node = application.host_for_workspace(id)
 		if terminal_host != null and terminal_host.sessions.has(id):
 			return target

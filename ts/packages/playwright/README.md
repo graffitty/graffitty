@@ -52,7 +52,7 @@ the pane; `detach()` disconnects but leaves it open.
 | Option | Meaning |
 |---|---|
 | `side` | `"left"`, `"right"`, `"above"` or `"below"` of a pane. Default `"right"`. |
-| `of` | The pane `side` refers to (`"%3"` or `":1.2"`). Default: your terminal. |
+| `of` | The pane `side` refers to (`"c3"` or `":1.2"`). Default: your terminal. |
 | `position`, `size` | `{ x, y }` and `{ width, height }` in workspace pixels; floating tabs only. |
 | `hidden` | Create it hidden; the terminal's Chromium button reveals it. |
 | `url` | Initial page: `http(s)://` or `about:blank` (default). |
@@ -60,7 +60,7 @@ the pane; `detach()` disconnects but leaves it open.
 | `timeout` | Milliseconds for each step. Default `20000`. |
 
 Options are validated before anything is created. If placement or connecting
-fails, the new pane is removed again. `handle` is the pane's `%N` ID, usable
+fails, the new pane is removed again. `handle` is the pane's `cN` ID, usable
 with `gft chromium ... --target`.
 
 ## Attaching to an existing pane
@@ -68,7 +68,7 @@ with `gft chromium ... --target`.
 ```js
 import { attach } from "@graffitty/playwright";
 
-const { page, detach } = await attach({ chromium: "%3" }); // or set GRAFFITTY_CHROMIUM=%3
+const { page, detach } = await attach({ chromium: "c3" }); // or set GRAFFITTY_CHROMIUM=c3
 try {
   await page.goto("http://localhost:3000");
 } finally {
@@ -101,7 +101,7 @@ npx playwright test --workers=1
 ```
 
 Each worker launches its own pane and closes it afterwards. To reuse an existing
-pane instead, set `GRAFFITTY_CHROMIUM=%3` or `test.use({ graffittyChromium: "%3" })`.
+pane instead, set `GRAFFITTY_CHROMIUM=c3` or `test.use({ graffittyChromium: "c3" })`.
 Use one worker and a Chromium project: WebKit and Firefox cannot attach.
 
 ## Behavior and limits

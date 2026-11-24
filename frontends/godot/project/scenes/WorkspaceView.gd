@@ -1,4 +1,6 @@
 extends Control
+
+const PaneAddress := preload("res://scenes/PaneAddress.gd")
 signal navigation_changed
 const ViewportUpdates := preload("res://scenes/TerminalViewportUpdates.gd")
 const RenderUpdates := preload("res://scenes/RenderUpdates.gd")
@@ -651,7 +653,7 @@ func refresh() -> void:
 			pane.handle.item_rect_changed.connect(_invalidate_headers)
 			pane.body.item_rect_changed.connect(_invalidate_headers)
 		panes[key].show()
-		var id := int(key.substr(1))
+		var id := PaneAddress.id(key)
 		if host.is_terminal_pane(key) and not host.sessions.has(id) and host.world != null:
 			host.session_for(id, host.world)
 		panes[key].refresh()
@@ -681,7 +683,7 @@ func refresh() -> void:
 	host.world_container.visible = host.world != null
 	RenderUpdates.set_enabled(host.world_viewport, host.presentation_active and host.world_container.visible)
 	for id in host.sessions:
-		var visible_terminal: bool = ('%%%d' % id) in shown
+		var visible_terminal: bool = PaneAddress.key(id) in shown
 		var vp: SubViewport = host.sessions[id].vp
 		# Visible panes set their own raster visibility after crop calculation.
 		if not visible_terminal: ViewportUpdates.set_visible(vp, false)
@@ -690,7 +692,7 @@ func refresh() -> void:
 			or id != host.active_session_id
 		)
 	for id in host.chromiums:
-		host.chromiums[id].selected = ('%%%d' % id) in shown
+		host.chromiums[id].selected = PaneAddress.key(id) in shown
 	if tile_button != null:
 		tile_button.set_pressed_no_signal(group.get("tree", { }).get("tiling", false))
 	var focused := Layout.find(group.get("tree", { }), host.pane_focus)
@@ -755,7 +757,7 @@ func _sync_status_sources() -> void:
 		_status_graph = graph
 		if is_instance_valid(graph): graph.changed.connect(_agent_status_changed)
 	for key in _status_sources.keys():
-		var source: Node = host.resource_monitor_for(int(key.substr(1))) if panes.has(key) else null
+		var source: Node = host.resource_monitor_for(PaneAddress.id(key)) if panes.has(key) else null
 		if not is_instance_valid(_status_sources[key]) or _status_sources[key] != source:
 			if is_instance_valid(_status_sources[key]):
 				_status_sources[key].snapshot_changed.disconnect(_resource_status_changed.bind(key))
@@ -767,7 +769,7 @@ func _sync_status_sources() -> void:
 			var ordered := Layout.numbered_keys(tab.get("tree", {}), tab.get("focused", ""))
 			for index in ordered.size(): positions[ordered[index]] = index + 1
 		if not _status_sources.has(key):
-			var source: Node = host.resource_monitor_for(int(key.substr(1)))
+			var source: Node = host.resource_monitor_for(PaneAddress.id(key))
 			if source != null:
 				_status_sources[key] = source
 				source.snapshot_changed.connect(_resource_status_changed.bind(key))
@@ -1004,7 +1006,7 @@ func _measure_status_strip(strip: Control) -> void:
 
 
 func _has_session_status(key: String) -> bool:
-	var id := int(key.substr(1))
+	var id := PaneAddress.id(key)
 	return not host.chromiums.has(id) or host.chromiums[id].main_window
 
 
@@ -1296,7 +1298,7 @@ func reveal_navigation_target(key: String) -> void:
 	var viewport: Rect2 = workspace_region().canvas_rect(center, zoom)
 	var cursor := Rect2()
 	if host.is_terminal_pane(key):
-		var pair: Dictionary = host.sessions.get(int(key.substr(1)), {})
+		var pair: Dictionary = host.sessions.get(PaneAddress.id(key), {})
 		if not pair.is_empty() and pair.term.get_cursor_cell().x >= 0:
 			var term: Control = pair.term
 			var scale_value := terminal_scale(key)
@@ -1672,13 +1674,13 @@ func _chromium_owners() -> Dictionary:
 	var owners := { }
 	for id in host.chromiums:
 		var owner_id: int = host.chromiums[id].owner_id
-		if owner_id != id: owners["%%%d" % id] = "%%%d" % owner_id
+		if owner_id != id: owners[PaneAddress.key(id)] = PaneAddress.key(owner_id)
 	for id in host.sessions:
 		var owner_id: int = host.sessions[id].term.get_meta("filetree_owner", -1)
-		if owner_id >= 0: owners["%%%d" % id] = "%%%d" % owner_id
+		if owner_id >= 0: owners[PaneAddress.key(id)] = PaneAddress.key(owner_id)
 		# A pane started by `gft pane run` hangs off its parent like a chromium or filetree.
 		var parent_id: int = host.sessions[id].term.get_meta("spawned_by", -1)
-		if owner_id < 0 and parent_id >= 0 and host.sessions.has(parent_id): owners["%%%d" % id] = "%%%d" % parent_id
+		if owner_id < 0 and parent_id >= 0 and host.sessions.has(parent_id): owners[PaneAddress.key(id)] = PaneAddress.key(parent_id)
 	return owners
 
 
@@ -1902,7 +1904,7 @@ func _terminal_owns_modified_wheel(event: InputEvent) -> bool:
 	var key := window_at(point)
 	if not host.is_terminal_pane(key):
 		return false
-	var pair: Dictionary = host.sessions.get(int(key.substr(1)), {})
+	var pair: Dictionary = host.sessions.get(PaneAddress.id(key), {})
 	if pair.is_empty():
 		return false
 	var scale_value := terminal_scale(key)
@@ -2055,7 +2057,7 @@ func _forward_pointer(event: InputEvent, replay_click := false) -> void:
 	if event is InputEventMouseButton and event.button_index == MOUSE_BUTTON_RIGHT and event.pressed:
 		var pointed := window_at(sheet_point)
 		if host.is_chromium_pane(pointed):
-			var chromium: Node = host.chromiums.get(int(pointed.substr(1)))
+			var chromium: Node = host.chromiums.get(PaneAddress.id(pointed))
 			if chromium != null:
 				chromium.context_menu_screen = preload("res://scenes/ScreenSpace.gd").of(pointer, event.position)
 		if panes.has(pointed) and panes[pointed].secondary_split_at(sheet_point):

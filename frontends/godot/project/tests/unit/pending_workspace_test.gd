@@ -17,7 +17,7 @@ class Host extends Node:
 	var layout_transaction := false
 	var current_plugin := "bistro"
 	var application := {"checkpoints":{"importing":false}}
-	var workspace_layout := {"active":1,"tabs":[{"id":1,"focused":"%1","tree":{"windows":[{"pane":"%1","rect":Rect2(8,42,1000,700)}]}}]}
+	var workspace_layout := {"active":1,"tabs":[{"id":1,"focused":"t1","tree":{"windows":[{"pane":"t1","rect":Rect2(8,42,1000,700)}]}}]}
 func fixture() -> Dictionary:
 	var host := Host.new()
 	var transport := Transport.new()
@@ -137,16 +137,16 @@ func test_layout_barrier_waits_for_prior_ack_but_not_new_geometry() -> void:
 	f.host.free(); f.transport.free()
 
 func test_graph_geometry_round_trips_and_maps_federated_endpoints() -> void:
-	var graph := {"routes": {"%1/out>%2/in": ["bend"]}, "reroutes": {"bend": {"position": Vector2(330, -20)}}}
+	var graph := {"routes": {"t1/out>t2/in": ["bend"]}, "reroutes": {"bend": {"position": Vector2(330, -20)}}}
 	var wire := Workspace.encode_graph(graph)
 	expect(Workspace.decode_graph(wire) == graph, "Canvas positions survive the wire representation")
 	var mapped: Dictionary = Workspace.map_value(wire, func(id): return id + 100)
-	expect(mapped.routes.has("%101/out>%102/in"), "Federated graph route keys map both endpoints")
+	expect(mapped.routes.has("t101/out>t102/in"), "Federated graph route keys map both endpoints")
 	expect(mapped.reroutes.has("bend"), "Reroute IDs remain stable across clients")
 
 func test_final_graph_commit_preserves_other_clients_different_node_move() -> void:
 	var f := fixture()
-	var original := {"routes": {"%1/out>%1/in": ["a", "b"]}, "reroutes": {"a": {"position": Vector2.ZERO}, "b": {"position": Vector2.ZERO}}}
+	var original := {"routes": {"t1/out>t1/in": ["a", "b"]}, "reroutes": {"a": {"position": Vector2.ZERO}, "b": {"position": Vector2.ZERO}}}
 	var group: Dictionary = f.host.workspace_layout.tabs[0]
 	group.graph_visual = original.duplicate(true)
 	f.transport.topology.workspace_state.layout.tabs["1"].graph_visual = Workspace.encode_graph(original)
@@ -177,7 +177,7 @@ func test_graph_drag_preview_is_not_sent_by_incidental_commit() -> void:
 	view.agent_links = overlay
 	# Use the actual tool type to exercise the same gesture snapshot guard.
 	var group: Dictionary = host.workspace_layout.tabs[0]
-	var original := {"routes": {"%1/out>%1/in": ["a"]}, "reroutes": {"a": {"position": Vector2.ZERO}}}
+	var original := {"routes": {"t1/out>t1/in": ["a"]}, "reroutes": {"a": {"position": Vector2.ZERO}}}
 	group.graph_visual = original.duplicate(true)
 	f.transport.topology.workspace_state.layout.tabs["1"].graph_visual = Workspace.encode_graph(original)
 	overlay.tools.tab_id = 1

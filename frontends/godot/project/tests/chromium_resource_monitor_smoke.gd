@@ -1,6 +1,7 @@
 extends "../../../../tests/llm-e2e/replay/replay.gd"
 
 
+
 func play() -> void:
 	await camera_at_rest()
 	var chromium: Node = await host.create_chromium_session("about:blank")
@@ -57,7 +58,7 @@ func play() -> void:
 		after = sampler.snapshot(987654)
 		print("MONITOR_PAUSED_CPU_SECONDS ", float(after.get("cpu_time", 0)) - float(before.get("cpu_time", 0)))
 		sampler.remove_terminal(987654)
-	var pane: Control = host.workspace_view.panes["%%%d" % chromium.session_id]
+	var pane: Control = host.workspace_view.panes[PaneAddress.key(chromium.session_id)]
 	check(not pane.header.has_node("Monitor"), "Chromium header omits the monitor shortcut")
 	pane._title_menu_action(1)
 	check(host.pane_status_visible and host.pane_focus == pane.key, "Chromium monitor context action focuses and opens its panel")

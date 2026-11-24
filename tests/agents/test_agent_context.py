@@ -86,13 +86,13 @@ class AgentContextTests(unittest.TestCase):
                             break
                         self.assertLess(time.monotonic(), deadline, result.stdout)
                         time.sleep(.1)
-                    self.assertEqual(json.loads(result.stdout)["result"]["self"], f"%{second}")
+                    self.assertEqual(json.loads(result.stdout)["result"]["self"], f"t{second}")
 
                     first_context = context_request(local["token"], {"thread_id": threads[0]})["result"]
                     stale = {"GRAFFITTY_SOCKET": local["url"], "GRAFFITTY_TOKEN": first_context["token"]}
                     result = cli("graph", "adjacent", extra={**stale, "CODEX_THREAD_ID": threads[1]})
                     self.assertEqual(result.returncode, 0, result.stdout)
-                    self.assertEqual(json.loads(result.stdout)["result"]["self"], f"%{second}")
+                    self.assertEqual(json.loads(result.stdout)["result"]["self"], f"t{second}")
                     result = cli("graph", "adjacent", extra={**stale, "CODEX_THREAD_ID": str(uuid.uuid4())})
                     self.assertEqual(json.loads(result.stdout)["error"]["code"], "missing_context")
 
@@ -114,8 +114,8 @@ class AgentContextTests(unittest.TestCase):
                         self.assertLess(time.monotonic(), deadline)
                         time.sleep(.1)
                     self.assertIn("Found 2 live Graffitty panes", result.stdout)
-                    client.action("close", pane=duplicate)
-                    client.action("close", pane=second)
+                    client.action("close", duplicate)
+                    client.action("close", second)
                     result = cli("graph", "adjacent", extra={**stale, "CODEX_THREAD_ID": threads[1]})
                     self.assertEqual(json.loads(result.stdout)["error"]["code"], "missing_context")
                 finally:

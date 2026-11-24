@@ -1,4 +1,6 @@
 extends CanvasLayer
+
+const PaneAddress := preload("res://scenes/PaneAddress.gd")
 ## Vim-like command line opened by the workspace prefix with `:`, `%`, `@`,
 ## `$` or a digit, with a wilder.nvim-style completion list above it.
 ##
@@ -68,7 +70,7 @@ func open(text: String) -> void:
 	_apply_theme()
 	# The focused terminal owns the IME while it has focus; release it before
 	# the line takes the keyboard.
-	var pair: Dictionary = host.sessions.get(int(host.pane_focus.substr(1)), {}) if host.is_terminal_pane(host.pane_focus) else {}
+	var pair: Dictionary = host.sessions.get(PaneAddress.id(host.pane_focus), {}) if host.is_terminal_pane(host.pane_focus) else {}
 	if not pair.is_empty() and is_instance_valid(pair.term):
 		pair.term.release_focus()
 	visible = true

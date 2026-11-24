@@ -1,4 +1,6 @@
 extends RefCounted
+
+const PaneAddress := preload("res://scenes/PaneAddress.gd")
 ## Presentation only: IDs refer to application-owned live sessions.
 var tabs: Array[Dictionary] = []
 var active := -1
@@ -69,7 +71,7 @@ func add(id: int, tree: Dictionary) -> void:
 
 
 func ensure_terminal(id: int, tiling_default := true) -> void:
-	var key := "%%%d" % id
+	var key := PaneAddress.key(id)
 	if containing(key) < 0:
 		var tree := leaf(key)
 		tree["tiling"] = tiling_default

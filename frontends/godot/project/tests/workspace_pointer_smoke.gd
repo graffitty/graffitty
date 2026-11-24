@@ -1,4 +1,6 @@
 extends SceneTree
+
+const PaneAddress := preload("res://scenes/PaneAddress.gd")
 const ViewportInput := preload("res://scenes/TerminalViewportInput.gd")
 var failures := 0
 var diagnostics := Diagnostics.new()
@@ -19,8 +21,8 @@ class Host extends Node:
 	var chromiums := {}
 	var focus_count := 0
 	var touch_keybar: Control
-	func is_terminal_pane(key: String) -> bool: return not is_chromium_pane(key) and sessions.has(int(key.substr(1)))
-	func is_chromium_pane(key: String) -> bool: return chromiums.has(int(key.substr(1)))
+	func is_terminal_pane(key: String) -> bool: return not is_chromium_pane(key) and sessions.has(PaneAddress.id(key))
+	func is_chromium_pane(key: String) -> bool: return chromiums.has(PaneAddress.id(key))
 	func focus_pane(_key: String) -> void: focus_count += 1
 	func _exit_tree() -> void: application.free()
 class View extends "res://scenes/WorkspaceView.gd":
@@ -110,7 +112,7 @@ func run() -> void:
 	check(view._navigation_press == null and not view._navigation_drag, "Focus loss cancels pending navigation")
 	var pane := Pane.new()
 	pane.host = host
-	pane.key = "%1"
+	pane.key = "t1"
 	root.add_child(pane)
 	host.sessions[1] = {"vp": view.canvas}
 	ViewportInput.set_disabled(view.canvas, true)

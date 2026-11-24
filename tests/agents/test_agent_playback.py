@@ -77,7 +77,7 @@ class AgentPlaybackTests(unittest.TestCase):
         return reply["result"]
 
     def node(self, pane):
-        return next(n for n in self.rpc(self.first, "graph.list")["nodes"] if n["node"] == f"%{pane}")
+        return next(n for n in self.rpc(self.first, "graph.list")["nodes"] if n["node"] == f"t{pane}")
 
     def start(self, pane, provider, config):
         path = self.folder / f"scenario-{pane}.json"
@@ -86,7 +86,7 @@ class AgentPlaybackTests(unittest.TestCase):
         wait(lambda: self.node(pane).get("transport") == "inbox")
 
     def connect(self, source, output, target):
-        return self.rpc(self.first, "graph.connect", **{"from": f"%{source}", "from_port": output, "to": f"%{target}", "to_port": "in"})
+        return self.rpc(self.first, "graph.connect", **{"from": f"t{source}", "from_port": output, "to": f"t{target}", "to_port": "in"})
 
     def text(self, pane):
         return self.rpc(pane, "terminal.get_text")["text"]
@@ -196,7 +196,7 @@ class AgentPlaybackTests(unittest.TestCase):
         self.assertIn("\nThe dashboard is ready.\nPayload (JSON): ", incoming)
         envelope = json.loads(incoming.split("\nPayload (JSON): ", 1)[1])
         self.assertEqual(envelope["type"], "turn.completed")
-        self.assertEqual(envelope["source"], f"%{codex}")
+        self.assertEqual(envelope["source"], f"t{codex}")
         self.assertEqual(envelope["run_id"], events[0]["run_id"])
         self.assertEqual(envelope["sessions"][0]["provider"], "codex")
         source_transcript = Path(envelope["sessions"][0]["path"])
@@ -265,7 +265,7 @@ class AgentPlaybackTests(unittest.TestCase):
         wait(lambda: self.node(agent)["status"] == "busy")
         self.rpc(source, "graph.emit", output="out", payload={"text": "remove this"})
         self.assertEqual(len(self.rpc(agent, "graph.take")["events"]), 1)
-        self.rpc(source, "graph.disconnect", **{"from": f"%{source}", "to": f"%{agent}"})
+        self.rpc(source, "graph.disconnect", **{"from": f"t{source}", "to": f"t{agent}"})
         self.assertEqual(self.rpc(agent, "graph.take")["events"], [])
         events = wait(lambda: self.rpc(sink, "graph.take")["events"])
         self.assertEqual(events[0]["text"], "안녕하세요 첫 질문")

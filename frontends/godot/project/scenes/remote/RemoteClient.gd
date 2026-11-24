@@ -1,4 +1,6 @@
 extends Node
+
+const PaneAddress := preload("res://scenes/PaneAddress.gd")
 ## A remote connection supplies sessions to the ordinary Graffitty host.
 const Authentication := preload("res://scenes/remote/ClientAuthentication.gd")
 var remember := CheckBox.new()
@@ -429,7 +431,7 @@ func _follow_server_language() -> void:
 	if federated:
 		source = connection.selected
 		if is_instance_valid(host):
-			var id := int(str(host.pane_focus).trim_prefix("%"))
+			var id := PaneAddress.id(host.pane_focus)
 			source = connection.owners.get(id, connection.owners.get(host.workspace_layout.active, source))
 	get_node("/root/Localization").follow_server(source)
 
@@ -466,7 +468,7 @@ static func resume_focus(topology: Dictionary) -> int:
 	var tab: Variant = workspace.get("layout", {}).get("tabs", {}).get(str(active))
 	var focused := str(tab.get("focused", "")) if tab is Dictionary else ""
 	if not preload("res://scenes/PaneTargets.gd").valid(focused): return active
-	var pane := int(focused.substr(1))
+	var pane := PaneAddress.id(focused)
 	return pane if topology.get("panes", []).any(func(item): return int(item.id) == pane and int(item.tab) == active) else active
 
 
@@ -612,8 +614,8 @@ func _refresh_body() -> void:
 				applying = false
 				return
 			pair.term.set_meta("server_font_signature", font_signature)
-		if filetree_changed and host.workspace_view.panes.has("%%%d" % id):
-			host.workspace_view.panes["%%%d" % id].refresh()
+		if filetree_changed and host.workspace_view.panes.has(PaneAddress.key(id)):
+			host.workspace_view.panes[PaneAddress.key(id)].refresh()
 		if id == host.active_session_id:
 			host.world.term_font_size_default = connection.font_default(id)
 	var chromiums: Array = state.get("chromiums", [])
@@ -659,7 +661,7 @@ func _refresh_body() -> void:
 		if pending_focus_from < 0 or host.workspace_layout.active == pending_focus_from:
 			# Reveal: a hidden pane focused in place leaves the camera fitting
 			# content that is not laid out.
-			host.reveal_pane("%%%d" % pending_focus)
+			host.reveal_pane(PaneAddress.key(pending_focus))
 		pending_focus = -1
 	# Title signals update pane headers directly. Re-arranging every pane and
 	# rebuilding graph sockets for each CLI spinner tick monopolizes Android's
@@ -722,8 +724,8 @@ func _apply_pane_update_body(ids: Array) -> void:
 		if pair.model.foreground_app != app or pair.model.effect_holds != holds: context_changed = true
 		pair.model.foreground_app = app
 		pair.model.effect_holds = holds
-		if filetree_changed and host.workspace_view.panes.has("%%%d" % id):
-			host.workspace_view.panes["%%%d" % id].refresh()
+		if filetree_changed and host.workspace_view.panes.has(PaneAddress.key(id)):
+			host.workspace_view.panes[PaneAddress.key(id)].refresh()
 	# The app in the focused pane decides which rules and effect holds apply,
 	# exactly as after a full refresh.
 	if context_changed: host.refresh_app_context()
@@ -759,7 +761,7 @@ func _install_layout(state: Dictionary, preserve: bool, switch_tab := -1) -> voi
 	var close_origin: Dictionary = { }
 	var remaining: Array = state.panes.map(
 		func(p):
-			return "%%%d" % int(p.id),
+			return PaneAddress.key(int(p.id)),
 	)
 	if preserve and host.is_terminal_pane(focused) and focused not in remaining:
 		close_origin = host._pane_close_origin(focused)
@@ -891,7 +893,7 @@ func _subscribe() -> void:
 	var tab: Dictionary = host.workspace_layout.tab(host.workspace_layout.active)
 	for key in (Layout.keys(tab.get("tree", { })) if not stream_background and host.presentation_active else []):
 		if preload("res://scenes/PaneTargets.gd").valid(key):
-			ids.append(int(key.substr(1)))
+			ids.append(PaneAddress.id(key))
 	if not stream_background and host.presentation_active:
 		for id in host.sessions:
 			if id not in ids and int(host.sessions[id].vp.get_meta("terminal_live_users", 0)) > 0:
@@ -1048,7 +1050,7 @@ func _process_body(_dt: float) -> void:
 		var now := Time.get_ticks_msec()
 		for id in connection.subscriptions:
 			if not host.chromiums.has(id): continue
-			var pane: Control = host.workspace_view.panes.get("%%%d" % id)
+			var pane: Control = host.workspace_view.panes.get(PaneAddress.key(id))
 			if pane == null or pane.texture == null: continue
 			# A pane hidden within the active tab keeps stale geometry.
 			var size := chromium_display_size(host.workspace_view, pane.texture) if pane.is_visible_in_tree() else Vector2.ZERO

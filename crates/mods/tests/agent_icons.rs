@@ -66,7 +66,7 @@ fn retained_badges_desaturate_offline_icons_without_losing_the_elapsed_time() {
         ] {
             let copy = mods.load(&folder("pane-status"), props).unwrap();
             for status in ["busy", "offline", "idle"] {
-                mods.publish("resources", json!({"pane":"%1", "kind":"terminal", "label":"Pane", "status":"running",
+                mods.publish("resources", json!({"pane":"t1", "kind":"terminal", "label":"Pane", "status":"running",
                     "status_label":"Running", "cpu":"0%", "memory":"1M", "metrics":[], "tooltip":"Pane",
                     "agent":agent(provider, status)}));
                 let frame = mods
@@ -81,11 +81,11 @@ fn retained_badges_desaturate_offline_icons_without_losing_the_elapsed_time() {
             mods.unload(copy);
         }
         let strip = mods
-            .load(&folder("pane-strip"), json!({"pane":"%1"}))
+            .load(&folder("pane-strip"), json!({"pane":"t1"}))
             .unwrap();
         for status in ["busy", "offline", "idle"] {
             mods.publish(
-                "pane/%1",
+                "pane/t1",
                 json!({"label":"Pane", "cpu":"0%", "memory":"1M", "agent":agent(provider, status)}),
             );
             assert_logo(
@@ -116,9 +116,9 @@ fn retained_badges_desaturate_offline_icons_without_losing_the_elapsed_time() {
 #[test]
 fn agents_keep_pi_coloured_and_desaturate_offline_children() {
     let mut mods = host();
-    mods.publish("agents", json!([{"id":"parent", "key":"%1", "provider":"pi", "status":"working", "section":"Working",
+    mods.publish("agents", json!([{"id":"parent", "key":"t1", "provider":"pi", "status":"working", "section":"Working",
         "title":"Live Pi", "at":0, "focused":false, "pinned":false, "subs":[
-            {"key":"%2", "host_id":1, "kind":"agent", "icon":"codex", "status":"offline", "title":"Offline Codex", "lines":["└"]}
+            {"key":"t2", "host_id":1, "kind":"agent", "icon":"codex", "status":"offline", "title":"Offline Codex", "lines":["└"]}
         ]}]));
     let copy = mods.load(&folder("agents"), json!({})).unwrap();
     let frame = mods

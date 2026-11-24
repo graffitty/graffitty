@@ -1,4 +1,5 @@
 //! Surface titles are owned by the persistent session, never by its current view.
+use graffitty_protocol::pane_id::address as pane_address;
 use crate::{Error, Server};
 use serde_json::{Value, json};
 use std::path::Path;
@@ -57,7 +58,7 @@ fn terminal_target(caller: u64, value: &Value) -> Result<(), Error> {
         return Ok(());
     }
     let target = value.as_str().ok_or("Expected terminal target")?;
-    let id = graffitty_workspace_core::pane_id::parse(target).ok_or("Expected %N")?;
+    let id = graffitty_workspace_core::pane_id::parse(target).ok_or("Expected a pane address")?;
     if id != caller {
         return Err(crate::api::error("forbidden", "Terminal access is scoped to the calling terminal"));
     }
@@ -73,13 +74,13 @@ pub fn set(server: &mut Server, caller: u64, method: &str, params: &Value) -> Re
         let session = server.sessions.get_mut(&caller).ok_or("Terminal closed")?;
         session.pinned_title = title.into();
         return Ok(
-            json!({"window":format!("%{caller}"),"title":session.title(),"pinned":!title.is_empty()}),
+            json!({"window":pane_address(caller),"title":session.title(),"pinned":!title.is_empty()}),
         );
     }
     let id = params["chromium"]
         .as_str()
         .and_then(graffitty_workspace_core::pane_id::parse)
-        .ok_or("Expected %N")?;
+        .ok_or("Expected a pane address")?;
     let workspace = &server
         .sessions
         .get(&caller)
@@ -90,7 +91,7 @@ pub fn set(server: &mut Server, caller: u64, method: &str, params: &Value) -> Re
     owned(caller, chromium.owner, chromium.workspace == *workspace)?;
     chromium.pinned_title = title.into();
     Ok(
-        json!({"chromium":format!("%{id}"),"title":chromium.title(),"pinned":!title.is_empty()}),
+        json!({"chromium":pane_address(id),"title":chromium.title(),"pinned":!title.is_empty()}),
     )
 }
 
@@ -126,10 +127,10 @@ mod tests {
     #[test]
     fn surface_pin_does_not_grant_another_terminal_or_workspace_access() {
         assert!(terminal_target(7, &Value::Null).is_ok());
-        assert!(terminal_target(7, &json!("%7")).is_ok());
-        assert!(terminal_target(0, &json!("%0")).is_ok());
-        assert!(terminal_target(7, &json!("%07")).is_err());
-        assert_eq!(crate::error_details(&terminal_target(7, &json!("%8")).unwrap_err())["code"], "forbidden");
+        assert!(terminal_target(7, &json!("t7")).is_ok());
+        assert!(terminal_target(0, &json!("t0")).is_err());
+        assert!(terminal_target(7, &json!("t07")).is_err());
+        assert_eq!(crate::error_details(&terminal_target(7, &json!("t8")).unwrap_err())["code"], "forbidden");
         assert!(terminal_target(7, &json!("7")).is_err());
         assert!(owned(7, 7, true).is_ok());
         assert!(owned(7, 8, true).is_err());

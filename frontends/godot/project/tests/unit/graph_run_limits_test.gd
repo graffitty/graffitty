@@ -1,4 +1,6 @@
 extends "res://tests/unit/test_case.gd"
+
+const PaneAddress := preload("res://scenes/PaneAddress.gd")
 const Graph := preload("res://tests/support/ServerGraph.gd")
 const Inspector := preload("res://scenes/GraphQueueInspector.gd")
 
@@ -11,15 +13,15 @@ class ObservedInspector extends "res://scenes/GraphQueueInspector.gd":
 func graph() -> Node:
 	var value := Graph.new()
 	for id in range(1, 4):
-		var key := "%%%d" % id
+		var key := PaneAddress.key(id)
 		value.nodes[key] = {"provider": "adapter"}
 		value.register_ports(key, {"inputs": [{"id": "in"}], "outputs": [{"id": "out"}]})
 	for id in [2, 3]:
-		value.connect_nodes({"from": "%1", "from_port": "out", "to": "%%%d" % id, "to_port": "in", "send": true})
+		value.connect_nodes({"from": "t1", "from_port": "out", "to": PaneAddress.key(id), "to_port": "in", "send": true})
 	return value
 
-func send(value: Node, run: String, target := "%2") -> Dictionary:
-	return value.enqueue("%1", target, "message", "message", run, "", "out", "in")
+func send(value: Node, run: String, target := "t2") -> Dictionary:
+	return value.enqueue("t1", target, "message", "message", run, "", "out", "in")
 
 func select_event(inspector: Inspector, id: String) -> void:
 	var item := inspector.events.get_root().get_first_child()
@@ -36,18 +38,18 @@ func test_inspector_budget_follows_selected_run_across_connections_without_polli
 	var inspector := ObservedInspector.new()
 	inspector._ready()
 	inspector._bind_graph(value)
-	inspector.edge_key = "%1/out>%2/in"
+	inspector.edge_key = "t1/out>t2/in"
 	inspector.visible = true
 	inspector.refresh()
 	expect(inspector.selected_run == "shared-run" and inspector.run_usage_label.text == "Messages queued 1/10000", "Selected delivery identifies its run and displays the default usage")
 	expect(value.queue_log.snapshot(inspector.edge_key).events[0].run_id == "shared-run", "Journal preserves run identity without retaining message content")
 	var refreshes := inspector.refreshes
-	send(value, "shared-run", "%3")
+	send(value, "shared-run", "t3")
 	expect(inspector.run_usage_label.text == "Messages queued 2/10000" and inspector.refreshes == refreshes, "Another connection updates the selected run count directly without resnapshotting this journal")
 	inspector.limit_editor.text = "4"
 	inspector.limit_editor.text_changed.emit("4")
 	expect(value.run_limit("shared-run") == 10000, "Editing the draft limit does not change enforcement until Apply")
-	send(value, "shared-run", "%3")
+	send(value, "shared-run", "t3")
 	expect(inspector.limit_editor.text == "4", "Live usage updates preserve an in-progress limit edit")
 	inspector.apply_limit_button.pressed.emit()
 	expect(value.run_limit("shared-run") == 4 and inspector.run_usage_label.text == "Messages queued 3/4", "Apply changes both enforcement and displayed usage")
@@ -76,7 +78,7 @@ func test_empty_inspector_edits_new_run_default_and_keeps_draft_scope() -> void:
 	var inspector := Inspector.new()
 	inspector._ready()
 	inspector._bind_graph(value)
-	inspector.edge_key = "%1/out>%2/in"
+	inspector.edge_key = "t1/out>t2/in"
 	inspector.visible = true
 	inspector.refresh()
 	expect(inspector.run_usage_label.text == "Messages queued 0/10000" and inspector.budget_scope.selected == 1, "Empty inspector shows the new-run default without inventing a run")

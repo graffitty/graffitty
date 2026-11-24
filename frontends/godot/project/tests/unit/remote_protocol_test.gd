@@ -7,19 +7,19 @@ func test_graph_snapshot_maps_node_and_wire_identities() -> void:
 	var connection := preload("res://scenes/remote/RemoteConnection.gd").new()
 	connection.namespace_ids = true
 	connection.local_ids = {1: 101, 2: 102}
-	var edge := {"from": "%1", "to": "%2", "from_port": "send", "to_port": "in"}
+	var edge := {"from": "t1", "to": "t2", "from_port": "send", "to_port": "in"}
 	var manifest := {"inputs": [], "outputs": [{"id": "send", "name": "Send", "color": "#89ddbd"}]}
 	var mapped: Dictionary = connection._map_topology({
 		"panes": [], "tabs": [],
-		"graph": {"nodes": [{"node": "%1", "manifest": manifest}], "edges": [edge],
-			"journal": {"events": [{"source": "%1", "target": "%2", "edge": "%1/send>%2/in"}], "by_edge": {"%1/send>%2/in": {"pending": 1, "total": 1}}},
+		"graph": {"nodes": [{"node": "t1", "manifest": manifest}], "edges": [edge],
+			"journal": {"events": [{"source": "t1", "target": "t2", "edge": "t1/send>t2/in"}], "by_edge": {"t1/send>t2/in": {"pending": 1, "total": 1}}},
 			"limits": {"pending_per_node": 17, "run_messages": 23}},
 	})
-	expect(mapped.graph.edges[0].from == "%101" and mapped.graph.edges[0].to == "%102", "Wires use this connection's pane namespace")
-	expect(mapped.graph.nodes[0].node == "%101", "Nodes use the same mapped identity")
+	expect(mapped.graph.edges[0].from == "t101" and mapped.graph.edges[0].to == "t102", "Wires use this connection's pane namespace")
+	expect(mapped.graph.nodes[0].node == "t101", "Nodes use the same mapped identity")
 	expect(mapped.graph.nodes[0].manifest == manifest, "Server socket definitions are preserved")
-	expect(mapped.graph.journal.events[0].edge == "%101/send>%102/in", "Delivery rows use the connection's pane namespace")
-	expect(mapped.graph.journal.by_edge.has("%101/send>%102/in"), "Journal counts use the same mapped connection keys")
+	expect(mapped.graph.journal.events[0].edge == "t101/send>t102/in", "Delivery rows use the connection's pane namespace")
+	expect(mapped.graph.journal.by_edge.has("t101/send>t102/in"), "Journal counts use the same mapped connection keys")
 	expect(mapped.graph.limits.pending_per_node == 17 and mapped.graph.limits.run_messages == 23, "Server limits pass through without frontend defaults")
 	connection.free()
 
@@ -28,19 +28,19 @@ func test_topology_mapping_cache_preserves_edits_and_namespace_changes() -> void
 	var connection := preload("res://scenes/remote/RemoteConnection.gd").new()
 	connection.namespace_ids = true
 	connection.local_ids = {1: 101}
-	var source := {"panes": [{"id": 1, "tab": 1}], "tabs": [{"id": 1, "sessions": [1]}], "graph": {"nodes": [{"node": "%1", "status": "idle"}]},
-		"workspace_state": {"layout": {"tabs": {"1": {"focused": "%1"}}}, "tabs": {"1": {}}, "order": [1], "active": 1}}
+	var source := {"panes": [{"id": 1, "tab": 1}], "tabs": [{"id": 1, "sessions": [1]}], "graph": {"nodes": [{"node": "t1", "status": "idle"}]},
+		"workspace_state": {"layout": {"tabs": {"1": {"focused": "t1"}}}, "tabs": {"1": {}}, "order": [1], "active": 1}}
 	var first: Dictionary = connection._map_topology(source)
 	expect(source.panes[0].id == 1 and source.tabs[0].sessions == [1] and first.panes[0].id == 101, "Mapping detaches mutable pane and tab lists from the owner message")
 	first.graph.nodes[0].status = "mutated"
-	first.workspace_state.layout.tabs["101"].focused = "%999"
+	first.workspace_state.layout.tabs["101"].focused = "t999"
 	var again: Dictionary = connection._map_topology(source)
-	expect(again.graph.nodes[0].status == "idle" and again.workspace_state.layout.tabs["101"].focused == "%101", "Presentation mutations cannot poison cached owner snapshots")
+	expect(again.graph.nodes[0].status == "idle" and again.workspace_state.layout.tabs["101"].focused == "t101", "Presentation mutations cannot poison cached owner snapshots")
 	source.graph.nodes[0].status = "working"
 	expect(connection._map_topology(source).graph.nodes[0].status == "working", "Changed graph content replaces its cached mapping")
 	connection.local_ids = {1: 201}
 	var remapped: Dictionary = connection._map_topology(source)
-	expect(remapped.graph.nodes[0].node == "%201" and remapped.workspace_state.order == [201], "Namespace replacement invalidates both cached mappings")
+	expect(remapped.graph.nodes[0].node == "t201" and remapped.workspace_state.order == [201], "Namespace replacement invalidates both cached mappings")
 	connection.free()
 
 

@@ -1,5 +1,7 @@
 extends "res://tests/unit/test_case.gd"
 
+const PaneAddress := preload("res://scenes/PaneAddress.gd")
+
 class Connection extends Node:
 	var connected := false
 	var url := "test://server"
@@ -13,10 +15,10 @@ class Connection extends Node:
 class Host extends Node:
 	var workspace_layout := preload("res://scenes/WorkspaceLayout.gd").new()
 	var presentation_active := true
-	var pane_focus := "%1"
+	var pane_focus := "t1"
 	var sessions: Dictionary = {}
 	var chromiums: Dictionary = {}
-	func is_terminal_pane(key: String) -> bool: return key.begins_with("%")
+	func is_terminal_pane(key: String) -> bool: return PaneAddress.id(key) > 0
 	func is_chromium_pane(_key: String) -> bool: return false
 	func pane_title(_key: String) -> String: return "Agent task"
 
@@ -42,12 +44,12 @@ func test_recorded_view_clears_tab_and_agent_completion_together() -> void:
 	var connection := Connection.new()
 	app.hosts = [host]
 	host.workspace_layout.tabs = [
-		{"id":1, "focused":"%1", "tree":{"type":"windows", "windows":[{"pane":"%1", "shown":true}]}},
-		{"id":2, "focused":"%2", "tree":{"type":"windows", "windows":[{"pane":"%2", "shown":true}]}},
+		{"id":1, "focused":"t1", "tree":{"type":"windows", "windows":[{"pane":"t1", "shown":true}]}},
+		{"id":2, "focused":"t2", "tree":{"type":"windows", "windows":[{"pane":"t2", "shown":true}]}},
 	]
 	host.workspace_layout.active = 1
-	app.agent_api.graph.nodes = {"%1": {"provider":"pi", "status":"busy"}}
-	app.agent_api.graph.remote_owners = {"%1": connection}
+	app.agent_api.graph.nodes = {"t1": {"provider":"pi", "status":"busy"}}
+	app.agent_api.graph.remote_owners = {"t1": connection}
 	var controller := preload("res://scenes/Agents.gd").new()
 	controller.application = app
 	controller._sounds = {"enabled": false}
@@ -55,35 +57,35 @@ func test_recorded_view_clears_tab_and_agent_completion_together() -> void:
 		app.agent_attention.refresh()
 		controller.refresh()
 	refresh.call()
-	app.agent_api.graph.nodes["%1"].status = "idle"
-	app.agent_api.graph.nodes["%1"].attention = {"event":"finish-1", "kind":"completed", "seen":false}
+	app.agent_api.graph.nodes["t1"].status = "idle"
+	app.agent_api.graph.nodes["t1"].attention = {"event":"finish-1", "kind":"completed", "seen":false}
 	refresh.call()
-	expect(app.agent_attention.marker(["%1"]).state == "completed" and controller.rows[0].status == "done",
+	expect(app.agent_attention.marker(["t1"]).state == "completed" and controller.rows[0].status == "done",
 		"Without native focus, both surfaces mark the completion unseen")
 	app.agent_attention.in_view = func(view): return view == host and view.presentation_active
 	refresh.call()
-	expect(app.agent_attention.marker(["%1"]).state == "" and controller.rows[0].status == "idle",
+	expect(app.agent_attention.marker(["t1"]).state == "" and controller.rows[0].status == "idle",
 		"The recorded view clears both markers without native window focus")
-	app.agent_api.graph.nodes["%1"].status = "busy"
-	app.agent_api.graph.nodes["%1"].attention = null
+	app.agent_api.graph.nodes["t1"].status = "busy"
+	app.agent_api.graph.nodes["t1"].attention = null
 	refresh.call()
-	app.agent_api.graph.nodes["%1"].status = "idle"
-	app.agent_api.graph.nodes["%1"].attention = {"event":"finish-2", "kind":"completed", "seen":false}
+	app.agent_api.graph.nodes["t1"].status = "idle"
+	app.agent_api.graph.nodes["t1"].attention = {"event":"finish-2", "kind":"completed", "seen":false}
 	refresh.call()
-	expect(app.agent_attention.marker(["%1"]).state == "" and controller.rows[0].status == "idle",
+	expect(app.agent_attention.marker(["t1"]).state == "" and controller.rows[0].status == "idle",
 		"A completion displayed in the recording never becomes unread")
 	host.workspace_layout.active = 2
-	app.agent_api.graph.nodes["%1"].status = "busy"
-	app.agent_api.graph.nodes["%1"].attention = null
+	app.agent_api.graph.nodes["t1"].status = "busy"
+	app.agent_api.graph.nodes["t1"].attention = null
 	refresh.call()
-	app.agent_api.graph.nodes["%1"].status = "idle"
-	app.agent_api.graph.nodes["%1"].attention = {"event":"finish-3", "kind":"completed", "seen":false}
+	app.agent_api.graph.nodes["t1"].status = "idle"
+	app.agent_api.graph.nodes["t1"].attention = {"event":"finish-3", "kind":"completed", "seen":false}
 	refresh.call()
-	expect(app.agent_attention.marker(["%1"]).state == "completed" and controller.rows[0].status == "done",
+	expect(app.agent_attention.marker(["t1"]).state == "completed" and controller.rows[0].status == "done",
 		"A background tab still marks an unseen completion")
 	host.workspace_layout.active = 1
 	refresh.call()
-	expect(app.agent_attention.marker(["%1"]).state == "" and controller.rows[0].status == "idle",
+	expect(app.agent_attention.marker(["t1"]).state == "" and controller.rows[0].status == "idle",
 		"Returning to the recorded tab clears both surfaces")
 	controller.free()
 	connection.free()
@@ -98,7 +100,7 @@ func test_controller_keeps_pins_across_local_id_remapping() -> void:
 	var controller := preload("res://scenes/Agents.gd").new()
 	controller.application = app
 	controller._sounds = {"enabled": false}
-	for key in ["%1", "%999"]:
+	for key in ["t1", "t999"]:
 		host.pane_focus = key
 		host.workspace_layout.tabs = [{"id":1, "focused":key, "tree":{"type":"windows", "windows":[{"pane":key, "shown":true}]}}]
 		app.agent_api.graph.nodes = {key: {"provider":"pi", "status":"busy"}}
@@ -107,7 +109,7 @@ func test_controller_keeps_pins_across_local_id_remapping() -> void:
 		expect(controller.rows.size() == 1 and controller.rows[0].key == key, "Current local pane is listed")
 		expect(controller.rows[0].remote == "Office fixture", "Agent row carries its configured remote display name")
 		expect(controller.rows[0].session == "graffitty", "Agent row carries its server-owned automatic session name")
-		if key == "%1": controller.pin(controller.rows[0].id, true)
+		if key == "t1": controller.pin(controller.rows[0].id, true)
 		else: expect(controller.rows[0].pinned, "Wire identity preserves pin after reconnect remapping")
 	connection.url = "shared://local"
 	controller.refresh()
@@ -159,10 +161,10 @@ func test_agents_in_other_sessions_and_servers_are_listed() -> void:
 	var peer := Peer.new()
 	host.session_backend.connection = peer
 	app.hosts = [host]
-	host.workspace_layout.tabs = [{"id":1, "focused":"%1", "tree":{"type":"windows", "windows":[{"pane":"%1", "shown":true}]}}]
-	app.agent_api.graph.nodes = {"%1": {"provider":"pi", "status":"busy"}}
-	app.agent_api.graph.remote_owners = {"%1": peer}
-	app.agent_api.graph.nodes["%1"].status_history = [{"status":"busy", "at":"2027-01-15T08:00:00Z"}]
+	host.workspace_layout.tabs = [{"id":1, "focused":"t1", "tree":{"type":"windows", "windows":[{"pane":"t1", "shown":true}]}}]
+	app.agent_api.graph.nodes = {"t1": {"provider":"pi", "status":"busy"}}
+	app.agent_api.graph.remote_owners = {"t1": peer}
+	app.agent_api.graph.nodes["t1"].status_history = [{"status":"busy", "at":"2027-01-15T08:00:00Z"}]
 	peer.available_sessions[0].agents[0].status_history = [{"status":"waiting", "at":"2027-01-15T08:05:00Z"}]
 	var controller := preload("res://scenes/Agents.gd").new()
 	controller.application = app
@@ -171,14 +173,14 @@ func test_agents_in_other_sessions_and_servers_are_listed() -> void:
 	expect(controller.rows.size() == 3, "Shown agent plus both agents of the unshown session are listed")
 	var by_key := {}
 	for row in controller.rows: by_key[row.key] = row
-	expect(by_key.has("%1") and not by_key.has("%7"), "The shown view of an agent wins over its session summary")
-	expect(by_key.has("%3") and by_key["%3"].session == "other" and by_key["%3"].remote == "Office fixture", "Unshown agents carry server and session captions")
-	expect(by_key["%3"].status == "blocked", "Summary status maps like a shown agent's")
-	expect(by_key["%1"].at == 1800000000 and by_key["%3"].at == 1800000300, "Visible and unshown sessions both use the server's transition time")
-	expect(by_key.has("%4") and by_key["%4"].provider == "codex" and by_key["%4"].title == "Refactor", "OSC-reported agents use their program app and message")
+	expect(by_key.has("t1") and not by_key.has("t7"), "The shown view of an agent wins over its session summary")
+	expect(by_key.has("t3") and by_key["t3"].session == "other" and by_key["t3"].remote == "Office fixture", "Unshown agents carry server and session captions")
+	expect(by_key["t3"].status == "blocked", "Summary status maps like a shown agent's")
+	expect(by_key["t1"].at == 1800000000 and by_key["t3"].at == 1800000300, "Visible and unshown sessions both use the server's transition time")
+	expect(by_key.has("t4") and by_key["t4"].provider == "codex" and by_key["t4"].title == "Refactor", "OSC-reported agents use their program app and message")
 	peer.url = "shared://local"
 	controller.refresh()
-	var local_row: Dictionary = controller.rows.filter(func(row): return row.key == "%3")[0]
+	var local_row: Dictionary = controller.rows.filter(func(row): return row.key == "t3")[0]
 	expect(local_row.remote.is_empty() and local_row.session == "other", "Local unshown agents show only their session")
 	peer.connected = false
 	app.agent_api.graph.remote_owners = {}
@@ -192,7 +194,7 @@ func test_agents_in_other_sessions_and_servers_are_listed() -> void:
 func test_agents_command_and_bridge_states() -> void:
 	expect("Agents" in preload("res://scenes/HostActions.gd").names(), "Agents is a registered command")
 	var core: RefCounted = ClassDB.instantiate("AgentsCore")
-	var input := [{"id":"test/epoch/1", "key":"%1", "title":"Test agent", "provider":"pi", "status":"busy", "looking":false, "focused":false}]
+	var input := [{"id":"test/epoch/1", "key":"t1", "title":"Test agent", "provider":"pi", "status":"busy", "looking":false, "focused":false}]
 	var first: Dictionary = core.observe(input, 100)
 	expect(first.rows[0].section == "Working" and first.sounds.is_empty(), "Working begins silently")
 	input[0].status = "waiting"
@@ -256,13 +258,13 @@ class TreeSession extends RefCounted:
 
 class TreeHost extends Node:
 	var workspace_layout := preload("res://scenes/WorkspaceLayout.gd").new()
-	var pane_focus := "%1"
+	var pane_focus := "t1"
 	var sessions: Dictionary = {}
 	var chromiums: Dictionary = {}
 	var titles: Dictionary = {}
 	var focused := ""
-	func is_terminal_pane(key: String) -> bool: return key.begins_with("%") and not chromiums.has(int(key.substr(1)))
-	func is_chromium_pane(key: String) -> bool: return chromiums.has(int(key.substr(1)))
+	func is_terminal_pane(key: String) -> bool: return PaneAddress.id(key) > 0 and not chromiums.has(PaneAddress.id(key))
+	func is_chromium_pane(key: String) -> bool: return chromiums.has(PaneAddress.id(key))
 	func pane_title(key: String) -> String: return titles.get(key, key)
 	var revealed := ""
 	func focus_pane(key: String) -> void: focused = key
@@ -298,32 +300,32 @@ func test_connected_panes_form_a_tree_under_the_first_agent() -> void:
 	var chromium := TreeChromium.new()
 	chromium.owner_id = 1
 	host.chromiums[5] = chromium
-	host.titles = {"%1": "lead", "%2": "server", "%3": "logs", "%4": "helper", "%5": "docs"}
+	host.titles = {"t1": "lead", "t2": "server", "t3": "logs", "t4": "helper", "t5": "docs"}
 	var windows := []
-	for item in [["%1", 0], ["%2", 300], ["%3", 300], ["%4", 900], ["%5", 600], ["%6", 1200]]:
+	for item in [["t1", 0], ["t2", 300], ["t3", 300], ["t4", 900], ["t5", 600], ["t6", 1200]]:
 		windows.append({"pane": item[0], "shown": true, "rect": Rect2(item[1], 0, 200, 100)})
-	host.workspace_layout.tabs = [{"id": 1, "focused": "%1", "tree": {"type": "windows", "windows": windows}}]
-	app.agent_api.graph.nodes = {"%1": {"provider": "pi", "status": "busy"}, "%4": {"provider": "claude", "status": "idle"}}
-	app.agent_api.graph.remote_owners = {"%1": connection, "%4": connection}
-	app.agent_api.graph.edges = {"%1/send>%4/in": {"from": "%1", "to": "%4", "send": true}}
+	host.workspace_layout.tabs = [{"id": 1, "focused": "t1", "tree": {"type": "windows", "windows": windows}}]
+	app.agent_api.graph.nodes = {"t1": {"provider": "pi", "status": "busy"}, "t4": {"provider": "claude", "status": "idle"}}
+	app.agent_api.graph.remote_owners = {"t1": connection, "t4": connection}
+	app.agent_api.graph.edges = {"t1/send>t4/in": {"from": "t1", "to": "t4", "send": true}}
 	var controller := preload("res://scenes/Agents.gd").new()
 	controller.application = app
 	controller._sounds = {"enabled": false}
 	controller.refresh()
-	expect(controller.rows.size() == 1 and controller.rows[0].key == "%1", "The agent another agent points at leaves the top level")
+	expect(controller.rows.size() == 1 and controller.rows[0].key == "t1", "The agent another agent points at leaves the top level")
 	var subs: Array = controller.trees.get(controller.rows[0].id, [])
-	expect(subs.map(func(s): return s.key) == ["%2", "%3", "%5", "%4"], "Children follow spawn, chromium and graph wires in reading order: %s" % [subs.map(func(s): return s.key)])
+	expect(subs.map(func(s): return s.key) == ["t2", "t3", "t5", "t4"], "Children follow spawn, chromium and graph wires in reading order: %s" % [subs.map(func(s): return s.key)])
 	expect(subs.map(func(s): return s.icon) == ["python", "terminal", "chromium", "claude"], "Programs, chromiums and agents get their own glyphs: %s" % [subs.map(func(s): return s.icon)])
 	expect(subs[1].lines == ["│", "└"] and subs[3].lines == ["└"], "Tree lines nest grandchildren")
 	expect(subs[3].status == "idle" and subs[3].has("row_id"), "A sub-agent carries its list status and identity")
-	app.agent_api.graph.nodes["%4"].status = "offline"
+	app.agent_api.graph.nodes["t4"].status = "offline"
 	controller.refresh()
 	var offline_subs: Array = controller.trees.get(controller.rows[0].id, [])
-	var offline: Dictionary = offline_subs.filter(func(s): return s.key == "%4")[0]
+	var offline: Dictionary = offline_subs.filter(func(s): return s.key == "t4")[0]
 	expect(offline.status == "offline" and offline.icon == "claude", "A closed connected agent keeps its identity and offline status for grayscale artwork")
-	expect(not subs.any(func(s): return s.key == "%6"), "Filetree connections are hidden even when spawned by an agent")
+	expect(not subs.any(func(s): return s.key == "t6"), "Filetree connections are hidden even when spawned by an agent")
 	controller.focus_key(subs[0].host_id, subs[0].key)
-	expect(host.focused == "%2" and host.revealed == "%2", "Clicking a connected pane reveals and focuses it")
+	expect(host.focused == "t2" and host.revealed == "t2", "Clicking a connected pane reveals and focuses it")
 	controller.free()
 	connection.free()
 	host.free()

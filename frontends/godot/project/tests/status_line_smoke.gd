@@ -4,7 +4,7 @@ extends "res://tests/mods_fixture.gd"
 
 func run() -> void:
 	setup("--android" in OS.get_cmdline_user_args())
-	app.agents.rows = [{"id": "a", "key": "%1", "title": "One", "provider": "pi", "status": "blocked", "section": "Needs you", "at": 0, "focused": false, "pinned": false, "remote": "", "session": ""}]
+	app.agents.rows = [{"id": "a", "key": "t1", "title": "One", "provider": "pi", "status": "blocked", "section": "Needs you", "at": 0, "focused": false, "pinned": false, "remote": "", "session": ""}]
 	app.agents.changed.emit()
 	var dialog: Window = PanelWindow.open(host, "status-line")
 	await settle()

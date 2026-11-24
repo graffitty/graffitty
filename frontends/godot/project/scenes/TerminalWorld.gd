@@ -1,4 +1,6 @@
 extends Node3D
+
+const PaneAddress := preload("res://scenes/PaneAddress.gd")
 signal workspace_projection_changed
 signal workspace_typed
 
@@ -805,7 +807,7 @@ func _build_terminal() -> void:
 		var place := _surface_for_session(_first_terminal(tab))
 		start_at = place if place >= 0 else host.selected_session
 	var first_index := clampi(start_at, 0, surfaces.size() - 1)
-	if host != null and host.is_chromium_pane("%%%d" % surfaces[first_index].session_id):return
+	if host != null and host.is_chromium_pane(PaneAddress.key(surfaces[first_index].session_id)):return
 	var pair: Dictionary = host.session_for(surfaces[first_index].session_id, self) if host != null else _make_terminal()
 	term_vp = pair["vp"]
 	term = pair["term"]
@@ -827,7 +829,7 @@ func _terminal_for(id: String) -> Dictionary:
 		if str(surfaces[i].id) == id:
 			index = i
 			break
-	if host != null and host.is_chromium_pane("%%%d" % surfaces[index].session_id):return {}
+	if host != null and host.is_chromium_pane(PaneAddress.key(surfaces[index].session_id)):return {}
 	var pair: Dictionary = host.session_for(surfaces[index].session_id, self) if host != null else _make_terminal()
 	terminals[id] = pair
 	return pair
@@ -1884,7 +1886,7 @@ func remove_terminal_tab(index: int) -> void:
 	var definitions: Array[Dictionary] = []
 	for i in surfaces.size():
 		surfaces[i].visit_order = i
-		if not host.is_chromium_pane("%%%d" % surfaces[i].session_id):
+		if not host.is_chromium_pane(PaneAddress.key(surfaces[i].session_id)):
 			definitions.append({ "id": surfaces[i].session_id, "label": tr("Terminal %d") % (i + 1) })
 	host.set_tabs(definitions)
 	if removing_active:
@@ -2057,7 +2059,7 @@ func _surface_for_session(index: int) -> int:
 ## The terminal whose surface carries a tab's sheet: the tab's first one.
 func _sheet_session(index: int) -> int:
 	var first := _first_terminal(
-		host.workspace_layout.tab(host.workspace_layout.containing("%%%d" % index))
+		host.workspace_layout.tab(host.workspace_layout.containing(PaneAddress.key(index)))
 	)
 	return first if first >= 0 else index
 
@@ -2065,7 +2067,7 @@ func _sheet_session(index: int) -> int:
 func _first_terminal(group: Dictionary) -> int:
 	for key in WorkspaceLayoutScript.keys(group.get("tree", { })):
 		if host.is_terminal_pane(key):
-			return int(key.substr(1))
+			return PaneAddress.id(key)
 	return -1
 
 
@@ -2351,7 +2353,7 @@ func _goto(idx: int, instant: bool) -> void:
 			out_layers.append_array(_window_layers(out_windows[i], from_origin, from_du, from_dv, out_shape, i))
 	if _floating():
 		host.workspace_view.restore_navigation(
-			host.workspace_layout.containing("%%%d" % surfaces[idx].session_id)
+			host.workspace_layout.containing(PaneAddress.key(surfaces[idx].session_id))
 		)
 	if not instant and prev >= 0:
 		# The full displayed frame is already captured. Settle the new terminal
@@ -2783,7 +2785,7 @@ func _sync_graphics_planes() -> void:
 		return
 	var sheet := _sheet_size()
 	for key in _shown_windows():
-		var pair: Dictionary = host.sessions.get(int(key.substr(1)), { })
+		var pair: Dictionary = host.sessions.get(PaneAddress.id(key), { })
 		if pair.is_empty() or not pair.term.has_method("set_image_plane_material"):
 			continue
 		var material: ShaderMaterial = (
@@ -3028,11 +3030,11 @@ func _sheet_size() -> Vector2:
 func _terminal_sheet_origin() -> Vector2:
 	if not _floating() or host.active_session_id < 0:
 		return Vector2.ZERO
-	return host.workspace_view.terminal_origin("%%%d" % host.active_session_id)
+	return host.workspace_view.terminal_origin(PaneAddress.key(host.active_session_id))
 
 
 func _terminal_sheet_scale() -> float:
-	return host.workspace_view.terminal_scale("%%%d" % host.active_session_id) if _floating() else 1.0
+	return host.workspace_view.terminal_scale(PaneAddress.key(host.active_session_id)) if _floating() else 1.0
 
 
 ## Follow the pane frame, not just the terminal texture below its title.
@@ -3043,7 +3045,7 @@ func _update_camera_follow_bounds() -> void:
 	if _floating(): fx_camera.visible_rect = host.workspace_view.workspace_region().in_projection(_sheet_size())
 	if not _floating() or host.active_session_id < 0: return
 	var view: Control = host.workspace_view
-	var key := "%%%d" % host.active_session_id
+	var key := PaneAddress.key(host.active_session_id)
 	if not view.panes.has(key): return
 	fx_camera.follow_pane(key)
 	var pane: Control = view.panes[key]
@@ -3123,7 +3125,7 @@ func _prepare_adaptive_camera(controller: Node, navigation_scale := 1.0, navigat
 ## the frame includes that drawn footprint, not just the layout area.
 func _adaptive_main_rect() -> Rect2:
 	if not _floating() or host.active_session_id < 0: return Rect2()
-	var key := "%%%d" % host.active_session_id
+	var key := PaneAddress.key(host.active_session_id)
 	var layout = host.workspace_layout
 	var tree: Dictionary = layout.tab(layout.containing(key)).get("tree", {})
 	var main_keys := WorkspaceLayoutScript.main_keys(tree)
@@ -3170,7 +3172,7 @@ func _adaptive_companions() -> Array:
 	if not _floating() or host.active_session_id < 0: return []
 	var limits: Dictionary = fx_cfg.scene.camera.adaptive_group
 	var view: Control = host.workspace_view
-	var key := "%%%d" % host.active_session_id
+	var key := PaneAddress.key(host.active_session_id)
 	var seeds: Array[String] = [key]
 	if limits.main_view and _adaptive_main_rect().has_area():
 		var layout = host.workspace_layout
@@ -3182,16 +3184,16 @@ func _adaptive_companions() -> Array:
 		var max_gap := 1.0 if limit is bool else float(limit)
 		related[other] = maxf(float(related.get(other, 0.0)), max_gap)
 	for id in host.sessions:
-		var other := "%%%d" % id
+		var other := PaneAddress.key(id)
 		var term_node: Node = host.sessions[id].term
 		var filetree_owner: int = term_node.get_meta("filetree_owner", -1)
-		if "%%%d" % filetree_owner in seeds: relate.call(other, "filetree")
-		if other in seeds and filetree_owner >= 0: relate.call("%%%d" % filetree_owner, "filetree")
+		if PaneAddress.key(filetree_owner) in seeds: relate.call(other, "filetree")
+		if other in seeds and filetree_owner >= 0: relate.call(PaneAddress.key(filetree_owner), "filetree")
 		var parent: int = term_node.get_meta("spawned_by", -1)
-		if "%%%d" % parent in seeds: relate.call(other, "spawned")
-		if other in seeds and parent >= 0: relate.call("%%%d" % parent, "spawned")
+		if PaneAddress.key(parent) in seeds: relate.call(other, "spawned")
+		if other in seeds and parent >= 0: relate.call(PaneAddress.key(parent), "spawned")
 	for id in host.chromiums:
-		if "%%%d" % host.chromiums[id].owner_id in seeds: relate.call("%%%d" % id, "chromium")
+		if PaneAddress.key(host.chromiums[id].owner_id) in seeds: relate.call(PaneAddress.key(id), "chromium")
 	if host.agent_api != null and not (limits.get("graph", false) is bool and not limits.get("graph", false)):
 		var graph = host.agent_api.graph
 		for edge in graph.edges.values():
@@ -4444,9 +4446,9 @@ func _transition_sources_ready(check_painted := true) -> bool:
 			var pane: Control = host.workspace_view.panes[key]
 			layout_frame.append([key, pane.position, pane.size, pane.scale])
 			if host.is_terminal_pane(key):
-				pairs.append(host.sessions[int(key.substr(1))])
+				pairs.append(host.sessions[PaneAddress.id(key)])
 			elif host.is_chromium_pane(key):
-				var browser: Node = host.chromiums[int(key.substr(1))]
+				var browser: Node = host.chromiums[PaneAddress.id(key)]
 				ready = ready and (browser.texture != null or browser.native_visible or not browser.failure_reason.is_empty())
 	else:
 		pairs.append({"term": term, "vp": term_vp})
@@ -4555,7 +4557,7 @@ func _window_layers(
 	if frame != null:
 		layers.append(frame)
 	var pair: Dictionary = (
-		host.sessions.get(int(key.substr(1)), { })
+		host.sessions.get(PaneAddress.id(key), { })
 		if host.is_terminal_pane(key)
 		else { }
 	)
@@ -4791,8 +4793,8 @@ func _tab_departure_duration() -> float:
 func _tab_direction(previous: int, destination: int) -> float:
 	if previous < 0: return 1.0
 	var order: Array = host.workspace_layout.tabs.map(func(tab): return int(tab.id))
-	var source := order.find(host.workspace_layout.containing("%%%d" % surfaces[previous].session_id))
-	var target := order.find(host.workspace_layout.containing("%%%d" % surfaces[destination].session_id))
+	var source := order.find(host.workspace_layout.containing(PaneAddress.key(surfaces[previous].session_id)))
+	var target := order.find(host.workspace_layout.containing(PaneAddress.key(surfaces[destination].session_id)))
 	return 1.0 if target >= source else -1.0
 
 
@@ -5403,7 +5405,7 @@ func _draw_transition_frame() -> void:
 func _transition_live_drawn(generation: int) -> void:
 	if not is_inside_tree() or generation != _tab_fx_generation: return
 	for key in _shown_windows():
-		var pair: Dictionary = host.sessions[int(key.substr(1))]
+		var pair: Dictionary = host.sessions[PaneAddress.id(key)]
 		if pair.term.is_render_active() and not pair.term.is_render_snapshot_ready():
 			_wait_for_live_transition_frame(generation)
 			return
@@ -5449,7 +5451,7 @@ func dust_flying_ratio(source: Node = null) -> float:
 		# Density belongs to the whole tab, not the individual pane. Captures
 		# choose this before switching focus, separately for departure/arrival.
 		for key in _shown_windows():
-			var pair: Dictionary = host.sessions.get(int(key.substr(1)), {})
+			var pair: Dictionary = host.sessions.get(PaneAddress.id(key), {})
 			if not pair.is_empty():
 				var snapshot := preload("res://scenes/RetainedViewport.gd").terminal_state(pair.term)
 				if snapshot != null: count += snapshot.occupied_cell_count()

@@ -1,4 +1,6 @@
 extends RefCounted
+
+const PaneAddress := preload("res://scenes/PaneAddress.gd")
 ## Client-local, one-shot `Prefix+…` sequences; repeated prefixes reach the pane.
 ## Sequences run the shared actions in HostActions.gd, like menus, direct
 ## shortcuts and the command line.
@@ -115,11 +117,12 @@ static func command_line_text(event: InputEventKey) -> Variant:
 		var character := String.chr(event.unicode)
 		if character == ":":
 			return ""
-		return character if character in "0123456789%@$" else null
+		if character == "%": return "t"
+		return character if character in "0123456789@$" else null
 	if event.keycode == KEY_COLON or (event.keycode == KEY_SEMICOLON and event.shift_pressed):
 		return ""
 	if event.keycode == KEY_PERCENT or (event.keycode == KEY_5 and event.shift_pressed):
-		return "%"
+		return "t"
 	if event.keycode == KEY_DOLLAR or (event.keycode == KEY_4 and event.shift_pressed):
 		return "$"
 	if event.keycode == KEY_AT or (event.keycode == KEY_2 and event.shift_pressed):
@@ -184,7 +187,7 @@ func send_prefix() -> void:
 	_send_key(key)
 
 func _send_key(event: InputEventKey) -> void:
-	var id := int(host.pane_focus.substr(1))
+	var id := PaneAddress.id(host.pane_focus)
 	if not host.sessions.has(id) and not host.chromiums.has(id):
 		return
 	var key: InputEventKey = event.duplicate()

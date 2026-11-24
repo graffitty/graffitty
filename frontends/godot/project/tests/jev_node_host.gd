@@ -1,4 +1,6 @@
 extends SceneTree
+
+const PaneAddress := preload("res://scenes/PaneAddress.gd")
 ## Isolated real graph/socket fixture. No terminals, user sessions, or model calls.
 var graph = preload("res://tests/support/ServerGraph.gd").new()
 var transport: RefCounted
@@ -12,8 +14,8 @@ func start() -> void:
 	root.add_child(graph)
 	graph.set_process(false)
 	for id in range(1, 6):
-		graph.nodes["%%%d" % id] = {"provider": "adapter", "status": "idle", "title": "Worker %d" % id}
-		if id >= 3: graph.register_ports("%%%d" % id, {"inputs": [{"id": "in"}], "outputs": []})
+		graph.nodes[PaneAddress.key(id)] = {"provider": "adapter", "status": "idle", "title": "Worker %d" % id}
+		if id >= 3: graph.register_ports(PaneAddress.key(id), {"inputs": [{"id": "in"}], "outputs": []})
 	transport = ClassDB.instantiate("AgentSocket")
 	var directory := OS.get_environment("JEV_TEST_DIRECTORY")
 	if not transport.start(directory.path_join("socket")):

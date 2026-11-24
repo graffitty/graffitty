@@ -1,4 +1,5 @@
 extends "../../tabs-and-panes/replays/main-area-tiling.gd"
+
 var owner_config := ""
 var connection: Node
 var group: Array[String] = []
@@ -52,7 +53,7 @@ func invariant(label: String) -> void:
 	for edge: Dictionary in topology_edges:
 		check(current.any(func(value): return value.from == edge.from and value.to == edge.to and value.get("kind", "graph") == edge.get("kind", "graph")), label + ": ownership endpoints unchanged")
 	for key in terminal_pids:
-		check(host.sessions[int(key.substr(1))].term.get_shell_pid() == terminal_pids[key], label + ": terminal/editor PID survives " + key)
+		check(host.sessions[PaneAddress.id(key)].term.get_shell_pid() == terminal_pids[key], label + ": terminal/editor PID survives " + key)
 	for key in chromium_pids:
 		var state := await chromium_state(key)
 		check(state.get("pid") == chromium_pids[key], label + ": chromium PID survives " + key)
@@ -112,7 +113,7 @@ func play() -> void:
 	connection = host.session_backend.connection
 	owner = host.active_session_id
 	source_tab = host.workspace_layout.active
-	var key := "%%%d" % owner
+	var key := PaneAddress.key(owner)
 	# Real Neovim with its built-in explorer: the adapter's custom [filetree] command
 	# uses this isolated NVIM_APPNAME, with no personal config or downloads.
 	var config := owner_config.path_join("nvim-e2e-filetree")
@@ -130,21 +131,21 @@ func play() -> void:
 	text.close()
 	var tree := await rpc(owner, "filetree.toggle", {})
 	if not tree.has("pane"): return
-	var tree_id := int(str(tree.pane).substr(1))
+	var tree_id := PaneAddress.id(str(tree.pane))
 	var editor := await rpc(tree_id, "filetree.open_file", {"path": file})
 	var preview := await rpc(tree_id, "filetree.open_file", {"path": html})
 	var chromium := await rpc(owner, "chromium.create", {"url": "about:blank"})
 	if not editor.has("pane") or not preview.has("pane") or not chromium.has("pane"): return
 	var peer: Dictionary = await connection.request_action("create", {"kind": "pane", "session": owner})
 	var spare: Dictionary = await connection.request_action("create", {"kind": "pane", "session": owner})
-	unrelated = "%%%d" % int(spare.created)
+	unrelated = PaneAddress.key(int(spare.created))
 	var destination: Dictionary = await connection.request_action("create", {"kind": "tab"})
 	target_tab = int(destination.created)
-	resident = "%%%d" % target_tab
-	group.assign([key, tree.pane, editor.pane, preview.pane, chromium.pane, "%%%d" % int(peer.created)])
+	resident = PaneAddress.key(target_tab)
+	group.assign([key, tree.pane, editor.pane, preview.pane, chromium.pane, PaneAddress.key(int(peer.created))])
 	await owner_at_rest()
 	for member in [editor.pane, group[-1]]:
-		var id := int(str(member).substr(1))
+		var id := PaneAddress.id(str(member))
 		await rpc(id, "agent.event", {"provider": "adapter", "event": "SessionStart"})
 		await rpc(id, "agent.register", {"inputs": [{"id": "in"}], "outputs": [{"id": "out"}]})
 	await rpc(owner, "graph.connect", {"from": group[-1], "to": editor.pane, "from_port": "out", "to_port": "in", "muted": true})
@@ -161,8 +162,8 @@ func play() -> void:
 			check(await host.set_pane_title(member, "Named Chromium " + member), "Chromium rename is acknowledged by its owner")
 			await connection.request_action("sync", {})
 			await owner_at_rest()
-			check(host.chromiums[int(member.substr(1))].title == "Named Chromium " + member, "Chromium name survives owner topology refresh")
-		else: terminal_pids[member] = host.sessions[int(member.substr(1))].term.get_shell_pid()
+			check(host.chromiums[PaneAddress.id(member)].title == "Named Chromium " + member, "Chromium name survives owner topology refresh")
+		else: terminal_pids[member] = host.sessions[PaneAddress.id(member)].term.get_shell_pid()
 	for tab in [source_tab, target_tab]:
 		await select_tab(tab_index_for(tab))
 		var layout: Dictionary = host.workspace_layout.tab(tab).tree

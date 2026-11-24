@@ -38,7 +38,7 @@ impl RemoteClientCore {
         if let Some(id) = self.namespace.local(WireId(id)) {
             return id.0;
         }
-        let local = allocate.call(&[]).to::<i64>();
+        let local = allocate.call(&[id.to_variant()]).to::<i64>();
         self.namespace.bind(WireId(id), LocalId(local));
         local
     }

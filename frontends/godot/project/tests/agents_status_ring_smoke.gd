@@ -1,4 +1,6 @@
 extends "res://tests/mods_fixture.gd"
+
+const PaneAddress := preload("res://scenes/PaneAddress.gd")
 ## Check that the Agents idle ring and done dot are symmetric circles.
 ## A 7 px ring with a 1.5 px stroke catches uneven whole-pixel rounding.
 ##
@@ -32,7 +34,7 @@ func run() -> void:
 	setup()
 	var now := int(Time.get_unix_time_from_system())
 	for index in 3:
-		app.agents.rows.append({"id": "test-%d" % index, "key": "%%%d" % index,
+		app.agents.rows.append({"id": "test-%d" % index, "key": PaneAddress.key(index),
 			"title": ["Idle agent", "Done agent", "Working agent"][index], "provider": "claude",
 			"status": ["idle", "done", "working"][index], "section": ["Idle", "Done", "Working"][index],
 			"at": now, "focused": false, "pinned": false, "remote": "", "session": ""})

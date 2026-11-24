@@ -1,4 +1,6 @@
 extends "res://tests/unit/test_case.gd"
+
+const PaneAddress := preload("res://scenes/PaneAddress.gd")
 const Views := preload("res://scenes/remote/RemoteViewState.gd")
 const Connection := preload("res://scenes/remote/RemoteConnection.gd")
 const Layout := preload("res://scenes/WorkspaceLayout.gd")
@@ -18,7 +20,7 @@ func transport(offset := 0) -> Node:
 	return result
 
 func group(id: int, pane: int) -> Dictionary:
-	return {"id": id, "focused": "%%%d" % pane, "tree": {"windows": [{"pane": "%%%d" % pane, "shown": true}]}}
+	return {"id": id, "focused": PaneAddress.key(pane), "tree": {"windows": [{"pane": PaneAddress.key(pane), "shown": true}]}}
 
 func store() -> RefCounted:
 	return Views.new(cache_directory().path_join("views-%d.json" % Time.get_ticks_usec()))
@@ -48,7 +50,7 @@ func test_restart_restores_owner_ids_camera_and_pane_without_sharing_geometry() 
 	restored.focused = ""
 	reopened.restore_tab(replacement, restored)
 	expect(reopened.active_tab(replacement) == 111, "Restart selects the same server tab despite new frontend IDs")
-	expect(restored.get("navigation") == navigation and restored.focused == "%112", "Pan, zoom and focused pane survive a disk round trip")
+	expect(restored.get("navigation") == navigation and restored.focused == "t112", "Pan, zoom and focused pane survive a disk round trip")
 	expect(restored.tree == geometry, "Saved navigation cannot overwrite the server's layout")
 	navigation.zoom = 2.0
 	expect(restored.navigation.zoom == 0.65, "Saved camera state does not alias the live layout")
@@ -76,7 +78,7 @@ func test_server_session_and_epoch_isolate_views_and_removed_targets_fall_back()
 	expect(views.active_tab(connection) == -1, "A closed tab is never selected")
 	var surviving := group(11, 10)
 	views.restore_tab(connection, surviving)
-	expect(surviving.focused == "%10", "A closed focused pane leaves the current valid focus intact")
+	expect(surviving.focused == "t10", "A closed focused pane leaves the current valid focus intact")
 	expect(surviving.navigation.overview == false, "Main View remains fitted instead of becoming an overview")
 	DirAccess.remove_absolute(views.path)
 	host.free()
@@ -89,7 +91,7 @@ func test_malformed_navigation_and_obsolete_documents_are_ignored() -> void:
 		views.entries[Views._key(connection)] = {"epoch": connection.epoch, "active": "invalid", "tabs": {"1": {"navigation": navigation, "focused": []}}}
 		var restored := group(11, 12)
 		views.restore_tab(connection, restored)
-		expect(not restored.has("navigation") and restored.focused == "%12" and views.active_tab(connection) == -1, "Invalid preference cannot corrupt navigation or focus")
+		expect(not restored.has("navigation") and restored.focused == "t12" and views.active_tab(connection) == -1, "Invalid preference cannot corrupt navigation or focus")
 	var file := FileAccess.open(views.path, FileAccess.WRITE)
 	file.store_string(JSON.stringify({"version": 0, "connections": views.entries}))
 	file.close()

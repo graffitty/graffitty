@@ -1,4 +1,6 @@
 extends "res://tests/client_scenarios/scenario.gd"
+
+const PaneAddress := preload("res://scenes/PaneAddress.gd")
 var client: Node
 var interruptions: Array[String] = []
 var target := -1
@@ -100,7 +102,7 @@ func run() -> void:
 	client.host.select_workspace(int(client.host.workspace_layout.tabs[1].id), true)
 	var graph: Node = client.host.agent_api.graph
 	expect(await until(func(): return graph.edges.size() == 1), "Desktop graph connections arrive on client")
-	var source := "%%%d" % int(client.host.workspace_layout.tabs[0].id)
+	var source := PaneAddress.key(int(client.host.workspace_layout.tabs[0].id))
 	expect(graph.nodes.has(source) and graph.nodes[source].has("manifest"), "Remote node socket manifests arrive")
 	expect(graph.remote_owners.get(source) == client.connection, "Remote graph belongs to its connection")
 	var destination: String = graph.edges.values()[0].to
@@ -128,7 +130,7 @@ func run() -> void:
 	var monitor: Node = client.host.resource_monitor_for(target)
 	expect(monitor.remote and monitor._poll_timer == null, "Remote pane never samples client-side processes")
 	expect(await until(func(): return monitor.snapshot().get("memory_current", 0) > 0), "Server resource samples reach the client")
-	var strip: Dictionary = client.host.workspace_view._compact_resources("%%%d" % target)
+	var strip: Dictionary = client.host.workspace_view._compact_resources(PaneAddress.key(target))
 	expect(strip.memory != "—", "The pane strip displays server memory")
 	expect(await until(func(): return graph.nodes.get(source, {}).get("status") == "busy"), "Node status updates reach the client after connection")
 	var owner: Dictionary = client.connection.topology.panes.filter(func(pane): return int(pane.id) == target).front()
@@ -227,7 +229,7 @@ func run() -> void:
 		),
 		"Server keyboard encoder handles control keys: " + str(terminal.get_text(false).get("text", "")),
 	)
-	var key := "%%%d" % target
+	var key := PaneAddress.key(target)
 	var tab: int = client.host.workspace_layout.containing(key)
 	# Free edge resizing is available in floating mode. A tiled pane uses the
 	# divider gesture instead; a raw VT resize does not change canonical pixels.
@@ -365,7 +367,7 @@ func run() -> void:
 				added,
 			],
 		)
-	client.host.focus_pane("%%%d" % target)
+	client.host.focus_pane(PaneAddress.key(target))
 	var bad = load("res://scenes/remote/RemoteConnection.gd").new()
 	root.add_child(bad)
 	bad.connect_remote(client.connection.url, "wrong-token")

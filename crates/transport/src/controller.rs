@@ -556,7 +556,7 @@ mod tests {
             exchange(
                 &wrong,
                 "terminal.type",
-                json!({"target":"%1","text":"wrong"}),
+                json!({"target":"t1","text":"wrong"}),
                 TIMEOUT
             )
             .unwrap()["error"]["code"],
@@ -573,14 +573,14 @@ mod tests {
                 &path,
                 "build",
                 "terminal.type",
-                json!({"target":"%12","text":"한🙂"}),
+                json!({"target":"t12","text":"한🙂"}),
             )
             .unwrap()
         });
         let request = next(&mut bridge);
         assert_eq!(
             request["call"]["params"],
-            json!({"target":"%12","text":"한🙂"})
+            json!({"target":"t12","text":"한🙂"})
         );
         assert_eq!(request["call"]["version"], 1);
         let response = json!({"request":request["request"],"result":{"keys_sent":2}});
@@ -621,7 +621,7 @@ mod tests {
                 &path,
                 "build",
                 "terminal.press",
-                json!({"target":"%1","key":"Enter"}),
+                json!({"target":"t1","key":"Enter"}),
             )
             .unwrap()
         });
@@ -644,9 +644,9 @@ mod tests {
             call(&path, "build", "pane.list", json!({"target":""})).unwrap()
         });
         let request = next(&mut bridge);
-        bridge.complete(&json!({"request":request["request"],"result":{"panes":[{"id":"%1","position_target":"$0:1.1"}]}}));
+        bridge.complete(&json!({"request":request["request"],"result":{"panes":[{"id":"t1","position_target":"$0:1.1"}]}}));
         let reply = caller.join().unwrap();
-        assert_eq!(reply["result"]["panes"][0]["target"], "build/%1");
+        assert_eq!(reply["result"]["panes"][0]["target"], "build/t1");
         assert_eq!(
             reply["result"]["panes"][0]["position_target"],
             "build/$0:1.1"

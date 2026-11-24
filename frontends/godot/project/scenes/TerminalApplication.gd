@@ -1,4 +1,6 @@
 extends Node
+
+const PaneAddress := preload("res://scenes/PaneAddress.gd")
 ## Application windows present sessions owned by the common server.
 ## Hosts own window presentation and reference their assigned live sessions.
 const DesktopText := preload("res://scenes/DesktopText.gd")
@@ -26,6 +28,7 @@ var terminal_touch_scroll_fingers := 1
 
 var owners: Dictionary = { }
 var mounted_packs: Dictionary[String, bool] = { }
+var next_chromium_id := PaneAddress.CHROMIUM_BASE + 1
 var next_id := 1
 ## First effective spawn directory, shared by every window for this launch.
 var initial_directory := ""
@@ -509,7 +512,11 @@ func configure_window_scale(window: Window) -> void:
 	preload("res://scenes/WindowScale.gd").watch(window, ui_scale)
 
 
-func allocate_id() -> int:
+func allocate_id(chromium := false) -> int:
+	if chromium:
+		var surface := next_chromium_id
+		next_chromium_id += 1
+		return surface
 	var id := next_id
 	next_id += 1
 	return id
@@ -517,7 +524,8 @@ func allocate_id() -> int:
 
 func claim(id: int, host: Node) -> void:
 	owners[id] = host
-	next_id = maxi(next_id, id + 1)
+	if id > PaneAddress.CHROMIUM_BASE: next_chromium_id = maxi(next_chromium_id, id + 1)
+	else: next_id = maxi(next_id, id + 1)
 
 
 func host_for_workspace(id: int) -> Node:
@@ -604,17 +612,17 @@ func _take_group(source: Node, id: int) -> Dictionary:
 	# Associated chromiums created before presentation was built stay with the terminal.
 	for key in Layout.keys(item.tree):
 		if source.is_terminal_pane(key):
-			for chromium_id in source.workspaces.get(int(key.substr(1)), { }).get(
+			for chromium_id in source.workspaces.get(PaneAddress.id(key), { }).get(
 				"chromiums",
 				[],
 			):
 				if source.chromiums.has(chromium_id) and source.workspace_layout.containing(
-						"%%%d" % chromium_id
+						PaneAddress.key(chromium_id)
 					) < 0:
 					item.tree = Layout.insert(
 						item.tree,
 						key,
-						Layout.leaf("%%%d" % chromium_id, false),
+						Layout.leaf(PaneAddress.key(chromium_id), false),
 						"right",
 					)
 	var bundle := { "group": item, "terminals": [], "chromiums": { } }
@@ -623,11 +631,11 @@ func _take_group(source: Node, id: int) -> Dictionary:
 	for key in Layout.keys(item.tree):
 		if source.is_terminal_pane(key):
 			bundle.terminals.append(
-				source.take_workspace(int(key.substr(1)), Layout.keys(item.tree))
+				source.take_workspace(PaneAddress.id(key), Layout.keys(item.tree))
 			)
 	for key in Layout.keys(item.tree):
 		if source.is_chromium_pane(key):
-			var chromium_id := int(key.substr(1))
+			var chromium_id := PaneAddress.id(key)
 			if source.chromiums.has(chromium_id):
 				var chromium: Node = source.chromiums[chromium_id]
 				chromium.changed.disconnect(source._on_session_changed)
@@ -1010,11 +1018,11 @@ func pane_transfer_connections(source: Node) -> Array:
 	if "chromiums" in source:
 		for id in source.chromiums:
 			var owner: int = source.chromiums[id].owner_id
-			if owner != id: edges.append({"from": "%%%d" % owner, "to": "%%%d" % id, "kind": "chromium"})
+			if owner != id: edges.append({"from": PaneAddress.key(owner), "to": PaneAddress.key(id), "kind": "chromium"})
 	if "sessions" in source:
 		for id in source.sessions:
 			var owner: int = source.sessions[id].term.get_meta("filetree_owner", -1)
-			if owner >= 0: edges.append({"from": "%%%d" % owner, "to": "%%%d" % id, "kind": "filetree"})
+			if owner >= 0: edges.append({"from": PaneAddress.key(owner), "to": PaneAddress.key(id), "kind": "filetree"})
 	return edges
 
 
@@ -1079,7 +1087,7 @@ func move_pane(
 	if source != target and connection.workspace != target.session_backend.connection.workspace:
 		var transfer_tab := from
 		if Layout.keys(source.workspace_layout.tab(from).tree).size() > 1:
-			var split: Dictionary = await connection.request_action("regroup", {"surface": key, "tab": null})
+			var split: Dictionary = await connection.request_action("regroup", {"pane": key, "tab": null})
 			if split.get("type") == "error": return false
 			transfer_tab = int(split.tab)
 			await connection.request_action("sync")
@@ -1087,7 +1095,7 @@ func move_pane(
 		# Into an existing tab: keep showing it while the pane arrives.
 		if not await move_workspace(source, target, transfer_tab, -1, destination < 0):
 			if transfer_tab != from:
-				await connection.request_action("regroup", {"surface": key, "tab": from, "restore": true})
+				await connection.request_action("regroup", {"pane": key, "tab": from, "restore": true})
 			return false
 		if destination >= 0:
 			return await move_pane(target, target, key, destination, pane, edge, commit_layout, original_rectangles)
@@ -1095,7 +1103,7 @@ func move_pane(
 		target.focus_pane(key)
 		if commit_layout: target.session_backend.commit_workspace(target)
 		return true
-	var response: Dictionary = await connection.request_action("regroup", {"surface": key, "tab": destination if destination >= 0 else null})
+	var response: Dictionary = await connection.request_action("regroup", {"pane": key, "tab": destination if destination >= 0 else null})
 	if response.get("type") == "error":
 		push_warning(str(response.get("message", "Pane move failed")))
 		return false

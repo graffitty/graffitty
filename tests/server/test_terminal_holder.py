@@ -326,6 +326,27 @@ class TerminalHolderTests(unittest.TestCase):
         self.wait(lambda: not alive(holder), "the drained old holder to exit")
         self.assertTrue(alive(newer))
 
+    @unittest.skipUnless(os.environ.get("GRAFFITTY_TEST_003_CLI"), "requires a 0.0.3 release binary")
+    def test_003_holder_adopts_typed_address(self):
+        self.cli = self.root / "installation/tools/gft"
+        self.cli.parent.mkdir(parents=True)
+        shutil.copy(os.environ["GRAFFITTY_TEST_003_CLI"], self.cli)
+        pane, holder = self.started()
+        self.assertIn("GRAFFITTY_PANE=%1", (self.root / f"{pane}.env").read_text())
+        self.gft("internal", "update", "prepare")
+        staged = self.cli.with_suffix(".new")
+        shutil.copy(CLI, staged)
+        os.replace(staged, self.cli)
+        self.gft("internal", "update", "finish")
+        self.assert_kept(pane, holder, 1)
+        self.assertIn("t1", self.gft("pane", "pid", "%1", pane=pane))
+        self.gft("server", "restart")
+        self.assert_kept(pane, holder, 2)
+        self.assertIn("t1", self.gft("pane", "pid", "%1", pane=pane))
+        newer = self.new_pane("two")
+        self.assertIn("GRAFFITTY_PANE=t2", (self.root / f"{newer}.env").read_text())
+        self.assertIn('"error"', self.gft("pane", "pid", "%1", pane=newer, check=False))
+
     def test_versioned_installation_restarts_as_the_version_an_upgrade_made_current(self):
         # The Linux layout: one directory per version, and a `current` link to the one in use.
         installs = self.root / "installs"

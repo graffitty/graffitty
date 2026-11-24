@@ -7,7 +7,7 @@ use std::{cell::RefCell, rc::Rc};
 fn event() -> Event {
     serde_json::from_value(
         json!({"type":"message","event_id":"event-1","run_id":"run-1",
-        "source":"%1","target":"%2","source_port":"out","target_port":"in","text":"hello",
+        "source":"t1","target":"t2","source_port":"out","target_port":"in","text":"hello",
         "sessions":[{"provider":"codex","id":"session-1"}],"future_field":{"keep":true}}),
     )
     .unwrap()

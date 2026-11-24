@@ -189,15 +189,15 @@ mod tests {
 
     #[test]
     fn spawned_programs_chromium_and_filetree_hang_under_their_agent() {
-        let mut py = node("%2", "terminal", 300.);
+        let mut py = node("t2", "terminal", 300.);
         py.app = "python3".into();
-        let nodes = [node("%1", "agent", 0.), py, node("%3", "chromium", 500.), node("%4", "filetree", -100.), node("%5", "terminal", 900.)];
-        let edges = [edge("%1", "%2", "spawned"), edge("%1", "%3", "chromium"), edge("%1", "%4", "filetree"), edge("%2", "%5", "spawned")];
+        let nodes = [node("t1", "agent", 0.), py, node("t3", "chromium", 500.), node("t4", "filetree", -100.), node("t5", "terminal", 900.)];
+        let edges = [edge("t1", "t2", "spawned"), edge("t1", "t3", "chromium"), edge("t1", "t4", "filetree"), edge("t2", "t5", "spawned")];
         let trees = trees(&nodes, &edges);
         assert_eq!(trees.len(), 1);
-        assert_eq!(trees[0].root, "%1");
+        assert_eq!(trees[0].root, "t1");
         let keys: Vec<_> = trees[0].rows.iter().map(|r| r.key.as_str()).collect();
-        assert_eq!(keys, ["%4", "%2", "%5", "%3"], "children read left to right; grandchildren follow their parent");
+        assert_eq!(keys, ["t4", "t2", "t5", "t3"], "children read left to right; grandchildren follow their parent");
         let icons: Vec<_> = trees[0].rows.iter().map(|r| r.icon.as_str()).collect();
         assert_eq!(icons, ["filetree", "python", "terminal", "chromium"]);
         assert_eq!(trees[0].rows[1].lines, ["├"]);
@@ -207,37 +207,37 @@ mod tests {
 
     #[test]
     fn the_first_agent_in_graph_order_leads_and_cycles_fall_back_to_the_leftmost() {
-        let nodes = [node("%1", "agent", 800.), node("%2", "agent", 0.), node("%3", "agent", 400.)];
-        // %1 → %2 → %3: %1 is first despite sitting right-most.
-        let chain = [edge("%1", "%2", "graph"), edge("%2", "%3", "graph")];
+        let nodes = [node("t1", "agent", 800.), node("t2", "agent", 0.), node("t3", "agent", 400.)];
+        // t1 → t2 → t3: t1 is first despite sitting right-most.
+        let chain = [edge("t1", "t2", "graph"), edge("t2", "t3", "graph")];
         let trees_chain = trees(&nodes, &chain);
-        assert_eq!(trees_chain[0].root, "%1");
-        assert_eq!(trees_chain[0].rows.iter().map(|r| r.key.as_str()).collect::<Vec<_>>(), ["%2", "%3"]);
+        assert_eq!(trees_chain[0].root, "t1");
+        assert_eq!(trees_chain[0].rows.iter().map(|r| r.key.as_str()).collect::<Vec<_>>(), ["t2", "t3"]);
         // A cycle has no first agent: the left-most one leads.
-        let cycle = [edge("%1", "%2", "graph"), edge("%2", "%3", "graph"), edge("%3", "%1", "graph")];
-        assert_eq!(trees(&nodes, &cycle)[0].root, "%2");
+        let cycle = [edge("t1", "t2", "graph"), edge("t2", "t3", "graph"), edge("t3", "t1", "graph")];
+        assert_eq!(trees(&nodes, &cycle)[0].root, "t2");
         // A plain terminal pointing at an agent is never the top row.
-        let nodes = [node("%1", "terminal", 0.), node("%2", "agent", 100.)];
-        let trees_shell = trees(&nodes, &[edge("%1", "%2", "graph")]);
-        assert_eq!(trees_shell[0].root, "%2");
-        assert_eq!(trees_shell[0].rows[0].key, "%1");
+        let nodes = [node("t1", "terminal", 0.), node("t2", "agent", 100.)];
+        let trees_shell = trees(&nodes, &[edge("t1", "t2", "graph")]);
+        assert_eq!(trees_shell[0].root, "t2");
+        assert_eq!(trees_shell[0].rows[0].key, "t1");
     }
 
     #[test]
     fn a_child_linked_by_several_edges_is_listed_once() {
-        let nodes = [node("%1", "agent", 0.), node("%2", "agent", 100.), node("%3", "terminal", 200.)];
-        let edges = [edge("%1", "%2", "spawned"), edge("%1", "%2", "graph"), edge("%1", "%3", "spawned"),
-            edge("%1", "%3", "graph"), edge("%3", "%1", "graph")];
+        let nodes = [node("t1", "agent", 0.), node("t2", "agent", 100.), node("t3", "terminal", 200.)];
+        let edges = [edge("t1", "t2", "spawned"), edge("t1", "t2", "graph"), edge("t1", "t3", "spawned"),
+            edge("t1", "t3", "graph"), edge("t3", "t1", "graph")];
         let trees = trees(&nodes, &edges);
-        assert_eq!(trees[0].rows.iter().map(|r| r.key.as_str()).collect::<Vec<_>>(), ["%2", "%3"]);
+        assert_eq!(trees[0].rows.iter().map(|r| r.key.as_str()).collect::<Vec<_>>(), ["t2", "t3"]);
         assert_eq!(trees[0].rows[1].lines, ["└"]);
     }
 
     #[test]
     fn groups_without_agents_are_skipped_and_agents_stay_separate() {
-        let nodes = [node("%1", "terminal", 0.), node("%2", "chromium", 100.), node("%3", "agent", 200.), node("%4", "agent", 300.)];
-        let trees = trees(&nodes, &[edge("%1", "%2", "chromium")]);
-        assert_eq!(trees.iter().map(|t| t.root.as_str()).collect::<Vec<_>>(), ["%3", "%4"]);
+        let nodes = [node("t1", "terminal", 0.), node("t2", "chromium", 100.), node("t3", "agent", 200.), node("t4", "agent", 300.)];
+        let trees = trees(&nodes, &[edge("t1", "t2", "chromium")]);
+        assert_eq!(trees.iter().map(|t| t.root.as_str()).collect::<Vec<_>>(), ["t3", "t4"]);
         assert!(trees.iter().all(|t| t.rows.is_empty()));
     }
 }

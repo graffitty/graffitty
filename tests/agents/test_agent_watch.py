@@ -127,7 +127,7 @@ class AgentWatch(unittest.TestCase):
                 sender = viewer.action("create", pane["id"], kind="pane")["created"]
                 sender_token = next(s["token"] for s in state()["sessions"] if s["id"] == sender)
                 rpc(path, sender_token, "agent.event", dict(provider="pi", event="SessionStart", session_id="sender", transport="inbox", integrated=True))
-                edge = {"from": f"%{sender}", "to": f"%{pane['id']}", "send": True}
+                edge = {"from": f"t{sender}", "to": f"t{pane['id']}", "send": True}
                 rpc(path, sender_token, "graph.connect", edge)
                 rpc(path, sender_token, "graph.send", {"to": edge["to"], "text": "wait for typing"})
                 event_id = rpc(path, token, "graph.take")["events"][0]["event_id"]

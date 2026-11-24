@@ -1,6 +1,7 @@
 extends "fit-to-pane.gd"
 
 
+
 func play() -> void:
 	await labelled_tabs(["CLOSE"])
 	var far: String = host.pane_focus
@@ -38,13 +39,13 @@ func play() -> void:
 			var camera_zoom: float = host.world._navigation_camera_zoom()
 			# Invoke the same close action as the pane chrome. Idle fixture shells
 			# need no confirmation and no external process is terminated.
-			host.request_close_terminal(int(closing.substr(1)))
+			host.request_close_terminal(PaneAddress.id(closing))
 			if is_instance_valid(host.close_dialog):
 				host.close_dialog.confirmed.emit()
 				host.close_dialog.hide()
 			await owner_at_rest()
 			check(
-				not host.sessions.has(int(closing.substr(1))),
+				not host.sessions.has(PaneAddress.id(closing)),
 				"Close removes the requested pane",
 			)
 			check(host.pane_focus == near, "Focus chooses nearest pane, not first in layout order")

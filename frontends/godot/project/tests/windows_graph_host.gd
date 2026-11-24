@@ -1,4 +1,5 @@
 extends "../../../../tests/llm-e2e/replay/replay.gd"
+
 ## Native Windows protocol/UI acceptance against the production session owner.
 class TestAPI extends "res://scenes/AgentAPI.gd":
 	var terminal_host: Node
@@ -9,7 +10,7 @@ class TestAPI extends "res://scenes/AgentAPI.gd":
 			get_tree().call_deferred("quit")
 			return {"result": {"ok": true}}
 		if method == "test.terminal.start":
-			var key := "%%%d" % tab_id
+			var key := PaneAddress.key(tab_id)
 			terminal_host.focus_pane(key)
 			if terminal_host.workspace_layout.tab(terminal_host.workspace_layout.active).tree.get("tiling", false):
 				terminal_host.workspace_view.toggle_tiling()
@@ -45,7 +46,7 @@ class TestAPI extends "res://scenes/AgentAPI.gd":
 			Input.parse_input_event(event)
 			return {"result": {"ok": true}}
 		if method == "test.terminal.press":
-			terminal_host.focus_pane("%%%d" % tab_id)
+			terminal_host.focus_pane(PaneAddress.key(tab_id))
 			terminal.grab_focus()
 			var parts := str(params.key).split("+")
 			var event := InputEventKey.new()
@@ -65,7 +66,7 @@ class TestAPI extends "res://scenes/AgentAPI.gd":
 
 func play() -> void:
 	for count in range(2, 10):
-		host.create_terminal_window("%%%d" % (count - 1))
+		host.create_terminal_window(PaneAddress.key((count - 1)))
 		var deadline := Time.get_ticks_msec() + 10000
 		while host.sessions.size() < count and Time.get_ticks_msec() < deadline:
 			await process_frame

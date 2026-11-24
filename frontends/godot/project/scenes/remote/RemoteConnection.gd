@@ -1,4 +1,6 @@
 extends Node
+
+const PaneAddress := preload("res://scenes/PaneAddress.gd")
 signal chromium_received(session: int, data: PackedByteArray)
 signal chromium_video_received(session: int, header: Dictionary, data: PackedByteArray)
 signal chromium_gpu_state_received(session: int, active: bool)
@@ -733,8 +735,8 @@ func send_action(kind: String, id: int, values: Dictionary = { }) -> int:
 		message.tabs = message.tabs.map(func(tab): return wire_id(int(tab)))
 	if message.has("destination_tab"):
 		message.destination_tab = wire_id(int(message.destination_tab))
-	if message.get("surface") is String and preload("res://scenes/PaneTargets.gd").valid(message.surface):
-		message.surface = "%%%d" % wire_id(int(message.surface.substr(1)))
+	if message.get("pane") is String and preload("res://scenes/PaneTargets.gd").valid(message.pane):
+		message.pane = PaneAddress.key(wire_id(PaneAddress.id(message.pane)))
 	var error: int = socket.send_text(JSON.stringify(message))
 	if error != OK:
 		_network_failed(error_string(error))
@@ -783,13 +785,13 @@ func local_id(id: int) -> int:
 		var application: Node = get_node("/root/TerminalApplication")
 		var identity := JSON.stringify([url, epoch])
 		var mapping: Dictionary = application.remote_identity_maps.get_or_add(identity, {})
-		if not mapping.has(id): mapping[id] = _allocate_id()
+		if not mapping.has(id): mapping[id] = _allocate_id(id)
 		allocated = mapping[id]
 		_core.bind_id(id, allocated)
 	return allocated
 
-func _allocate_id() -> int:
-	return get_node("/root/TerminalApplication").allocate_id()
+func _allocate_id(wire: int) -> int:
+	return get_node("/root/TerminalApplication").allocate_id(wire > PaneAddress.CHROMIUM_BASE)
 
 func wire_id(id: int) -> int:
 	return _core.wire_id(id) if namespace_ids else id
@@ -1004,7 +1006,7 @@ func _handle_frontend_request(message: Dictionary) -> void:
 ## A read belongs to the server pane even after this view switches sessions.
 func acknowledge_agent(id: int, event: String) -> Dictionary:
 	return await request_action("controller_rpc", {"call": {"version": Protocol.VERSION,
-		"method": "agent.seen", "params": {"target": "%%%d" % wire_id(id), "event": event}}})
+		"method": "agent.seen", "params": {"target": PaneAddress.key(wire_id(id)), "event": event}}})
 
 
 func remote_call(id: int, method: String, params: Dictionary, canceled: Callable = Callable()) -> Dictionary:

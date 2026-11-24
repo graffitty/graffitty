@@ -1,4 +1,6 @@
 extends "res://tests/unit/test_case.gd"
+
+const PaneAddress := preload("res://scenes/PaneAddress.gd")
 ## Tabs and their windows under random sequences of moves: nothing is lost,
 ## duplicated or left pointing at a window that is gone.
 const Layout := preload("res://scenes/WorkspaceLayout.gd")
@@ -6,7 +8,7 @@ const Layout := preload("res://scenes/WorkspaceLayout.gd")
 
 func test_closed_tab_selects_neighbor_in_visual_order() -> void:
 	var layout := Layout.new()
-	for id in [8, 4, 13, 2]: layout.add(id, Layout.leaf("%%%d" % id))
+	for id in [8, 4, 13, 2]: layout.add(id, Layout.leaf(PaneAddress.key(id)))
 	layout.active = 13
 	layout.take(13)
 	expect(layout.active == 4, "Closing the third tab selects the second, regardless of IDs")
@@ -69,7 +71,7 @@ func test_no_move_loses_or_duplicates_a_window() -> void:
 			match rng.randi_range(0, 4):
 				0: # A new terminal tab.
 					layout.ensure_terminal(next)
-					expected.append("%%%d" % next)
+					expected.append(PaneAddress.key(next))
 					next += 1
 				1: # Drag one window into another tab.
 					if tabs.size() >= 2:
@@ -113,9 +115,9 @@ func test_a_merged_window_never_hides_exactly_behind_another() -> void:
 	for n in 200:
 		var layout := Layout.new()
 		var rect := Rect2(rng.randf_range(0, 500), rng.randf_range(0, 500), 400, 300)
-		layout.add(0, { "windows": [{ "pane": "%0", "rect": rect }] })
+		layout.add(0, { "windows": [{ "pane": "t0", "rect": rect }] })
 		for i in range(1, 6):
-			layout.merge(0, { "pane": "%%%d" % i, "rect": rect })
+			layout.merge(0, { "pane": PaneAddress.key(i), "rect": rect })
 		var rects: Array = Layout.windows(layout.tab(0).tree).map(
 			func(window):
 				return window.rect,

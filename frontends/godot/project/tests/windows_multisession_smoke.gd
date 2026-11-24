@@ -1,4 +1,6 @@
 extends SceneTree
+
+const PaneAddress := preload("res://scenes/PaneAddress.gd")
 ## Real local startup and GUI closure; the controller retains process handles.
 var directory := OS.get_environment("GRAFFITTY_MULTISESSION_EVIDENCE")
 var route := OS.get_environment("GRAFFITTY_MULTISESSION_ROUTE")
@@ -70,7 +72,7 @@ func run() -> void:
 	for id in host.sessions:
 		# Inactive tabs may pause their replicas. Visit each real pane before
 		# checking its output instead of assuming background frames are streamed.
-		host.focus_pane("%%%d" % id)
+		host.focus_pane(PaneAddress.key(id))
 		var terminal: Node = host.sessions[id].term
 		var marker := "MULTI_READY_%d" % id
 		terminal.send_text("Write-Output ('MULTI_' + 'READY_%d')\r" % id)
@@ -78,7 +80,7 @@ func run() -> void:
 			fail("A real shell did not become ready")
 			return
 		panes.append({"id": id, "pid": terminal.get_shell_pid(), "marker": marker})
-	host.focus_pane("%%%d" % panes[0].id)
+	host.focus_pane(PaneAddress.key(panes[0].id))
 	for frame in 3:
 		await process_frame
 		RenderingServer.force_draw(false)

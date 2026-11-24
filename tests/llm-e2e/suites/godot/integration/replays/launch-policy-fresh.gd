@@ -1,4 +1,5 @@
 extends "launch-policy-seed.gd"
+
 func play() -> void:
 	directory=OS.get_environment("GRAFFITTY_INPUT_EVIDENCE")
 	connection=host.session_backend.connection
@@ -14,14 +15,14 @@ func play() -> void:
 		for after in connection.topology.panes:
 			if int(after.id)==id:
 				check(after.limits.keys().size()==before.limits.keys().size() and before.limits.keys().all(func(key):return after.limits.has(key) and int(after.limits[key])==int(before.limits[key])),"Fresh checkpoint restores resolved limits for pane %d" % id)
-	host.focus_pane("%%%d" % int(seed.large))
+	host.focus_pane(PaneAddress.key(int(seed.large)))
 	await camera_at_rest()
 	terminal=host.active_terminal()
 	var expected:=FileAccess.get_file_as_string(shared.path_join("retained-history.txt"))
 	var actual: String=terminal.get_text(true).text
 	check(actual==expected,"Large history reconstructs exactly without invented blank rows")
 	FileAccess.open(directory.path_join("reconstructed-history.txt"),FileAccess.WRITE).store_string(actual)
-	host.focus_pane("%%%d" % int(seed.zero))
+	host.focus_pane(PaneAddress.key(int(seed.zero)))
 	await camera_at_rest()
 	terminal=host.active_terminal()
 	check(terminal.image_placements().is_empty() and terminal.get_ui_state().scroll_total==terminal.get_ui_state().scroll_page,"Fresh zero-policy viewport contains neither forbidden images nor scrollback")

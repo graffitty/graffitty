@@ -1,4 +1,5 @@
 extends "../../../../replay/replay.gd"
+
 ## Replays tests/llm-e2e/suites/shared/tabs-and-panes/pane-to-new-tab.md
 
 
@@ -24,7 +25,7 @@ func play() -> void:
 	await say("Move the BRAVO window by its header so both windows show")
 	await drag(on(handle("BRAVO")), content(Vector2(0.62, 0.5)), 1.0)
 	await panes_at_rest()
-	var key := "%%%d" % terminal_id("BRAVO")
+	var key := PaneAddress.key(terminal_id("BRAVO"))
 	var placed: Rect2 = host.workspace_view.pane_rects[key]
 
 	await say("Drag the BRAVO handle up onto the tab bar, beside the last tab")

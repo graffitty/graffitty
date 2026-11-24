@@ -3,9 +3,9 @@ const Header := preload("res://scenes/PaneHeader.tscn")
 const Session := preload("res://scenes/TerminalSession.gd")
 
 class TitleHost extends Node:
- var pane_focus := "%1"
+ var pane_focus := "t1"
  var presentation_active := true
- func is_terminal_pane(key: String) -> bool: return key == "%1"
+ func is_terminal_pane(key: String) -> bool: return key == "t1"
  var model: Node
  func session_model(_id: int) -> Node: return model
  func pane_title(_key: String) -> String: return model.title
@@ -68,14 +68,14 @@ func test_compact_close_requires_focused_pane_and_ten_percent_of_title_height() 
  var host := TitleHost.new()
  var pane := TrackingPane.new()
  pane.host = host
- pane.key = "%1"
+ pane.key = "t1"
  pane.header = make_header()
  pane.header.set_hovered(true)
  pane.set_compact_header(true, 240)
  expect(pane.header.has_part("close"), "At exactly ten percent the focused pane keeps close")
  pane.set_compact_header(true, 241)
  expect(not pane.header.has_part("close"), "A smaller close button has no hit target")
- host.pane_focus = "%2"
+ host.pane_focus = "t2"
  pane.set_compact_header(true, 200)
  expect(not pane.header.has_part("close"), "Hover cannot reveal close on an unfocused compact pane")
  pane.header.free()
@@ -153,7 +153,7 @@ func test_title_notifications_rebind_without_resizing_terminal() -> void:
  host.model = first
  var pane := TrackingPane.new()
  pane.host = host
- pane.key = "%1"
+ pane.key = "t1"
  pane.add_child(pane.header)
  pane.handle.size = Vector2(500, 30)
  pane._bind_title_source()

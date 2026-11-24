@@ -1,4 +1,6 @@
 extends Node
+
+const PaneAddress := preload("res://scenes/PaneAddress.gd")
 ## The application's mod host: publishes live data to JavaScript mods and runs
 ## what they ask for.
 ##
@@ -102,7 +104,7 @@ func watch_host(terminal_host: Node) -> void:
 	if terminal_host.get("workspace_layout") != null:
 		for tab in terminal_host.workspace_layout.tabs:
 			for key in preload("res://scenes/WorkspaceLayout.gd").keys(tab.tree):
-				_watch(terminal_host.resource_monitor_for(int(key.substr(1))), &"snapshot_changed", 1)
+				_watch(terminal_host.resource_monitor_for(PaneAddress.id(key)), &"snapshot_changed", 1)
 
 
 ## Where the program writes `graffitty.d.ts` for editors: its own data directory.
@@ -225,7 +227,7 @@ func publish_pane(terminal_host: Node, key: String, status: Dictionary) -> void:
 ## What the pane strip shows for `key`: label, CPU, memory and the agent badge.
 ## `position` is the pane's place among its tab's panes (0 for none).
 static func pane_status(terminal_host: Node, key: String, position := 0) -> Dictionary:
-	var source: Node = terminal_host.resource_monitor_for(int(key.substr(1)))
+	var source: Node = terminal_host.resource_monitor_for(PaneAddress.id(key))
 	var result := pane_resources(source.snapshot() if source != null else {}, key, position)
 	result["agent"] = null
 	if terminal_host.is_terminal_pane(key) and terminal_host.get("agent_api") != null:
@@ -318,10 +320,10 @@ func _panes(terminal_host: Node) -> Array:
 static func _resources(terminal_host: Node) -> Dictionary:
 	var h := terminal_host
 	var chromium_selected: bool = h.is_chromium_pane(h.pane_focus)
-	var session_id: int = int(h.pane_focus.substr(1)) if not h.pane_focus.is_empty() else h.active_session_id
+	var session_id: int = PaneAddress.id(h.pane_focus) if not h.pane_focus.is_empty() else h.active_session_id
 	var monitor: Node = h.resource_monitor_for(session_id)
-	var key: String = h.pane_focus if not h.pane_focus.is_empty() else "%%%d" % session_id
-	var label := h.tr("Chromium %d") % session_id if chromium_selected else h.tr("Pane %%%d") % session_id
+	var key: String = h.pane_focus if not h.pane_focus.is_empty() else PaneAddress.key(session_id)
+	var label := h.tr("Chromium %s" if chromium_selected else "Pane %s") % PaneAddress.key(session_id)
 	var kind := "chromium" if chromium_selected else "terminal"
 	var agent := {}
 	if h.get("agent_api") != null and not chromium_selected:
@@ -411,7 +413,7 @@ func _publish_pane_resources() -> void:
 
 ## One pane for `pane_resources`: where it runs, what runs in it, its samples.
 static func _pane_input(terminal_host: Node, key: String, graph: Node) -> Dictionary:
-	var id := int(key.substr(1))
+	var id := PaneAddress.id(key)
 	# The graph knows a terminal's server; chromiums and the rest use their session's.
 	var peer: Node = graph.remote_owners.get(key) if graph != null else null
 	if not is_instance_valid(peer):
@@ -438,7 +440,7 @@ static func _pane_input(terminal_host: Node, key: String, graph: Node) -> Dictio
 			elif str(edge.get("to", "")) == key: entry.connected.append(str(edge.get("from", "")))
 	if terminal_host.is_chromium_pane(key):
 		entry.kind = "chromium"
-		if terminal_host.chromiums.has(id): entry.connected.append("%%%d" % terminal_host.chromiums[id].owner_id)
+		if terminal_host.chromiums.has(id): entry.connected.append(PaneAddress.key(terminal_host.chromiums[id].owner_id))
 	elif terminal_host.is_terminal_pane(key) and terminal_host.get("sessions") is Dictionary and terminal_host.sessions.has(id):
 		var pair: Dictionary = terminal_host.sessions[id]
 		var node: Dictionary = graph.nodes.get(key, {}) if graph != null else {}
@@ -448,7 +450,7 @@ static func _pane_input(terminal_host: Node, key: String, graph: Node) -> Dictio
 		if pair.has("term"):
 			for field in ["filetree_owner", "spawned_by"]:
 				var owner := int(pair.term.get_meta(field, -1))
-				if owner >= 0: entry.connected.append("%%%d" % owner)
+				if owner >= 0: entry.connected.append(PaneAddress.key(owner))
 		if pair.has("term") and int(pair.term.get_meta("filetree_owner", -1)) >= 0: entry.kind = "filetree"
 		elif provider in ["pi", "claude", "codex", "opencode"]:
 			entry.kind = "agent"

@@ -1,4 +1,6 @@
 extends Node
+
+const PaneAddress := preload("res://scenes/PaneAddress.gd")
 ## Presentation and sounds for the Herdr-derived Rust model. Read receipts come
 ## from the session server; one application instance owns all windows' alerts.
 signal changed
@@ -71,7 +73,7 @@ func refresh_body() -> void:
 				var connection: Node = application.agent_api.graph.remote_owners.get(key)
 				if not is_instance_valid(connection): continue
 				# Never persist client-local remapped IDs; scope pins to the server epoch.
-				var id := JSON.stringify([connection.url, connection.epoch, connection.wire_id(int(key.substr(1)))])
+				var id := JSON.stringify([connection.url, connection.epoch, connection.wire_id(PaneAddress.id(key))])
 				var shown: bool = looking and tab.id == host.workspace_layout.active and key in visible_keys
 				var focused: bool = looking and key == host.pane_focus
 				# Two views of the same server terminal are still one agent. Prefer
@@ -133,7 +135,7 @@ func _add_away(input: Dictionary, remotes: Dictionary, sessions: Dictionary) -> 
 				var program: Variant = agent.get("program")
 				var title := str(agent.get("title", ""))
 				if title.is_empty() and program is Dictionary: title = str(program.get("msg", ""))
-				input[id] = {"id": id, "key": "%%%d" % pane, "title": title,
+				input[id] = {"id": id, "key": PaneAddress.key(pane), "title": title,
 					"provider": str(agent.get("provider", "")), "status": str(agent.get("status", "")),
 					"program": program, "status_history": agent.get("status_history", []),
 					"attention": application.agent_attention.project_attention(agent.get("attention")), "looking": false, "focused": false}
@@ -168,11 +170,11 @@ func _build_trees(host_trees: Array, top_rows: Array) -> Dictionary:
 				var rect: Rect2 = window.get("rect", Rect2())
 				var entry := {"key": key, "kind": "terminal", "title": host.pane_title(key), "provider": "", "app": "", "status": "",
 					"rect": [rect.position.x, rect.position.y, rect.size.x, rect.size.y]}
-				var id := int(key.substr(1))
+				var id := PaneAddress.id(key)
 				if host.is_chromium_pane(key):
 					entry.kind = "chromium"
 					var owner_id: int = host.chromiums[id].owner_id if host.chromiums.has(id) else id
-					if owner_id != id: edges.append({"from": "%%%d" % owner_id, "to": key, "kind": "chromium"})
+					if owner_id != id: edges.append({"from": PaneAddress.key(owner_id), "to": key, "kind": "chromium"})
 				elif host.is_terminal_pane(key) and host.sessions.has(id):
 					var node: Dictionary = graph.nodes.get(key, {})
 					var term: Node = host.sessions[id].term
@@ -192,7 +194,7 @@ func _build_trees(host_trees: Array, top_rows: Array) -> Dictionary:
 						entry.status = {"busy": "working", "waiting": "blocked", "error": "blocked", "offline": "offline"}.get(status, "idle")
 					else:
 						entry.app = str(host.sessions[id].model.foreground_app.get("id", ""))
-					if spawned_by >= 0 and spawned_by != id: edges.append({"from": "%%%d" % spawned_by, "to": key, "kind": "spawned"})
+					if spawned_by >= 0 and spawned_by != id: edges.append({"from": PaneAddress.key(spawned_by), "to": key, "kind": "spawned"})
 				else: continue
 				keys[key] = true
 				nodes.append(entry)
@@ -290,7 +292,7 @@ func _focus_away(target: Dictionary) -> void:
 			return
 	var deadline := Time.get_ticks_msec() + 5000
 	while is_instance_valid(host) and is_instance_valid(peer) and Time.get_ticks_msec() < deadline:
-		var key := "%%%d" % (peer.local_id(target.pane) if peer.has_method("local_id") else target.pane)
+		var key := PaneAddress.key((peer.local_id(target.pane) if peer.has_method("local_id") else target.pane))
 		if host.workspace_layout.containing(key) >= 0:
 			if host.is_inside_tree():
 				host.get_window().show()

@@ -50,20 +50,20 @@ func test_untitled_panes_use_tab_local_numbers_and_stable_ids() -> void:
 	var first = load("res://scenes/TerminalSession.gd").new()
 	var second = load("res://scenes/TerminalSession.gd").new()
 	host.sessions = {0: {"model": first}, 7: {"model": second}}
-	host.workspace_layout.add(0, {"windows": [{"pane": "%0"}, {"pane": "%7"}]})
-	expect(host.pane_title("%0") == ".1 (%0)", "First untitled pane uses its local number and stable ID")
-	expect(host.pane_title("%7") == ".2 (%7)", "Pane number is not the stable ID plus one")
-	second._on_title("%7")
+	host.workspace_layout.add(0, {"windows": [{"pane": "t0"}, {"pane": "t7"}]})
+	expect(host.pane_title("t0") == ".1 (t0)", "First untitled pane uses its local number and stable ID")
+	expect(host.pane_title("t7") == ".2 (t7)", "Pane number is not the stable ID plus one")
+	second._on_title("t7")
 	second.title_is_fallback = true
-	expect(host.pane_title("%7") == ".2 (%7)", "Remote fallback IDs receive the local pane number")
-	host.workspace_layout.tab(0).tree = {"windows": [{"pane": "%7"}, {"pane": "%0"}]}
-	expect(host.pane_title("%7") == ".1 (%7)", "Numbers follow current layout order")
+	expect(host.pane_title("t7") == ".2 (t7)", "Remote fallback IDs receive the local pane number")
+	host.workspace_layout.tab(0).tree = {"windows": [{"pane": "t7"}, {"pane": "t0"}]}
+	expect(host.pane_title("t7") == ".1 (t7)", "Numbers follow current layout order")
 	second.title_is_fallback = false
 	second._on_title("Terminal 7")
-	expect(host.pane_title("%7") == "Terminal 7", "An explicitly reported title stays literal")
+	expect(host.pane_title("t7") == "Terminal 7", "An explicitly reported title stays literal")
 	second._on_title("")
 	second.initial_directory = "/home/demo"
-	expect(host.pane_title("%7") == "/home/demo", "Working directory takes precedence over the number")
+	expect(host.pane_title("t7") == "/home/demo", "Working directory takes precedence over the number")
 	first.free()
 	second.free()
 	host.free()

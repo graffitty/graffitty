@@ -37,7 +37,7 @@ class GraphTabBoundaryTests(unittest.TestCase):
                         self.assertNotIn("error", rpc(pane, "agent.event", provider="adapter", event="SessionStart"))
                         self.assertNotIn("error", rpc(pane, "agent.register", name="Test", inputs=[{"id": "in"}], outputs=[{"id": "out"}]))
                     def connect(a, b, **flags):
-                        return rpc(first, "graph.connect", **{"from": f"%{a}", "to": f"%{b}", "from_port": "out", "to_port": "in", **flags})
+                        return rpc(first, "graph.connect", **{"from": f"t{a}", "to": f"t{b}", "from_port": "out", "to_port": "in", **flags})
                     before = rpc(first, "graph.list")["result"]
                     for a, b in ((first, other), (other, first), (second, other)):
                         rejected = connect(a, b)
@@ -59,9 +59,9 @@ class GraphTabBoundaryTests(unittest.TestCase):
                     before = peer.sync()
                     original = {p["id"]: p for p in before["panes"]}
                     # Reject bad targets without partially moving the graph.
-                    self.assertEqual(peer.action("regroup", surface=f"%{second}", tab=999999)["type"], "error")
+                    self.assertEqual(peer.action("regroup", pane=f"t{second}", tab=999999)["type"], "error")
                     self.assertEqual({p["id"]: p["tab"] for p in peer.sync()["panes"]}, {p: v["tab"] for p, v in original.items()})
-                    moved = peer.action("regroup", surface=f"%{second}", tab=other)
+                    moved = peer.action("regroup", pane=f"t{second}", tab=other)
                     self.assertNotEqual(moved["type"], "error", moved)
                     panes = {p["id"]: p for p in peer.sync()["panes"]}
                     for pane in (first, second, third):
@@ -72,7 +72,7 @@ class GraphTabBoundaryTests(unittest.TestCase):
                     self.assertEqual(rpc(first, "graph.list")["result"]["edges"], graph)
                     self.assertIn("error", connect(first, unrelated))
                     # Moving into a new tab carries the same complete component.
-                    new = peer.action("regroup", surface=f"%{third}")
+                    new = peer.action("regroup", pane=f"t{third}")
                     self.assertNotEqual(new["type"], "error", new)
                     panes = {p["id"]: p for p in peer.sync()["panes"]}
                     self.assertEqual(len({panes[p]["tab"] for p in (first, second, third)}), 1)

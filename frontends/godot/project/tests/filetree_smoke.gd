@@ -1,4 +1,5 @@
 extends "../../../../tests/llm-e2e/replay/replay.gd"
+
 const Layout := preload("res://scenes/WorkspaceLayout.gd")
 
 func prefix_key(key: String) -> void:
@@ -21,7 +22,7 @@ func literal_root(view: Control, pane: String, id: int) -> bool:
 func play() -> void:
 	await camera_at_rest()
 	var source: String = host.pane_focus
-	var source_id := int(source.substr(1))
+	var source_id := PaneAddress.id(source)
 	var view: Control = host.workspace_view
 	var group: Dictionary = host.workspace_layout.tab(host.workspace_layout.active)
 	group.tree.tiling = false
@@ -52,7 +53,7 @@ func play() -> void:
 	var filetree_id := -1
 	for id in host.sessions:
 		if id != source_id: filetree_id = id
-	var filetree := "%%%d" % filetree_id
+	var filetree := PaneAddress.key(filetree_id)
 	check(host.pane_focus == filetree, "Filetree header button opens and focuses the connected filetree")
 	check(view._chromium_owners().get(filetree) == source, "Filetree connects to original pane")
 	check(view.pane_rects[filetree].position.x < view.pane_rects[source].position.x, "Filetree opens on the left")
@@ -85,7 +86,7 @@ func play() -> void:
 	var chromium_reply: Dictionary = await host.session_backend.connection.remote_call(filetree_id, "filetree.open_file", {"path": file + ".html"})
 	check(not chromium_reply.has("error"), "HTML opens in Chromium")
 	var chromium_key: String = chromium_reply.get("result", {}).get("pane", "")
-	var chromium_id := int(chromium_key.substr(1))
+	var chromium_id := PaneAddress.id(chromium_key)
 	var deadline := Time.get_ticks_msec() + 20000
 	while (not host.chromiums.has(chromium_id) or host.chromiums[chromium_id].texture == null) and Time.get_ticks_msec() < deadline:
 		await process_frame
@@ -105,7 +106,7 @@ func play() -> void:
 	await prefix_key("tab")
 	await wait_panes(2)
 	check(host.pane_focus == source, "Closing filetree returns focus to original pane")
-	check(host.sessions.has(int(viewer.substr(1))), "Closing filetree preserves its viewer")
+	check(host.sessions.has(PaneAddress.id(viewer)), "Closing filetree preserves its viewer")
 	check(not view._chromium_owners().has(viewer), "Viewer becomes an independent pane")
 	check(host.chromiums.has(chromium_id) and not view._chromium_owners().has(chromium_key), "Chromium remains open and detached")
 	var detached: Dictionary = await chromium.request("chrome-state")

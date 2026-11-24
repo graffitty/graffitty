@@ -51,7 +51,7 @@ to Servers. Closing the last session deliberately does not start another shell.
 
 ```sh
 # Upload and paste the completed path, without Enter.
-gft terminal put --target 'build/%12' --paste screenshot.png
+gft terminal put --target 'build/t12' --paste screenshot.png
 
 # Upload only; print the destination path and byte count as JSON.
 gft terminal put -t 'build/work:1.2' --json screenshot.png

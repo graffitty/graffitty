@@ -1,4 +1,6 @@
 extends SceneTree
+
+const PaneAddress := preload("res://scenes/PaneAddress.gd")
 ## Isolated live-server routing test; test_session_transfer.py owns the server.
 const SessionDrag := preload("res://scenes/session/SessionPanelDrag.gd")
 var failures: Array[String] = []
@@ -45,7 +47,7 @@ func run() -> void:
 	var first: int = source.active_session_id
 	var created: Dictionary = await wrapper.connection.request_action("create", {"kind": "tab"})
 	var tab: int = int(created.created)
-	if not await wait_for(func(): return source.sessions.has(tab) and source.workspace_layout.containing("%%%d" % tab) >= 0):
+	if not await wait_for(func(): return source.sessions.has(tab) and source.workspace_layout.containing(PaneAddress.key(tab)) >= 0):
 		check(false, "new tab is presented")
 		quit(1)
 		return
@@ -79,7 +81,7 @@ func run() -> void:
 	var split: Dictionary = await wrapper.connection.request_action("create", {"kind": "pane", "session": first})
 	var pane: int = int(split.created)
 	check(await wait_for(func(): return source.sessions.has(pane)), "Split pane is presented")
-	var pane_key := "%%%d" % pane
+	var pane_key := PaneAddress.key(pane)
 	var pane_pid: int = source.sessions[pane].term.get_shell_pid()
 	# Exercise routing before commit: the docked panel shares the source's
 	# native window and must not be mistaken for ordinary pane movement.
@@ -165,7 +167,7 @@ func run() -> void:
 	# the hold already took the source view off screen.
 	split = await wrapper.connection.request_action("create", {"kind": "pane", "session": first})
 	var carried: int = int(split.created)
-	var carried_key := "%%%d" % carried
+	var carried_key := PaneAddress.key(carried)
 	check(await wait_for(func(): return source.sessions.has(carried) and source.workspace_view.panes.has(carried_key)), "Second split pane is presented")
 	var carried_pid: int = source.sessions[carried].term.get_shell_pid()
 	source.select_workspace(source.workspace_layout.containing(carried_key), true)

@@ -15,7 +15,7 @@ class Host extends Node:
 	var sessions: Dictionary
 
 class ImageWorld extends World:
-	func _shown_windows() -> Array: return ["%1"]
+	func _shown_windows() -> Array: return ["t1"]
 	func _sheet_size() -> Vector2: return Vector2(800, 600)
 	func _effect_surface_frame(_uv: Vector2) -> Transform3D:
 		return Transform3D(Basis.IDENTITY, Vector3(-4, 3, -10))

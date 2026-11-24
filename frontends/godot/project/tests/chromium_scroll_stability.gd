@@ -1,4 +1,5 @@
 extends "../../../../tests/llm-e2e/replay/replay.gd"
+
 ## Sustained real Mac pane gestures through the shared-GPU Chromium transport.
 var chromium: Node
 
@@ -21,14 +22,14 @@ func play() -> void:
 		html += "<section>Scroll stability row %d: 한글 日本語</section>" % index
 	html += "<div class=fixed>Composited header</div>"
 	check(await evaluate("document.open();document.write(%s);document.close();true" % JSON.stringify(html)) == true, "Fixture installed")
-	host.focus_pane("%%%d" % chromium.session_id)
-	host.workspace_view.toggle_fit_pane("%%%d" % chromium.session_id)
+	host.focus_pane(PaneAddress.key(chromium.session_id))
+	host.workspace_view.toggle_fit_pane(PaneAddress.key(chromium.session_id))
 	await camera_at_rest()
 	deadline = Time.get_ticks_msec() + 10000
 	while not chromium.gpu_active and Time.get_ticks_msec() < deadline:
 		await process_frame
 	if not check(chromium.gpu_active, "Actual Mac native shared-GPU path is active"): return
-	var pane: Control = host.workspace_view.panes["%%%d" % chromium.session_id]
+	var pane: Control = host.workspace_view.panes[PaneAddress.key(chromium.session_id)]
 	var trace: Array = []
 	for cycle in 8:
 		for direction in [1, -1]:

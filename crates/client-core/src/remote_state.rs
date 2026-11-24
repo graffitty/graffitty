@@ -118,16 +118,10 @@ impl Field {
         if matches!(self, Self::Literal | Self::Queues | Self::ByEdge) {
             return text.into();
         }
-        if let Some(rest) = text.strip_prefix('%') {
-            let (number, suffix) = rest
-                .split_once('/')
-                .map(|(n, s)| (n, format!("/{s}")))
-                .unwrap_or((rest, String::new()));
-            if !number.is_empty() && number.bytes().all(|b| b.is_ascii_digit()) {
-                if let Ok(number) = number.parse::<i64>() {
-                    return format!("%{}{suffix}", id(number));
-                }
-            }
+        let (key, suffix) = text.split_once('/').unwrap_or((text, ""));
+        if let Some(surface) = graffitty_protocol::pane_id::parse(key) {
+            let mapped = graffitty_protocol::pane_id::address(id(surface as i64) as u64);
+            return if suffix.is_empty() { mapped } else { format!("{mapped}/{suffix}") };
         }
         if matches!(self, Self::Target | Self::Tab) {
             if let Some(rest) = text.strip_prefix('@') {
@@ -267,15 +261,15 @@ mod tests {
     #[test]
     fn identities_roundtrip_without_remapping_titles_or_pids() {
         let mut ns = Namespace::default();
-        ns.bind(WireId(0), LocalId(70));
+        ns.bind(WireId(7), LocalId(70));
         ns.bind(WireId(8), LocalId(80));
-        let edge = Field::Edge.map("%0/out>%8/in", |n| ns.local(WireId(n)).unwrap().0);
-        assert_eq!(edge, "%70/out>%80/in");
+        let edge = Field::Edge.map("t7/out>t8/in", |n| ns.local(WireId(n)).unwrap().0);
+        assert_eq!(edge, "t70/out>t80/in");
         assert_eq!(
             Field::Edge.map(&edge, |n| ns.wire(LocalId(n)).0),
-            "%0/out>%8/in"
+            "t7/out>t8/in"
         );
-        assert_eq!(Field::Literal.map("%0", |_| 999), "%0");
+        assert_eq!(Field::Literal.map("t0", |_| 999), "t0");
         assert_eq!(Field::Tab.map("@8.1", |_| 80), "@80.1");
         assert_eq!(Field::Node.map("%oops", |_| 999), "%oops");
     }

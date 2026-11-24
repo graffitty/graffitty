@@ -60,7 +60,7 @@ with tempfile.TemporaryDirectory(prefix="gft-finder-e2e-") as temporary:
             # The packaged app's own bundled filetree runtime, found beside tools/gft.
             tree = peer.action("rpc", pane, method="filetree.toggle", params={})
             assert "error" not in tree and "pane" in tree.get("result", {}), tree
-            tree_id = int(tree["result"]["pane"].lstrip("%"))
+            tree_id = int(tree["result"]["pane"].removeprefix("t"))
             topology = peer.sync()
             assert any(p["id"] == tree_id and p["pid"] > 0 for p in topology["panes"]), topology
         finally:

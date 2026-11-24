@@ -1,4 +1,6 @@
 extends Node2D
+
+const PaneAddress := preload("res://scenes/PaneAddress.gd")
 ## Live terminal textures for whole-pane transitions; retained drawing state
 ## for glyph transitions, and copied UI rasterized at projected density.
 const Core := preload("res://scenes/TerminalEffects.gd")
@@ -152,7 +154,7 @@ func build(world: Node) -> void:
 		captures.append(still)
 		panel(still.get_texture(), Rect2(-pane.size * 0.5, pane.size), group)
 		if not world.host.is_terminal_pane(key): continue
-		var pair: Dictionary = world.host.sessions.get(int(key.substr(1)), {})
+		var pair: Dictionary = world.host.sessions.get(PaneAddress.id(key), {})
 		if pair.is_empty(): continue
 		var layout := Vector2(Core.layout_size(pair.vp))
 		var origin: Vector2 = (view.terminal_origin(key) - group.position) / pane.scale

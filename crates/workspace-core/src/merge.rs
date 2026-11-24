@@ -81,14 +81,14 @@ mod tests {
     use super::*;
     use crate::tiling::Window;
     fn layout() -> TabLayout {
-        TabLayout { focused: "%1".into(), windows: vec![Window::new("%1", [0.,0.,100.,80.]), Window::new("%2", [100.,0.,100.,80.])], ..Default::default() }
+        TabLayout { focused: "t1".into(), windows: vec![Window::new("t1", [0.,0.,100.,80.]), Window::new("t2", [100.,0.,100.,80.])], ..Default::default() }
     }
     #[test]
     fn graph_moves_merge_by_id_and_conflicting_moves_are_rejected() {
         use crate::tiling::Reroute;
         let mut before = layout();
         for id in ["a", "b"] { before.graph_visual.reroutes.insert(id.into(), Reroute { position: [0., 0.] }); }
-        before.graph_visual.routes.insert("%1/out>%2/in".into(), vec!["a".into(), "b".into()]);
+        before.graph_visual.routes.insert("t1/out>t2/in".into(), vec!["a".into(), "b".into()]);
         let mut ours = before.clone();
         ours.graph_visual.reroutes.get_mut("a").unwrap().position = [100., 200.];
         let mut theirs = before.clone();
@@ -127,11 +127,11 @@ mod tests {
         let before = layout();
         let mut ours = before.clone(); ours.windows[0].rect[0] = 500.;
         let patch = TabPatch::between(&before, &ours).unwrap();
-        let mut current = before; current.remove("%1");
-        current.windows.push(Window::new("%3", [50.,50.,100.,80.]));
+        let mut current = before; current.remove("t1");
+        current.windows.push(Window::new("t3", [50.,50.,100.,80.]));
         let result = patch.rebase(&current).unwrap();
-        assert!(result.window("%1").is_none());
-        assert!(result.window("%3").is_some());
-        assert_eq!(result.focused, "%2");
+        assert!(result.window("t1").is_none());
+        assert!(result.window("t3").is_some());
+        assert_eq!(result.focused, "t2");
     }
 }

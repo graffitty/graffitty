@@ -19,7 +19,7 @@ func test_all_title_actions_show_resolved_shortcuts_and_reverse_splits() -> void
 	var host := Host.new()
 	var pane := preload("res://scenes/WorkspacePane.gd").new()
 	pane.host = host
-	pane.key = "%42"
+	pane.key = "t42"
 	pane._update_title_menu_hints()
 	for id in range(10):
 		expect("binding:" in pane.title_menu.get_item_text(pane.title_menu.get_item_index(id)), "Every pane-menu action uses its configured shortcut")
@@ -36,7 +36,7 @@ func test_all_title_actions_show_resolved_shortcuts_and_reverse_splits() -> void
 	expect(host.workspace_view.icon_directions.slice(0, 4) == ["left", "right", "up", "down"], "Each split item points toward the side the new pane takes")
 	pane._title_menu_action(8)
 	pane._title_menu_action(9)
-	expect(host.workspace_view.splits == [["h", "%42", true], ["v", "%42", true]], "Left/up split the owning pane before its current position")
+	expect(host.workspace_view.splits == [["h", "t42", true], ["v", "t42", true]], "Left/up split the owning pane before its current position")
 	host.terminal = false
 	pane._update_title_menu_hints()
 	order.clear()

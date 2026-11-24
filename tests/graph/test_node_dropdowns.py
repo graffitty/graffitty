@@ -64,7 +64,7 @@ class DropdownIntegration(unittest.TestCase):
         self.addCleanup(os.close, self.master)
         self.addCleanup(stop, self.process)
         wait(lambda: 'Prompt' in self.drain())
-        self.call(3, 'graph.connect', **{'from': '%3', 'from_port': 'out', 'to': '%2', 'to_port': 'in'})
+        self.call(3, 'graph.connect', **{'from': 't3', 'from_port': 'out', 'to': 't2', 'to_port': 'in'})
         self.send('\x1b[200~a한글z\x1b[201~'.encode())
         wait(lambda: 'a한글z' in self.drain())
         y = next(i for i, line in enumerate(self.screen.display) if 'a한글z' in line)
@@ -139,7 +139,7 @@ class DropdownIntegration(unittest.TestCase):
 
     def test_once_trigger_can_pause_start_and_start_again_after_completion(self):
         self.form('scheduled-trigger')
-        self.call(3, 'graph.connect', **{'from': '%3', 'from_port': 'out', 'to': '%2', 'to_port': 'in'})
+        self.call(3, 'graph.connect', **{'from': 't3', 'from_port': 'out', 'to': 't2', 'to_port': 'in'})
         self.send(b'\t\t\r\x1b[H\r\t\x1b[17~1s')
         wait(lambda: 'Fires once in 1s' in self.drain())
         self.click_text('[ Start ]')
@@ -162,8 +162,8 @@ class DropdownIntegration(unittest.TestCase):
     def test_filter_status_start_pause_retains_queued_input(self):
         self.form('filter')
         self.send(b'\t\ttrue')
-        self.call(1, 'graph.connect', **{'from': '%1', 'from_port': 'result', 'to': '%3', 'to_port': 'in'})
-        self.call(3, 'graph.connect', **{'from': '%3', 'from_port': 'matched', 'to': '%2', 'to_port': 'in'})
+        self.call(1, 'graph.connect', **{'from': 't1', 'from_port': 'result', 'to': 't3', 'to_port': 'in'})
+        self.call(3, 'graph.connect', **{'from': 't3', 'from_port': 'matched', 'to': 't2', 'to_port': 'in'})
         self.click_text('[ Start ]')
         wait(lambda: '[ Pause ]' in self.drain())
         self.click_text('[ Pause ]')

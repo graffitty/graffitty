@@ -79,7 +79,7 @@ fn real_graph_registers_icons_routes_modes_and_preserves_wires_on_metadata_chang
         let edge = source
             .call(
                 "graph.connect",
-                json!({"from":"%1","to":"%2","from_port":port,"to_port":"in"}),
+                json!({"from":"t1","to":"t2","from_port":port,"to_port":"in"}),
             )
             .unwrap();
         assert_eq!(
@@ -91,9 +91,9 @@ fn real_graph_registers_icons_routes_modes_and_preserves_wires_on_metadata_chang
             (Some(read), Some(send), Some(completed))
         );
     }
-    assert!(graph.borrow().can_read("%1", "%2"));
-    assert_eq!(graph.borrow().nodes["%1"]["transport"], "inbox");
-    assert!(graph.borrow().nodes["%1"]["heartbeat_at"].is_number());
+    assert!(graph.borrow().can_read("t1", "t2"));
+    assert_eq!(graph.borrow().nodes["t1"]["transport"], "inbox");
+    assert!(graph.borrow().nodes["t1"]["heartbeat_at"].is_number());
     source
         .emit(
             &Output::text("send", "hello").with_payload(json!({"ok":true})),
@@ -124,7 +124,7 @@ fn real_graph_registers_icons_routes_modes_and_preserves_wires_on_metadata_chang
         graph.borrow().snapshot()["edges"].as_array().unwrap().len(),
         1
     );
-    assert!(!graph.borrow().can_read("%1", "%2"));
+    assert!(!graph.borrow().can_read("t1", "t2"));
     drop(source);
-    assert_eq!(graph.borrow().nodes["%1"]["status"], "offline");
+    assert_eq!(graph.borrow().nodes["t1"]["status"], "offline");
 }

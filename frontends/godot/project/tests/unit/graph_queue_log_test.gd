@@ -13,7 +13,7 @@ func test_inspector_coalesces_changes_and_does_not_poll_hidden_or_unrelated_queu
 	var inspector := ObservedInspector.new()
 	inspector._ready()
 	inspector._bind_graph(graph)
-	inspector.edge_key = "%1>%2"
+	inspector.edge_key = "t1>t2"
 	inspector.visible = true
 	inspector.refresh()
 	var count := inspector.refresh_count
@@ -24,7 +24,7 @@ func test_inspector_coalesces_changes_and_does_not_poll_hidden_or_unrelated_queu
 	expect(inspector.refresh_count == count + 1 and inspector.rows[0].status == "sent", "A coalesced refresh shows the latest delivery state")
 	count = inspector.refresh_count
 	var other := event("b")
-	other.target = "%3"
+	other.target = "t3"
 	record(graph.queue_log, other, "queued", true)
 	graph.changed.emit()
 	inspector._flush_refresh()
@@ -44,26 +44,26 @@ func test_inspector_coalesces_changes_and_does_not_poll_hidden_or_unrelated_queu
 	graph.free()
 
 func event(id: String) -> Dictionary:
-	return {"event_id":id, "source":"%1", "target":"%2", "kind":"test", "created":1.0, "text":"private", "payload":{"secret":"private"}, "sessions":[{"path":"/private"}]}
+	return {"event_id":id, "source":"t1", "target":"t2", "kind":"test", "created":1.0, "text":"private", "payload":{"secret":"private"}, "sessions":[{"path":"/private"}]}
 
 func test_connection_inspector_updates_in_place_and_excludes_other_wires() -> void:
 	var g := Graph.new()
-	g.nodes = {"%1":{"provider":"claude"}, "%2":{"provider":"codex"}, "%3":{"provider":"codex"}}
-	g.connect_nodes({"from":"%1", "to":"%2", "send":true})
-	g.connect_nodes({"from":"%1", "to":"%3", "send":true})
-	var sent: Dictionary = g.enqueue("%1", "%2", "private", "message")
-	g.enqueue("%1", "%3", "other private", "message")
-	var key := g.event_edge(g.queues["%2"][0])
+	g.nodes = {"t1":{"provider":"claude"}, "t2":{"provider":"codex"}, "t3":{"provider":"codex"}}
+	g.connect_nodes({"from":"t1", "to":"t2", "send":true})
+	g.connect_nodes({"from":"t1", "to":"t3", "send":true})
+	var sent: Dictionary = g.enqueue("t1", "t2", "private", "message")
+	g.enqueue("t1", "t3", "other private", "message")
+	var key := g.event_edge(g.queues["t2"][0])
 	var inspector := preload("res://scenes/GraphQueueInspector.gd").new()
 	inspector._ready()
 	inspector.graph = g
 	inspector.edge_key = key
 	inspector.refresh(true)
-	expect(inspector.rows.size() == 1 and inspector.summary.text.contains("pane %1"), "Wire inspector shows only its connection with public pane names")
+	expect(inspector.rows.size() == 1 and inspector.summary.text.contains("pane t1"), "Wire inspector shows only its connection with public pane names")
 	expect(inspector.events.get_root().get_first_child().get_text(0).begins_with("[ ]"), "Pending delivery starts unchecked")
-	expect(g.queues["%2"].size() == 1, "Opening the inspector does not consume input")
+	expect(g.queues["t2"].size() == 1, "Opening the inspector does not consume input")
 	var item_id := inspector.events.get_root().get_first_child().get_instance_id()
-	g.ack("%2", sent.result.event_id, "delivered")
+	g.ack("t2", sent.result.event_id, "delivered")
 	inspector.refresh()
 	expect(inspector.events.get_root().get_first_child().get_instance_id() == item_id, "Delivery status updates preserve the existing TreeItem")
 	expect(inspector.rows.size() == 1 and inspector.events.get_root().get_first_child().get_text(0).begins_with("[x]"), "The same row becomes sent")

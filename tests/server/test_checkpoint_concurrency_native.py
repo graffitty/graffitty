@@ -25,7 +25,7 @@ def main():
         return {'operation':command[0],'exit':r.returncode,'stdout':r.stdout,'stderr':r.stderr}
     documents=[]
     for i in range(24):
-        d={'version':1,'windows':[{'active':1,'position':[0,0],'size':[800,600],'tabs':[{'id':1,'focused':'%1','tree':{'pane':'%1'}}],'panes':[{'id':1,'pid':os.getpid(),'cwd':str(out),'title':'writer-'+str(i)}],'chromiums':[]}]}
+        d={'version':1,'windows':[{'active':1,'position':[0,0],'size':[800,600],'tabs':[{'id':1,'focused':'t1','tree':{'pane':'t1'}}],'panes':[{'id':1,'pid':os.getpid(),'cwd':str(out),'title':'writer-'+str(i)}],'chromiums':[]}]}
         path=out/('input-'+str(i)+'.json');path.write_text(json.dumps(d));documents.append(path)
     baseline=call('save','--input',str(documents[0]));assert baseline['exit']==0,baseline
     done=threading.Event();reads=[];restores=[]

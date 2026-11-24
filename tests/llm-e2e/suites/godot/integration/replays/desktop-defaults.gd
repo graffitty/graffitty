@@ -1,4 +1,5 @@
 extends "../../tabs-and-panes/replays/remote-access.gd"
+
 ## Private profiles, committed IndexedDB and the real Sessions controls.
 var http := TCPServer.new()
 var clients: Array[StreamPeerTCP] = []
@@ -81,7 +82,7 @@ func play() -> void:
 	node = await browser(null)
 	if node == null: return
 	check(node.profile_directory == default_path and await value(node) == marker, "Reopened default profile retains exact committed data after alternate profiles")
-	host.workspace_view.toggle_fit_pane("%%%d" % node.session_id)
+	host.workspace_view.toggle_fit_pane(PaneAddress.key(node.session_id))
 	await camera_at_rest()
 	RenderingServer.force_draw(false)
 	root.get_texture().get_image().save_png(evidence.path_join("persistent-profile-reopened.png"))

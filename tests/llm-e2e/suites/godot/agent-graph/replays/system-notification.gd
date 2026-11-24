@@ -1,5 +1,6 @@
 extends "../../../../replay/replay.gd"
 
+
 # Only the OS banner is substituted. Actual shell bytes, terminal OSC parsing,
 # pane ownership, asynchronous pipe response, and click navigation are exercised.
 class Desktop extends "res://scenes/SystemNotifications.gd":
@@ -14,7 +15,7 @@ func emit_osc(id: int, message: String) -> void:
 
 func add_pane(beside: int) -> int:
 	var existing: Array = host.sessions.keys()
-	host.create_terminal_window("%%%d" % beside)
+	host.create_terminal_window(PaneAddress.key(beside))
 	var deadline := Time.get_ticks_msec() + 10000
 	while host.sessions.size() == existing.size() and Time.get_ticks_msec() < deadline:
 		await process_frame
@@ -48,7 +49,7 @@ func play() -> void:
 	application.system_notifications = desktop
 	old.queue_free()
 	if FileAccess.file_exists(desktop.request_path): DirAccess.remove_absolute(desktop.request_path)
-	host.focus_pane("%%%d" % notifier)
+	host.focus_pane(PaneAddress.key(notifier))
 	await camera_at_rest()
 	await say("OSC 9 from a background terminal opens and fits that terminal")
 	emit_osc(source, "\u001b]9;OSC9 background test\u0007")
@@ -57,7 +58,7 @@ func play() -> void:
 	var request: Dictionary = JSON.parse_string(FileAccess.get_file_as_string(desktop.request_path))
 	check("OSC9 background test" in str(request), "Native helper receives the terminal's notification text")
 	var view: Control = host.workspace_view
-	var target: Dictionary = view._inspection_target("%%%d" % source)
+	var target: Dictionary = view._inspection_target(PaneAddress.key(source))
 	check(view.navigation_center.distance_to(target.center) < 1 and absf(view.navigation_zoom - target.zoom) < 0.01, "Click uses Cmd+Enter fit framing")
 	await application.agent_api.inspect_terminal(source)
 	await camera_at_rest()
@@ -75,16 +76,16 @@ func play() -> void:
 	var cli := "& $env:GRAFFITTY_BIN" if OS.get_name() == "Windows" else '"$GRAFFITTY_BIN"'
 	host.sessions[notifier].term.send_text("%s node system-notification --edit --config '%s'\r" % [cli, config_path])
 	var until := Time.get_ticks_msec() + 10000
-	while application.agent_api.graph.nodes.get("%%%d" % notifier, {}).get("manifest", {}).get("name", "") != "System Notification" and Time.get_ticks_msec() < until:
+	while application.agent_api.graph.nodes.get(PaneAddress.key(notifier), {}).get("manifest", {}).get("name", "") != "System Notification" and Time.get_ticks_msec() < until:
 		await hold(0.1)
 	await application.agent_api.dispatch(source, "agent.event", {"kind":"custom", "event":"SessionStart", "session_id":"notification-replay-source"})
 	await application.agent_api.dispatch(source, "agent.register", {"name":"Source", "inputs":[], "outputs":[{"id":"send"}]})
 	await application.agent_api.dispatch(relay, "agent.event", {"kind":"custom", "event":"SessionStart", "session_id":"notification-replay-relay"})
 	await application.agent_api.dispatch(relay, "agent.register", {"name":"Relay", "inputs":[{"id":"in"}], "outputs":[{"id":"out"}]})
-	await application.agent_api.dispatch(source, "graph.connect", {"from":"%%%d" % source,"from_port":"send","to":"%%%d" % relay,"to_port":"in"})
-	var linked: Dictionary = await application.agent_api.dispatch(relay, "graph.connect", {"from":"%%%d" % relay,"from_port":"out","to":"%%%d" % notifier,"to_port":"notify"})
+	await application.agent_api.dispatch(source, "graph.connect", {"from":PaneAddress.key(source),"from_port":"send","to":PaneAddress.key(relay),"to_port":"in"})
+	var linked: Dictionary = await application.agent_api.dispatch(relay, "graph.connect", {"from":PaneAddress.key(relay),"from_port":"out","to":PaneAddress.key(notifier),"to_port":"notify"})
 	if not check(linked.has("result"), "System notification node registers its Notify input"):
-		host.focus_pane("%%%d" % notifier)
+		host.focus_pane(PaneAddress.key(notifier))
 		await hold(.3)
 		print(linked)
 		print(host.sessions[notifier].term.get_text(false))
@@ -95,7 +96,7 @@ func play() -> void:
 	if not check(forwarded.has("result"), "Relay forwards the original event"):
 		print(forwarded)
 		return
-	host.focus_pane("%%%d" % notifier)
+	host.focus_pane(PaneAddress.key(notifier))
 	await hold(0.4)
 	check(not FileAccess.file_exists(desktop.request_path), "Start-paused form leaves queued notifications unsent")
 	host.sessions[notifier].term.send_text("\u0013")
@@ -109,11 +110,11 @@ func play() -> void:
 		return
 	check(host.active_session_id == source, "Node notification follows original sender through the relay")
 	request = JSON.parse_string(FileAccess.get_file_as_string(desktop.request_path))
-	check(request.get("focus_targets") == ["%%%d" % source, "%%%d" % relay, "%%%d" % notifier], "Focus fallback retains original, previous, and receiver panes")
+	check(request.get("focus_targets") == [PaneAddress.key(source), PaneAddress.key(relay), PaneAddress.key(notifier)], "Focus fallback retains original, previous, and receiver panes")
 	check("Graph node OSC99 test" in str(request), "Graph event becomes a native notification through OSC 99")
 	# The click selected the originating pane and unsubscribed this background
 	# mirror. Reopen the notifier before inspecting its current Ratatui frame.
-	host.focus_pane("%%%d" % notifier)
+	host.focus_pane(PaneAddress.key(notifier))
 	var log_deadline := Time.get_ticks_msec() + 3000
 	while not "Graph node OSC99 test" in str(host.sessions[notifier].term.get_text(false).get("text", "")) and Time.get_ticks_msec() < log_deadline:
 		await process_frame
@@ -134,7 +135,7 @@ func play() -> void:
 	host.sessions[notifier].term.send_text("\u0003")
 	await hold(0.3)
 	DirAccess.remove_absolute(desktop.request_path)
-	host.focus_pane("%%%d" % notifier)
+	host.focus_pane(PaneAddress.key(notifier))
 	await say("OSC 99 reports actions and closure without stealing focus")
 	var script_path := OS.get_environment("XDG_STATE_HOME").path_join("osc99-%d.py" % OS.get_process_id())
 	var response_path := script_path + ".json"

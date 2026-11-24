@@ -659,7 +659,7 @@ mod tests {
     use super::*;
     #[test]
     fn chromium_title_request_reaches_transport_validation() {
-        let response = call_context("chromium.set_title", json!({"chromium":"%7","title":"Pinned"}), Duration::from_millis(10), Some(("/nonexistent/graffitty/api.sock".into(),"token".into())));
+        let response = call_context("chromium.set_title", json!({"chromium":"c7","title":"Pinned"}), Duration::from_millis(10), Some(("/nonexistent/graffitty/api.sock".into(),"token".into())));
         assert_ne!(response["error"]["code"], "invalid_method");
         assert!(response.get("error").is_some());
     }
@@ -667,7 +667,7 @@ mod tests {
     fn oversized_request_explains_the_socket_limit_before_connecting() {
         let value = call_context(
             "graph.send",
-            json!({"to": "%2", "text": "x".repeat(MAX_REQUEST)}),
+            json!({"to": "t2", "text": "x".repeat(MAX_REQUEST)}),
             Duration::from_secs(1),
             Some(("/nonexistent/graffitty/api.sock".into(), "token".into())),
         );

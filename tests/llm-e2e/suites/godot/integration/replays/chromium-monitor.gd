@@ -1,5 +1,6 @@
 extends "remote-window-return.gd"
 
+
 func play() -> void:
 	directory=OS.get_environment("GRAFFITTY_INPUT_EVIDENCE")
 	terminal=host.active_terminal()
@@ -21,7 +22,7 @@ func play() -> void:
 		return false,"Presented browser pixels contain updated document",15.0):return
 	var source: Node=host.resource_monitor_for(chromium.session_id)
 	if not await until(func():return source.snapshot().get("status")=="running" and source.snapshot().get("memory_current",0)>0,"Browser supplies measured running resource sample",20.0):return
-	host.focus_pane("%%%d" % chromium.session_id)
+	host.focus_pane(PaneAddress.key(chromium.session_id))
 	host.pane_status_visible=true
 	host.workspace_view.refresh()
 	await hold(.3)
@@ -34,14 +35,14 @@ func play() -> void:
 	FileAccess.open(directory.path_join("chromium-sample.json"),FileAccess.WRITE).store_string(JSON.stringify(data))
 	host.pane_status_visible=false
 	host.workspace_view.refresh()
-	host.focus_pane("%%%d" % original)
+	host.focus_pane(PaneAddress.key(original))
 	await camera_at_rest()
 	var python:=OS.get_environment("GRAFFITTY_INPUT_PYTHON")
 	var probe:=ProjectSettings.globalize_path("res://../../../tests/fixtures/windows_input_receipt.py")
 	FileAccess.open(directory.path_join("quiet-phases"),FileAccess.WRITE).store_string("")
 	await type("& '%s' -u '%s' '%s'{enter}" % [python.replace("'","''"),probe.replace("'","''"),directory.replace("'","''")])
 	if not await wait_file(directory.path_join("ready")):return
-	host.focus_pane("%%%d" % chromium.session_id)
+	host.focus_pane(PaneAddress.key(chromium.session_id))
 	root.files_dropped.emit(PackedStringArray([directory.path_join("BROWSER_DROP_MUST_NOT_TYPE.txt")]))
 	await hold(.3)
 	FileAccess.open(directory.path_join("finish"),FileAccess.WRITE).store_string("")

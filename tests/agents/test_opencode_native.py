@@ -110,7 +110,7 @@ class NativeOpenCode(unittest.TestCase):
                 delta, finish = {"content": "Native OpenCode integration works."}, "stop"
                 if has_tool and not used_tool:
                     delta = {"tool_calls": [{"index": 0, "id": "call_graph", "type": "function", "function": {
-                        "name": "graffitty", "arguments": json.dumps({"method": "graph.send", "params": {"to": "%2", "text": "Native tool reply"}})}}]}
+                        "name": "graffitty", "arguments": json.dumps({"method": "graph.send", "params": {"to": "t2", "text": "Native tool reply"}})}}]}
                     finish = "tool_calls"
                 self.send_response(200)
                 self.send_header("Content-Type", "text/event-stream")
@@ -174,7 +174,7 @@ class NativeOpenCode(unittest.TestCase):
         self.wait(lambda: fixture.lifecycle("SessionStart"), "real TUI plugin registration")
         self.assertEqual(fixture.lifecycle("SessionStart")[0]["provider"], "opencode")
         os.write(master, b"UNSENT_DRAFT")
-        event = {"event_id": "native-e2e", "source": "%2", "target": "%1", "run_id": "native-run", "text": "Check the integration", "sessions": []}
+        event = {"event_id": "native-e2e", "source": "t2", "target": "t1", "run_id": "native-run", "text": "Check the integration", "sessions": []}
         fixture.queue = [event]
         fixture.publish()
         self.wait(entered.is_set, "native model request")

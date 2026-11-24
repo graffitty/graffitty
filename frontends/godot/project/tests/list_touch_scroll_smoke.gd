@@ -1,4 +1,6 @@
 extends "res://tests/mods_fixture.gd"
+
+const PaneAddress := preload("res://scenes/PaneAddress.gd")
 ## A finger on a panel list scrolls it; a tap without movement activates the row.
 ## Touch goes through the viewport, as the sidebar docking does.
 
@@ -27,7 +29,7 @@ func run() -> void:
 	Input.emulate_mouse_from_touch = true
 	var rows := []
 	# Long enough that a flick glides mid-list rather than into its end.
-	for i in 120: rows.append({"id": "test-%d" % i, "key": "%%%d" % i, "title": "Agent %d" % i, "provider": "pi", "status": "idle", "section": "Idle", "at": 0, "focused": false, "pinned": false, "remote": "", "session": ""})
+	for i in 120: rows.append({"id": "test-%d" % i, "key": PaneAddress.key(i), "title": "Agent %d" % i, "provider": "pi", "status": "idle", "section": "Idle", "at": 0, "focused": false, "pinned": false, "remote": "", "session": ""})
 	app.agents.rows = rows
 	app.agents.changed.emit()
 	var dialog: Window = PanelWindow.open(host, "agents")

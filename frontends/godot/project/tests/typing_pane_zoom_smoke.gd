@@ -1,4 +1,5 @@
 extends "../../../../tests/llm-e2e/suites/godot/tabs-and-panes/replays/main-area-tiling.gd"
+
 const Flat2DWorld := preload("res://scenes/Flat2DWorld.gd")
 ## Real typing, retained terminal textures, layout, physics and pointer routing.
 
@@ -23,14 +24,14 @@ func play() -> void:
 	await hold(0.2)
 	var before: Dictionary = view.pane_rects.duplicate()
 	var pane: Control = view.panes[third]
-	var term: Control = host.sessions[int(third.substr(1))].term
+	var term: Control = host.sessions[PaneAddress.id(third)].term
 	var grid: Vector2i = term.get_grid_size()
 	var camera_zoom: float = world.fx_cam_zoom
 	await type("reading")
 	await hold(0.45)
 	var visual: Rect2 = pane.get_transform() * Rect2(Vector2.ZERO, pane.size)
 	check(pane.scale.x > 1.095, "Actual keyboard typing enlarges only the focused pane by ten percent")
-	var viewport: SubViewport = host.sessions[int(third.substr(1))].vp
+	var viewport: SubViewport = host.sessions[PaneAddress.id(third)].vp
 	var density := ceilf(view.canvas_scale() * pane.scale.x * 2.0) / 2.0
 	check(viewport.size == Vector2i(pane._layout_region.size * density),
 		"The enlarged pane rerasterizes at its own half-step density")
