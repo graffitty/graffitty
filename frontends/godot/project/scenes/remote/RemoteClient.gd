@@ -1,5 +1,6 @@
 extends Node
 
+const SharedSessionPeer := preload("res://scenes/session/SharedSessionPeer.gd")
 const PaneAddress := preload("res://scenes/PaneAddress.gd")
 ## A remote connection supplies sessions to the ordinary Graffitty host.
 const Authentication := preload("res://scenes/remote/ClientAuthentication.gd")
@@ -1120,17 +1121,29 @@ func _paste_attachment(id: int, terminal: Node, attachment: Dictionary) -> void:
 	var peer = transport.socket
 	var workspace: String = transport.workspace
 	var upload := TerminalFileUpload.new()
-	if failure.is_empty(): failure = upload.start(str(attachment.name), attachment.data)
-	while failure.is_empty():
-		if not is_instance_valid(transport) or not transport.connected or transport.socket != peer or transport.workspace != workspace or not is_instance_valid(terminal) or not is_instance_valid(host) or not host.sessions.has(id) or host.sessions[id].term != terminal or (federated and connection.owners.get(id) != transport):
-			failure = "Attachment destination disconnected or changed"
-			break
-		var params: Dictionary = upload.next_chunk()
-		if params.is_empty(): break
-		var reply: Dictionary = await transport.request_action("rpc", {"session": id, "method": "terminal.put", "params": params}, 30000)
-		var result: Dictionary = upload.accept(reply)
-		failure = result.get("error", "")
-		if result.get("done", false): break
+	var current := func() -> bool:
+		return is_instance_valid(transport) and transport.connected and transport.socket == peer and transport.workspace == workspace and is_instance_valid(terminal) and is_instance_valid(host) and host.sessions.has(id) and host.sessions[id].term == terminal and (not federated or connection.owners.get(id) == transport)
+	if failure.is_empty() and peer is SharedSessionPeer:
+		var destination: Dictionary = await transport.request_action("local_attachment", {"session": id, "name": attachment.name})
+		if destination.get("type") != "ack" or not current.call():
+			failure = destination.get("message", "Attachment destination changed")
+		else:
+			failure = upload.write_local(destination.path, attachment.data)
+			if failure.is_empty():
+				var pasted: Dictionary = await transport.request_action("paste", {"session": id, "text": destination.text})
+				if pasted.get("type") != "ack": failure = pasted.get("message", "Attachment paste failed")
+	else:
+		if failure.is_empty(): failure = upload.start(str(attachment.name), attachment.data)
+		while failure.is_empty():
+			if not current.call():
+				failure = "Attachment destination disconnected or changed"
+				break
+			var params: Dictionary = upload.next_chunk()
+			if params.is_empty(): break
+			var reply: Dictionary = await transport.request_action("rpc", {"session": id, "method": "terminal.put", "params": params}, 30000)
+			var result: Dictionary = upload.accept(reply)
+			failure = result.get("error", "")
+			if result.get("done", false): break
 	if is_instance_valid(terminal): terminal.file_paste_finished(failure.is_empty())
 	if not failure.is_empty():
 		get_node("/root/TerminalApplication").notifications.post(tr("Paste"), tr("Could not paste image"), host, "error", 8.0, "", {"title": "Paste", "body": "Could not paste image"})

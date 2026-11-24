@@ -90,6 +90,18 @@ impl Store {
     }
 }
 
+/// Reserve a private destination on the shared filesystem of a local frontend.
+pub fn local_destination(root: &Path, pane: u64, name: &str) -> Result<PathBuf, Error> {
+    if name.is_empty() || name.len() > 255 || name.chars().any(char::is_control) {
+        return Err(api::error("invalid_params", "Invalid attachment name"));
+    }
+    let parent = root.join(pane.to_string());
+    private_directory(&parent)?;
+    let directory = parent.join(uuid::Uuid::new_v4().to_string());
+    fs::create_dir(&directory)?;
+    Ok(directory.join(clean(name)))
+}
+
 fn private_directory(path: &Path) -> Result<(), Error> {
     fs::create_dir_all(path)?;
     #[cfg(unix)] {

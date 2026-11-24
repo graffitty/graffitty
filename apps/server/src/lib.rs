@@ -1673,6 +1673,12 @@ impl Server {
                     let theme = serde_json::from_value::<graffitty_protocol::terminal_theme::Theme>(value["theme"].clone())?;
                     session.set_terminal_theme(theme)?;
                 }
+                "local_attachment" => {
+                    if !c.socket.is_local() || session.exited { return Err("A live local terminal is required".into()); }
+                    let name = value["name"].as_str().ok_or("Expected attachment name")?;
+                    let path = file_transfer::local_destination(&self.owner_runtime.join("files"), id, name)?;
+                    return Ok(json!({"path":path,"text":file_transfer::quoted_path(&path.to_string_lossy())}));
+                }
                 "clipboard_reply" => {
                     use base64::Engine as _;
                     if !c.clipboard_events || !c.subscribed.contains(&id) { return Err("Clipboard frontend is not subscribed".into()); }

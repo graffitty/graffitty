@@ -342,7 +342,9 @@ impl Graph {
         if replaced {
             node.as_object_mut().unwrap().remove("integrated");
         }
-        if node["integrated"] == true && found.get("status") != Some(&json!("offline")) {
+        let claude_blocked = !replaced && node["provider"] == "claude" && node["status_source"] == "program"
+            && node["program_status"]["app"] == "claude-code" && node["program_status"]["state"] == "blocked";
+        if (node["integrated"] == true || claude_blocked) && found.get("status") != Some(&json!("offline")) {
             found.remove("status");
         }
         // Keep the status from lifecycle events or OSC 7501 when discovery only
@@ -392,7 +394,10 @@ impl Graph {
             Some(status) => node["program_status"] = status.clone(),
             None => { node.as_object_mut().unwrap().remove("program_status"); }
         }
-        if !matches!(node["status"].as_str(), Some("unintegrated" | "unknown")) && node["status_source"] != "program" {
+        // Claude reports authentication failures at its prompt even when no stop hook arrives.
+        let claude_blocked = node["provider"] == "claude" && node["status"] == "busy"
+            && node["program_status"]["app"] == "claude-code" && node["program_status"]["state"] == "blocked";
+        if !claude_blocked && !matches!(node["status"].as_str(), Some("unintegrated" | "unknown")) && node["status_source"] != "program" {
             if *node != previous { self.notification_revision = self.notification_revision.wrapping_add(1); }
             return;
         }

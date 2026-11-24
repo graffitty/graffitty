@@ -926,6 +926,20 @@ fn osc_7501_status_drives_nodes_without_hooks_but_never_overrides_hooks() {
 }
 
 #[test]
+fn claude_blocked_prompt_clears_busy_until_the_next_turn() {
+    let mut graph = Graph::default();
+    graph.add(1, "Agent".into());
+    let start = json!({"provider":"claude","event":"UserPromptSubmit","pid":7,"session_id":"fixture","integrated":true});
+    graph.dispatch(1, "agent.event", &start).unwrap();
+    graph.observe_program_status(1, Some(&json!({"state":"blocked","app":"claude-code","msg":"Login expired"})));
+    graph.observe_agent(1, &json!({"provider":"claude","pid":7,"session_id":"fixture","status":"busy"}));
+    assert_eq!(graph.nodes["t1"]["status"], "waiting");
+    assert_eq!(graph.nodes["t1"]["attention"]["kind"], "waiting");
+    graph.dispatch(1, "agent.event", &start).unwrap();
+    assert_eq!(graph.nodes["t1"]["status"], "busy");
+}
+
+#[test]
 fn discovery_unknown_never_replaces_lifecycle_status_after_a_restart() {
     // A restarted server rediscovers a running pi pane as a plain process.
     let mut g = Graph::default();
