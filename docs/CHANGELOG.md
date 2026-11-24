@@ -6,7 +6,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [v0.0.5] - 2026-11-24
 ### :bug: Bug Fixes
-- **agents**: keep server and session captions above row highlights ([#6](https://github.com/graffitty/graffitty/pull/6)).
+- fix remote access settings, mobile workspace navigation, text selection and agent captions ([#6](https://github.com/graffitty/graffitty/pull/6)).
+- **chromium**: send virtual-key codes for punctuation keys ([#5](https://github.com/graffitty/graffitty/pull/5)).
 
 ## [v0.0.4] - 2026-11-24
 ### :bug: Bug Fixes
