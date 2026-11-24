@@ -1651,20 +1651,13 @@ func _workspace_menu_entries() -> Array[Dictionary]:
 		"checked": func(h): return h.application.agents.sounds_enabled(),
 	})
 	if not preload("res://scenes/input/InteractionProfile.gd").touch_controls():
-		entries.append_array([
-			{
-				"label": "Sessions::Remote Access",
-				"action": func(h): h.application.set_remote_access(not h.application.remote_access_enabled()),
-				"checked": func(h): return h.application.remote_access_enabled(),
-			},
-			{
-				"label": "Sessions::Remote Access Settings…",
-				"action": func(h):
-					var settings := preload("res://scenes/remote/RemoteAccessSettings.gd").new()
-					settings.application = h.application
-					h.add_child(settings),
-			},
-		])
+		entries.append({
+			"label": "Sessions::Remote Access Settings…",
+			"action": func(h):
+				var settings := preload("res://scenes/remote/RemoteAccessSettings.gd").new()
+				settings.application = h.application
+				h.add_child(settings),
+		})
 	else:
 		for option in [["One Finger", 1], ["Three Fingers", 3]]:
 			var count: int = option[1]

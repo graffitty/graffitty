@@ -4,7 +4,9 @@ Configure these on the computer running your sessions.
 
 ## Listen on the right network
 
-Edit `~/.config/graffitty/server.toml`:
+Open **Sessions → Remote Access Settings…** on the host. Choose **Enable remote access**, enter the **Listen IP address** and **Listen port**, then select **Save**. The running server applies the changes immediately and saves them for its next launch. Open terminals keep running.
+
+You can also configure startup in `~/.config/graffitty/server.toml`.
 
 ```toml
 [remote]
@@ -15,9 +17,9 @@ port = 7183
 
 - `127.0.0.1` accepts local connections and SSH tunnels only.
 - For Tailscale, run `tailscale ip -4` and use that computer's address.
-- `enabled = true` starts sharing automatically; otherwise use the menu toggle.
+- `enabled = true` starts sharing automatically.
 
-Apply edits with a [server restart](../customize/server-configuration.md#reload-server-configuration).
+Apply direct file edits with a [server restart](../customize/server-configuration.md#reload-server-configuration).
 An unavailable address prevents sharing. Update the setting if its Tailscale address changes.
 
 ## Enter a server address

@@ -38,13 +38,13 @@ fn protocol<T, E>(r: std::result::Result<T, E>) -> Result<T> {
     r.map_err(|_| "Authentication failed".into())
 }
 
-#[derive(Serialize, Deserialize, Clone)]
+#[derive(Serialize, Deserialize, Clone, PartialEq, Eq)]
 #[serde(deny_unknown_fields)]
 pub struct Record {
     setup: String,
     verifier: String,
 }
-#[derive(Serialize, Deserialize, Clone)]
+#[derive(Serialize, Deserialize, Clone, PartialEq, Eq)]
 #[serde(deny_unknown_fields)]
 pub struct Config {
     #[serde(default = "default_temporary_password_length")]
@@ -91,22 +91,26 @@ impl Config {
         };
         let config: Self =
             serde_json::from_slice(&bytes).map_err(|_| "Invalid remote authentication settings")?;
-        if ![6, 8, 10].contains(&config.temporary_password_length) {
+        config.validate()?;
+        Ok(config)
+    }
+    pub fn validate(&self) -> Result<()> {
+        if ![6, 8, 10].contains(&self.temporary_password_length) {
             return Err("Temporary password length must be 6, 8, or 10".into());
         }
-        if config.version != 1 {
+        if self.version != 1 {
             return Err("Unsupported authentication settings version".into());
         }
-        if let Some(r) = &config.password {
+        if let Some(r) = &self.password {
             r.validate()?;
         }
-        if config.telegram_credential.as_ref().is_some_and(|p| !graffitty_secrets::valid_name(p)) {
+        if self.telegram_credential.as_ref().is_some_and(|p| !graffitty_secrets::valid_name(p)) {
             return Err("Invalid Telegram credential name".into());
         }
-        if config.telegram_chat_id.as_ref().is_some_and(|id| id.parse::<i64>().is_err()) {
+        if self.telegram_chat_id.as_ref().is_some_and(|id| id.parse::<i64>().is_err()) {
             return Err("Enter a numeric Telegram chat ID".into());
         }
-        Ok(config)
+        Ok(())
     }
     pub fn save(&self, path: &Path) -> Result<()> {
         use std::io::Write;

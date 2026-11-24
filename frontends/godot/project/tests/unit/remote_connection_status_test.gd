@@ -437,9 +437,41 @@ func test_discovered_server_does_not_receive_scene_requests_before_attachment() 
 	connection.free()
 
 
+class OwnerBackend extends RefCounted:
+	var connection: Node
+
+class OwnerHost extends Node:
+	var session_backend := OwnerBackend.new()
+
+class OwnerApp extends Node:
+	var hosts := []
+
+
+func test_remote_settings_rebinds_to_a_connected_local_owner() -> void:
+	var control := preload("res://scenes/remote/RemoteAccessControl.gd").new()
+	var app := OwnerApp.new()
+	var stale := OwnerHost.new()
+	var fresh := OwnerHost.new()
+	for host in [stale,fresh]:
+		host.session_backend.connection = Connection.new()
+		host.session_backend.connection.url = "shared://local"
+	app.hosts = [stale]
+	expect(not control.bind(app), "Disconnected local host supplies no writable settings")
+	app.hosts.append(fresh)
+	fresh.session_backend.connection.connected = true
+	expect(control.bind(app) and control.connection == fresh.session_backend.connection, "A later local connection can open host settings")
+	fresh.session_backend.connection.connected = false
+	control.auth_path = "/unused/path"
+	expect(not control.bind(app) and control.connection == null and control.auth_path.is_empty(), "Losing the selected owner clears its cached settings path")
+	for host in [stale,fresh]:
+		host.session_backend.connection.free()
+		host.free()
+	control.free()
+	app.free()
+
 func test_remote_access_that_could_not_start_names_who_holds_the_address() -> void:
 	var control: Node = preload("res://scenes/remote/RemoteAccessControl.gd").new()
-	var base := {"auth_path": "/a", "connection_file": "/c", "remote": null}
+	var base := {"auth_path": "/a", "connection_file": "/c", "remote": null, "bind_address":"127.0.0.1", "port":7183}
 	control._install_settings(base)
 	expect(control.unavailable_text().is_empty(), "A server sharing nothing by choice reports no failure")
 	control._install_settings(base.merged({"remote_error": {"address": "127.0.0.1:7183", "holder": "program", "name": "nginx", "pid": 7, "message": "m"}}))

@@ -5,6 +5,9 @@ var password: LineEdit = SecretInput.new()
 var confirm: LineEdit = SecretInput.new()
 const TEMPORARY := 0
 const MANUAL_ONLY := 1
+var sharing: CheckBox
+var listen_ip: LineEdit
+var listen_port: SpinBox
 var password_mode := OptionButton.new()
 var password_fields := VBoxContainer.new()
 var temporary_fields := VBoxContainer.new()
@@ -23,13 +26,14 @@ var temporary_length := OptionButton.new()
 var temporary: LineEdit = SecretInput.new()
 var application: Node
 var authentication: RefCounted
-var path := preload("res://graffitty/paths.gd").stdpath("state").path_join("auth.json")
+var path := ""
 
 
 func _ready() -> void:
+	var owner_ready := false
 	if application.has_method("refresh_remote_access"):
-		if await application.refresh_remote_access() == OK:
-			path = application.remote_control.auth_path
+		owner_ready = await application.refresh_remote_access() == OK
+		path = application.remote_control.auth_path if owner_ready else ""
 	title = "Remote Access Settings"
 	ok_button_text = "Save"
 	dialog_hide_on_ok = false
@@ -43,6 +47,26 @@ func _ready() -> void:
 	fields.size_flags_horizontal = Control.SIZE_EXPAND_FILL
 	scroll.add_child(fields)
 	fields.add_child(status)
+	if application.has_method("refresh_remote_access"):
+		sharing = CheckBox.new()
+		listen_ip = LineEdit.new()
+		listen_port = SpinBox.new()
+		sharing.text = "Enable remote access"
+		fields.add_child(sharing)
+		var ip_label := Label.new()
+		ip_label.text = "Listen IP address"
+		fields.add_child(ip_label)
+		fields.add_child(listen_ip)
+		var port_label := Label.new()
+		port_label.text = "Listen port"
+		fields.add_child(port_label)
+		listen_port.min_value = 1
+		listen_port.max_value = 65535
+		fields.add_child(listen_port)
+		if owner_ready:
+			sharing.button_pressed = application.remote_control.enabled
+			listen_ip.text = application.remote_control.listen_ip
+			listen_port.value = application.remote_control.listen_port
 	var mode_label := Label.new()
 	mode_label.text = "Password access"
 	fields.add_child(mode_label)
@@ -102,7 +126,7 @@ func _ready() -> void:
 		if enabled: _load_telegram_settings()
 	)
 	profile.focus_exited.connect(_load_telegram_settings)
-	var settings: Dictionary = JSON.parse_string(authentication.settings(path))
+	var settings: Dictionary = JSON.parse_string(authentication.settings(path)) if not path.is_empty() else {"error":application.remote_control.last_error}
 	if settings.has("error"):
 		status.text = settings.error
 		get_ok_button().disabled = true
@@ -119,6 +143,9 @@ func _ready() -> void:
 	telegram_fields.visible = telegram.button_pressed
 	if telegram.button_pressed: _load_telegram_settings()
 	Engine.get_main_loop().root.get_node("Localization").changed.connect(_refresh_language)
+	if application.has_method("refresh_remote_access") and not owner_ready:
+		status.text = application.remote_control.last_error
+		get_ok_button().disabled = true
 	confirmed.connect(_save)
 	canceled.connect(queue_free)
 	popup_centered.call_deferred()
@@ -136,6 +163,14 @@ func _update_password_mode() -> void:
 
 
 func _save() -> void:
+	if path.is_empty() or get_ok_button().disabled: return
+	var remote := {}
+	if application.has_method("refresh_remote_access"):
+		var ip := listen_ip.text.strip_edges()
+		if not ip.is_valid_ip_address():
+			status.text = "Enter a valid IPv4 or IPv6 address"
+			return
+		remote = {"enabled":sharing.button_pressed,"bind_address":ip,"port":int(listen_port.value)}
 	var manual := password_mode.get_selected_id() == MANUAL_ONLY
 	if manual and not permanent_configured and password.text.is_empty():
 		status.text = "Set a manual password before disabling temporary passwords"
@@ -152,17 +187,36 @@ func _save() -> void:
 			status.text = credentials.error
 			return
 		bot_token.clear()
-	var result: Dictionary = JSON.parse_string(authentication.save_settings(path, password.text if manual else "", not manual, profile.text.strip_edges() if telegram.button_pressed else "", chat_id.text.strip_edges() if telegram.button_pressed else "", temporary_length.get_selected_id()))
+	# Build the verifier privately. The owner commits it together with the
+	# listener settings, so a rejected address keeps the previous password.
+	var staged := path
+	if not remote.is_empty():
+		staged = path + "." + Crypto.new().generate_random_bytes(12).hex_encode() + ".tmp"
+		if FileAccess.file_exists(path) and DirAccess.copy_absolute(path, staged, 384) != OK:
+			status.text = "Cannot read remote authentication settings"
+			return
+	var result: Dictionary = JSON.parse_string(authentication.save_settings(staged, password.text if manual else "", not manual, profile.text.strip_edges() if telegram.button_pressed else "", chat_id.text.strip_edges() if telegram.button_pressed else "", temporary_length.get_selected_id()))
 	if result.has("error"):
+		if staged != path: DirAccess.remove_absolute(staged)
 		status.text = result.error
 		return
-	password.clear()
-	confirm.clear()
-	if application.has_method("refresh_remote_access"):
-		var error: Error = await application.remote_control.reload()
+	if not remote.is_empty():
+		var auth: Variant = JSON.parse_string(FileAccess.get_file_as_string(staged))
+		DirAccess.remove_absolute(staged)
+		if not auth is Dictionary:
+			status.text = "Cannot read remote authentication settings"
+			return
+		auth.version = int(auth.version)
+		auth.temporary_password_length = int(auth.temporary_password_length)
+		get_ok_button().disabled = true
+		var error: Error = await application.remote_control.reload(false, remote, auth)
+		get_ok_button().disabled = false
 		if error != OK:
 			status.text = application.remote_control.last_error
 			return
+		for host in application.hosts: host.ui_changed.emit()
+	password.clear()
+	confirm.clear()
 	queue_free()
 
 
@@ -180,6 +234,7 @@ func _load_telegram_settings() -> void:
 
 
 func _regenerate_temporary() -> void:
+	if path.is_empty(): return
 	temporary.revealed = false
 	var current: Dictionary = JSON.parse_string(authentication.settings(path))
 	if current.has("error"):

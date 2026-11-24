@@ -7,7 +7,8 @@ extends Control
 ##   `selection_word_boundaries`.
 ## - Trackpad pans and finger drags scroll by the distance travelled. A flick
 ##   glides, and both stretch past either end and spring back like a terminal.
-## - Copy with Cmd/Ctrl+C or the context menu.
+## - Hold a finger on a word to select it, drag to extend, and lift to copy
+##   from the context menu. Cmd/Ctrl+C also copies the selection.
 ## - On Android the system's own selection handles and Copy toolbar take over
 ##   (AndroidSelectableText), with its native stretch overscroll.
 ##
@@ -75,10 +76,21 @@ var _drag_at := Vector2.ZERO
 var _touch := -1
 var _touch_origin := Vector2.ZERO
 var _touch_dragging := false
+var _hold := Timer.new()
 var menu: PopupMenu
 
 
 func _init() -> void:
+	_hold.one_shot = true
+	_hold.wait_time = 0.5
+	_hold.timeout.connect(_select_held_word)
+	add_child(_hold)
+	visibility_changed.connect(func():
+		if not is_visible_in_tree():
+			_hold.stop()
+			_touch = -1
+			_mode = Mode.NONE
+			elastic.stop())
 	_clip.clip_contents = true
 	_clip.mouse_filter = Control.MOUSE_FILTER_IGNORE
 	_clip.set_anchors_and_offsets_preset(Control.PRESET_FULL_RECT)
@@ -191,7 +203,7 @@ func _set_offset(offset: float) -> void:
 	var pull: float = elastic.get_stretch()
 	# The scrollbar thumb shortens against the pulled end, in the bar's rows.
 	if pull != 0.0 or _bar_skin != null:
-		if _bar_skin == null: _bar_skin = preload("res://scenes/ElasticBarSkin.gd").attach(view.get_v_scroll_bar(), elastic)
+		if _bar_skin == null: _bar_skin = preload("res://scenes/ElasticBarSkin.gd").attach(view.get_v_scroll_bar(), elastic, _clip)
 		_bar_skin.set_stretch(pull / row)
 	view.offset_top = -pull
 	view.offset_bottom = -pull
@@ -338,30 +350,63 @@ func _extend_to(at: Vector2) -> void:
 	if selection.size() == 4: view.select(selection[0], selection[1], selection[2], selection[3])
 
 
-## Fingers scroll; they never drag a selection. Returns whether handled.
+func _select_held_word() -> void:
+	if _touch < 0 or _touch_dragging or not is_visible_in_tree() or text.is_empty(): return
+	if fit_content:
+		var list := _enclosing_list()
+		if list != null: list.stop_scrolling()
+	elastic.stop()
+	_begin(Mode.WORD, _touch_origin)
+
+
+func _notification(what: int) -> void:
+	# A list intercepts a drag before it reaches the embedded text.
+	if what == NOTIFICATION_SCROLL_BEGIN and fit_content:
+		_hold.stop()
+		_touch = -1
+
+
+## A stationary hold selects; moving first scrolls.
 func _touch_input(event: InputEvent) -> bool:
 	if native_text != null: return false
 	if event is InputEventScreenTouch:
-		if fit_content: return false
 		if event.pressed and _touch == -1:
 			_touch = event.index
 			_touch_origin = event.position
 			_touch_dragging = false
-			elastic.touch_begin()
+			if not fit_content: elastic.touch_begin()
+			_hold.start()
 			set_process(true)
-		elif not event.pressed and event.index == _touch:
+		elif event.pressed:
+			_hold.stop()
+			if _mode == Mode.WORD: _mode = Mode.NONE
+		elif event.index == _touch:
+			_hold.stop()
+			var selecting := _mode == Mode.WORD
+			_mode = Mode.NONE
 			_touch = -1
 			_touch_dragging = false
 			var limits := _limits()
-			elastic.touch_end(_offset(), limits.x, limits.y, true)
+			if not fit_content: elastic.touch_end(_offset(), limits.x, limits.y, not selecting and not event.canceled)
+			if selecting and not event.canceled and view.has_selection():
+				_show_menu(view.get_global_transform_with_canvas() * event.position)
 			set_process(true)
 		view.accept_event()
 		return true
 	if event is InputEventScreenDrag and event.index == _touch:
+		if _mode == Mode.WORD:
+			_drag_at = event.position
+			_extend_to(_drag_at)
+			view.accept_event()
+			return true
+		if fit_content:
+			if event.position.distance_to(_touch_origin) > TOUCH_SLOP: _hold.stop()
+			return false
 		var relative: Vector2 = event.relative
 		if not _touch_dragging:
 			var travel: Vector2 = event.position - _touch_origin
 			if travel.length() <= TOUCH_SLOP: return true
+			_hold.stop()
 			_touch_dragging = true
 			relative = travel - travel.normalized() * TOUCH_SLOP
 		var limits := _limits()
@@ -375,7 +420,7 @@ func _touch_input(event: InputEvent) -> bool:
 	return false
 
 
-func _show_menu() -> void:
+func _show_menu(at := Vector2.INF) -> void:
 	if menu == null:
 		menu = PopupMenu.new()
 		menu.prefer_native_menu = true
@@ -386,4 +431,8 @@ func _show_menu() -> void:
 			else: view.select_all())
 		add_child(menu)
 	menu.set_item_disabled(0, view.text.is_empty())
-	preload("res://scenes/input/PointerPopup.gd").open(menu)
+	if at == Vector2.INF:
+		preload("res://scenes/input/PointerPopup.gd").open(menu)
+	else:
+		menu.position = Vector2i(at)
+		preload("res://scenes/PopupChrome.gd").open(menu)

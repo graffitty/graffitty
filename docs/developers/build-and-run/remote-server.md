@@ -61,7 +61,7 @@ logout need a service or session policy that allows persistence.
 - If the `[remote]` address in `server.toml` is taken, the server still runs for this computer with remote access off. Its log and the app name what holds the address: another Graffitty server, or the program and its process number.
 - An address given with `--listen` is the reason that server was started, so a taken one is fatal, with the same explanation.
 - If a reused server exposes only local IPC, `remote connect` reports that it
-  has no remote listener. Enable **Remote Access** in Graffitty on that computer
+  has no remote listener. Enable sharing in **Sessions → Remote Access Settings…** on that computer
   before retrying; this preserves its running terminals. For a new headless
   server, start it with `gft server --listen 127.0.0.1:0`.
 

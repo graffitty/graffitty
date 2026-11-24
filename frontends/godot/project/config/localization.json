@@ -14091,6 +14091,71 @@
       "nb": "Graffitty tegner med prosessoren, så effektene er av som standard.",
       "sv": "Graffitty renderar med processorn, så effekterna är avstängda som standard.",
       "da": "Graffitty renderer med processoren, så effekterne er slået fra som standard."
+    },
+    "Enable remote access": {
+      "en-US": "Enable remote access",
+      "fr": "Activer l’accès à distance",
+      "pt-BR": "Ativar acesso remoto",
+      "es": "Activar el acceso remoto",
+      "it": "Abilita accesso remoto",
+      "ko": "원격 접속 활성화",
+      "ja": "リモートアクセスを有効にする",
+      "de": "Fernzugriff aktivieren",
+      "nb": "Aktiver fjerntilgang",
+      "sv": "Aktivera fjärråtkomst",
+      "da": "Aktivér fjernadgang"
+    },
+    "Listen IP address": {
+      "en-US": "Listen IP address",
+      "fr": "Adresse IP d’écoute",
+      "pt-BR": "Endereço IP de escuta",
+      "es": "Dirección IP de escucha",
+      "it": "Indirizzo IP di ascolto",
+      "ko": "수신 IP 주소",
+      "ja": "待ち受け IP アドレス",
+      "de": "IP-Adresse zum Lauschen",
+      "nb": "IP-adresse å lytte på",
+      "sv": "IP-adress att lyssna på",
+      "da": "IP-adresse at lytte på"
+    },
+    "Listen port": {
+      "en-US": "Listen port",
+      "fr": "Port d’écoute",
+      "pt-BR": "Porta de escuta",
+      "es": "Puerto de escucha",
+      "it": "Porta di ascolto",
+      "ko": "수신 포트",
+      "ja": "待ち受けポート",
+      "de": "Lauschport",
+      "nb": "Lytteport",
+      "sv": "Lyssningsport",
+      "da": "Lytteport"
+    },
+    "Enter a valid IPv4 or IPv6 address": {
+      "en-US": "Enter a valid IPv4 or IPv6 address",
+      "fr": "Saisissez une adresse IPv4 ou IPv6 valide",
+      "pt-BR": "Insira um endereço IPv4 ou IPv6 válido",
+      "es": "Introduce una dirección IPv4 o IPv6 válida",
+      "it": "Inserisci un indirizzo IPv4 o IPv6 valido",
+      "ko": "유효한 IPv4 또는 IPv6 주소를 입력하세요",
+      "ja": "有効な IPv4 または IPv6 アドレスを入力してください",
+      "de": "Geben Sie eine gültige IPv4- oder IPv6-Adresse ein",
+      "nb": "Skriv inn en gyldig IPv4- eller IPv6-adresse",
+      "sv": "Ange en giltig IPv4- eller IPv6-adress",
+      "da": "Indtast en gyldig IPv4- eller IPv6-adresse"
+    },
+    "Cannot read remote authentication settings": {
+      "en-US": "Cannot read remote authentication settings",
+      "fr": "Impossible de lire les paramètres d’authentification à distance",
+      "pt-BR": "Não foi possível ler as configurações de autenticação remota",
+      "es": "No se pudo leer la configuración de autenticación remota",
+      "it": "Impossibile leggere le impostazioni di autenticazione remota",
+      "ko": "원격 인증 설정을 읽을 수 없습니다",
+      "ja": "リモート認証設定を読み込めません",
+      "de": "Die Einstellungen für die Remote-Authentifizierung konnten nicht gelesen werden",
+      "nb": "Kan ikke lese innstillingene for fjernautentisering",
+      "sv": "Det går inte att läsa inställningarna för fjärrautentisering",
+      "da": "Kan ikke læse indstillingerne for fjerngodkendelse"
     }
   }
 }

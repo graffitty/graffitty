@@ -802,12 +802,15 @@ Device-level configuration and microphone checks for this mode remain pending.
 
 ### UI-09 — Workspace manager connections and mobile start
 
-Tapping a saved server connects it without leaving the manager. Tapping an
-already connected or connecting server keeps the manager open and its transport
-intact. Connect multiple servers individually, including password entry, then
-verify that their connections remain active. Connect all sits beside the connected
-count, skips existing attempts, and opens the terminal when a server is ready.
-Failures must remain visible without dropping successful connections.
+On mobile startup, attempt every saved server and restore the last workspace
+when it is ready. A server needing a corrected password leaves the other
+attempts running. With two saved servers and the manager open, connect the first
+and verify the list stays open. Connect the second and verify automatic entry.
+Android Back or the visible iOS Back control returns to Servers. Further status
+and topology updates leave it open. Disconnect and reconnect one server; the
+transition back to all connected opens the workspace again. After a failed
+sign-in, Edit server retains the masked password for correction. Connect all
+skips active transports; Touch to start explicitly opens a connected workspace.
 
 A saved connection contains server identity and authentication preferences only.
 After sign-in, the server lists live sessions and the client restores its own

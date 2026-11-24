@@ -215,6 +215,94 @@ func test_saved_server_has_no_session_field() -> void:
 	manager.federation.free()
 	manager.free()
 
+func test_startup_attempts_all_saved_servers_and_back_cancels_pending_navigation() -> void:
+	var manager := remembered_manager()
+	manager.dialog.hide()
+	manager.view = View.new()
+	manager.view.host = Host.new()
+	var keys := []
+	for port in [1, 2, 3]:
+		var entry := settings()
+		entry.url = "ws://127.0.0.1:%d" % port
+		if port == 3: entry.erase("token")
+		var key: String = manager._remember_entry(entry, "disconnected", "")
+		if port != 3: manager.session_passwords[key] = entry.token
+		keys.append(key)
+	manager.view_state.remember_connection(keys[0])
+	manager._restore_last_connection()
+	expect(manager.transports.size() == 2 and manager.states[keys[2]].state == "password", "One missing password leaves both other connection attempts running")
+	var ready: Node = manager.transports[keys[0]]
+	ready.connected = true
+	ready.workspace = "$1"
+	ready.server_fonts.ready = true
+	ready.topology = {"workspace":"$1", "tabs":[{"id":10}], "panes":[]}
+	manager._connected_transition(keys[0])
+	manager._try_auto_open(keys[0], ready)
+	expect(manager.navigation.current == manager.navigation.Space.WORKSPACE, "A ready server opens while another is still connecting")
+	manager._go_back()
+	var later: Node = manager.transports[keys[1]]
+	later.connected = true
+	later.workspace = ready.workspace
+	later.server_fonts.ready = true
+	later.topology = ready.topology.duplicate(true)
+	manager._try_auto_open(keys[1], later)
+	manager._try_auto_open(keys[0], ready)
+	expect(manager.navigation.current == manager.navigation.Space.MANAGER, "Back keeps Servers open after another connection or topology update")
+	manager.view.host.free()
+	manager.view.free()
+	manager.federation.free()
+	manager.free()
+
+
+func test_final_saved_server_connection_opens_once_per_transition() -> void:
+	var manager := remembered_manager()
+	manager.dialog.hide()
+	manager.view = View.new()
+	manager.view.host = Host.new()
+	var keys := []
+	for port in [1, 2]:
+		var entry := settings()
+		entry.url = "ws://127.0.0.1:%d" % port
+		var peer: Node = manager.open_connection(entry)
+		peer.workspace = "$1"
+		peer.server_fonts.ready = true
+		peer.topology = {"workspace":"$1", "tabs":[{"id":10}], "panes":[]}
+		keys.append(manager._connection_key(entry))
+	for key in keys:
+		manager.transports[key].connected = true
+		manager._connected_transition(key)
+		manager._open_after_all_connected()
+		expect((manager.navigation.current == manager.navigation.Space.WORKSPACE) == (key == keys[1]), "Only the final saved connection triggers automatic entry")
+	manager._go_back()
+	manager._connected_transition(keys[1])
+	manager._open_after_all_connected()
+	manager._try_auto_open(keys[0], manager.transports[keys[0]])
+	expect(manager.navigation.current == manager.navigation.Space.MANAGER, "Already-connected status and topology updates keep Servers open after Back")
+	manager.transports[keys[0]].connected = false
+	manager._connected_transition(keys[0])
+	manager.transports[keys[0]].connected = true
+	manager._connected_transition(keys[0])
+	manager._open_after_all_connected()
+	expect(manager.navigation.current == manager.navigation.Space.WORKSPACE, "A fresh final-server reconnection opens the workspace again")
+	manager.view.host.free()
+	manager.view.free()
+	manager.federation.free()
+	manager.free()
+
+
+func test_auth_failure_retains_masked_password_for_editing() -> void:
+	var manager := remembered_manager()
+	var input := settings()
+	var key: String = manager._connection_key(input)
+	var peer: Node = manager.open_connection(input)
+	manager._authentication_failed("rejected", key, peer)
+	manager._edit_connection(key)
+	expect(manager.states[key].state == "password" and manager.token.text == input.token, "Rejected password is available for correction")
+	expect(not manager.entries[key].has("token"), "Connection metadata contains no password")
+	manager.federation.free()
+	manager.free()
+
+
 func test_restore_without_remembered_password_requires_sign_in() -> void:
 	var manager := remembered_manager()
 	var input := settings()

@@ -9,23 +9,37 @@ var scroller: RefCounted
 var stretch := 0.0
 
 
-static func attach(to: ScrollBar, elastic: RefCounted) -> Control:
+static func attach(to: ScrollBar, elastic: RefCounted, fixed_viewport: Control = null) -> Control:
 	var skin := new()
 	skin.bar = to
 	skin.scroller = elastic
 	skin.name = "ElasticBarSkin"
 	skin.mouse_filter = Control.MOUSE_FILTER_IGNORE
-	to.add_child(skin, false, Node.INTERNAL_MODE_BACK)
-	skin.set_anchors_and_offsets_preset(Control.PRESET_FULL_RECT)
+	if fixed_viewport == null:
+		to.add_child(skin, false, Node.INTERNAL_MODE_BACK)
+		skin.set_anchors_and_offsets_preset(Control.PRESET_FULL_RECT)
+	else:
+		# The TextEdit moves inside this viewport. Keep its resting scrollbar
+		# geometry in viewport coordinates while the text pulls past an edge.
+		fixed_viewport.add_child(skin)
+		to.item_rect_changed.connect(skin._sync_track)
+		to.visibility_changed.connect(skin._sync_track)
+		skin._sync_track()
 	skin.hide()
 	return skin
+
+
+func _sync_track() -> void:
+	position = bar.position
+	size = bar.size
+	visible = stretch != 0.0 and bar.visible
 
 
 func set_stretch(value: float) -> void:
 	if value == stretch: return
 	stretch = value
 	var pulled := value != 0.0
-	visible = pulled
+	visible = pulled and bar.visible
 	# The bar's own drawing hides while this one stands in for it.
 	bar.self_modulate.a = 0.0 if pulled else 1.0
 	queue_redraw()

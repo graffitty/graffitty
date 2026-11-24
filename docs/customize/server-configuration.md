@@ -128,7 +128,7 @@ same as before the restart.
 Save a [checkpoint](../everyday-use/checkpoints.md) first with `gft checkpoint save`.
 After restarting, verify that the server returned and sessions survived.
 If restart fails, do not kill the server or close sessions to work around it.
-Font changes through the Fonts dialog apply immediately.
+Font changes through the Fonts dialog and remote-access changes through **Sessions → Remote Access Settings…** apply immediately.
 
 ## Other settings
 

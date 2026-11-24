@@ -11,7 +11,6 @@ var channel: RefCounted
 var failure := ""
 var _text := false
 var _last_poll_msec := 0
-var _no_delay_set := false
 
 
 func _init() -> void:
@@ -30,7 +29,6 @@ func secure(value: RefCounted) -> void:
 
 
 func connect_to_url(url: String) -> int:
-	_no_delay_set = false
 	return peer.connect_to_url(url)
 
 
@@ -46,11 +44,6 @@ func poll() -> void:
 	else:
 		peer.poll()
 	_last_poll_msec = now
-	if not _no_delay_set and peer.get_ready_state() == WebSocketPeer.STATE_OPEN:
-		# Input and video credits are small latency-sensitive packets. Enable
-		# TCP_NODELAY once the peer has established its underlying TCP stream.
-		peer.set_no_delay(true)
-		_no_delay_set = true
 
 
 func get_ready_state() -> int:

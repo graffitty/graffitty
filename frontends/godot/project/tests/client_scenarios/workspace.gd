@@ -2787,6 +2787,8 @@ func connections_scroll() -> void:
 		expect(host.menu_layer.visible, "Returning to workspace restores its menu")
 
 func auth_recovery() -> void:
+	manager._show_chooser()
+	await wait(.2)
 	var wrong := settings.duplicate()
 	wrong.url = str(settings.url).trim_suffix("/") + "/recovery"
 	wrong.token = "intentionally-incorrect"
@@ -2800,7 +2802,7 @@ func auth_recovery() -> void:
 	await tap(manager.cards[key].action)
 	expect(manager.dialog.visible, "Enter current password opens the editor for that server")
 	expect(transport.connected and host.sessions.has(initial_id),"Authentication failure does not disconnect existing workspace")
-	expect(manager.token.secret and manager.token.text.is_empty(),"Password field is masked and rejected secret is cleared")
+	expect(manager.token.secret and manager.token.text == wrong.token,"Password field keeps the rejected value masked for correction")
 	manager.endpoint.text = str(wrong.url).trim_prefix("ws://")
 	manager.token.text = str(settings.token)
 	manager.remember.button_pressed = false

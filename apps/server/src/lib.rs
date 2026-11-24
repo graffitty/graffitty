@@ -166,6 +166,7 @@ fn client_video_quality(c: &Client, id: u64) -> chromium_video::Quality {
 
 struct Server {
     settings: settings::Settings,
+    config_path: PathBuf,
     fonts: fonts::Fonts,
     recent_font_size: Option<u16>,
     frontend: frontend::Broker,
@@ -182,6 +183,7 @@ struct Server {
     descriptor: PathBuf,
     auth_path: PathBuf,
     auth: auth::Server,
+    auth_config: auth::Config,
     resources: Arc<terminal_resource_monitor::Service>,
     sessions: BTreeMap<u64, Session>,
     workspaces: session_registry::Registry,
@@ -1378,7 +1380,7 @@ impl Server {
             let result = if !c.socket.is_local() {
                 Err("Host authentication is controlled locally".into())
             } else if kind == "auth_reload" {
-                host_auth::reload(self, value["rotate"] == true)
+                host_auth::reload(self, value["rotate"] == true, value.get("remote"), value.get("auth"))
             } else {
                 host_auth::settings(self)
             };
@@ -2225,7 +2227,7 @@ pub fn run(options: Options, foreground_apps: fn(&Value) -> Value) -> Result<(),
     let running = Arc::new(AtomicBool::new(true));
     let stop = running.clone();
     ctrlc::set_handler(move || stop.store(false, Ordering::Relaxed))?;
-    let authentication = auth::Server::new(auth_config, &token)?;
+    let authentication = auth::Server::new(auth_config.clone(), &token)?;
     let epoch = previous.as_ref().map(|state| state.epoch.clone()).unwrap_or_else(|| uuid::Uuid::new_v4().to_string());
     let adopting_003 = previous.as_ref().is_some_and(|owner| owner.sessions.iter().any(|s| s.inherited_percent_id));
     let workspace_state = workspace::Store::new(&descriptor, &epoch, adopting_003)?;
@@ -2239,6 +2241,7 @@ pub fn run(options: Options, foreground_apps: fn(&Value) -> Value) -> Result<(),
         frontend: Default::default(),
         size_claims: Default::default(),
         auth: authentication,
+        auth_config,
         local_token,
         remote_token: token,
         remote_listener,
@@ -2295,6 +2298,7 @@ pub fn run(options: Options, foreground_apps: fn(&Value) -> Value) -> Result<(),
         recent_font_size: None,
         fonts: fonts::Fonts::load(&settings.terminal.font, config_path.parent().unwrap_or(std::path::Path::new(".")))?,
         settings,
+        config_path,
         epoch,
         catalog_revision: 0,
         catalog_snapshot: Value::Null,

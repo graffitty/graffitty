@@ -40,6 +40,7 @@ class AppLogger extends Logger:
 		backtraces: Array[ScriptBacktrace],
 	) -> void:
 		var message := rationale if not rationale.is_empty() else code
+		var is_engine_noise := engine_noise(source, function)
 		var trace := ""
 		for backtrace in backtraces:
 			trace += backtrace.format() + "\n"
@@ -55,7 +56,7 @@ class AppLogger extends Logger:
 			"function": function,
 		}
 		mutex.lock()
-		if not engine_noise(source, function):
+		if not is_engine_noise:
 			if kind != ERROR_TYPE_WARNING:
 				failures += 1
 			pending.append(entry)

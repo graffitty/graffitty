@@ -16,8 +16,7 @@ gft server --listen 0.0.0.0:7183   # or its Tailscale IP
 ```
 
 Use a [trusted network or Tailscale](connection-settings.md#listen-on-the-right-network).
-On a desktop, you can instead open **Sessions → Remote Access** to share the
-running app, and **Sessions → Remote Access Settings…** for the password.
+On a desktop, open **Sessions → Remote Access Settings…** to enable sharing, set the listening address and port, and choose a password.
 
 Then, on your other device:
 
@@ -25,7 +24,7 @@ Then, on your other device:
 2. Enter the server address and password.
 3. Leave the session name blank to resume the previous session.
 
-Sharing is off by default. The menu toggle lasts for the current launch.
+Sharing is off by default. Saving the settings also sets the startup preference.
 Android requires a server; it has no local terminal mode.
 
 ### Or set it up from your computer

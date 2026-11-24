@@ -13,7 +13,7 @@ In **Sessions (<img class="menu-icon" src="../images/menu/panels-top-left.svg" a
 | Regenerate | Replace the temporary password and disconnect clients |
 | Require Telegram 2FA | Require a code after a correct password |
 
-Changing authentication settings disconnects existing clients so they authenticate again.
+Select **Save** to apply your password immediately. Changing the password or listening address disconnects remote clients so they can reconnect with the new settings. Local terminals keep running.
 Removing the permanent password returns to temporary-password mode.
 
 ## Add Telegram login codes

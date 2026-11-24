@@ -4,6 +4,8 @@ var connection: Node
 var enabled := false
 var token := ""
 var address := ""
+var listen_ip := "127.0.0.1"
+var listen_port := 7183
 var connection_file := ""
 var auth_path := ""
 var last_error := ""
@@ -14,12 +16,18 @@ var _alias := ""
 
 func bind(app: Node) -> bool:
 	for host in app.hosts:
-		var backend: RefCounted = host.session_backend
-		if "connection" in backend:
-			var candidate: Node = backend.connection
-			if "url" in candidate and (candidate.url == "shared://local" or candidate.url.begins_with("ipc://")):
+		if not is_instance_valid(host) or host.is_queued_for_deletion(): continue
+		var backend: Variant = host.get("session_backend")
+		if backend == null or not is_instance_valid(backend.get("connection")): continue
+		var transport: Node = backend.connection
+		for candidate in transport.connections if "connections" in transport else [transport]:
+			if not is_instance_valid(candidate) or not candidate.connected: continue
+			if candidate.url == "shared://local" or candidate.url.begins_with("ipc://"):
 				connection = candidate
 				return true
+	connection = null
+	auth_path = ""
+	_install_remote(null)
 	last_error = "Remote access settings require a local session owner"
 	return false
 
@@ -31,6 +39,8 @@ func refresh() -> Error:
 
 func _install_settings(settings: Dictionary) -> void:
 	auth_path = str(settings.auth_path)
+	listen_ip = settings.bind_address
+	listen_port = settings.port
 	if _alias.is_empty(): connection_file = str(settings.connection_file)
 	_install_remote(settings.get("remote"))
 	var failure: Variant = settings.get("remote_error")
@@ -73,7 +83,7 @@ func start(app: Node, bind_address: String, port: int, descriptor := "") -> Erro
 		if reply.type == "error": return ERR_INVALID_DATA
 	_install_settings(reply.result)
 	var request := {"enabled": true}
-	if not bind_address.is_empty(): request.address = "%s:%d" % [bind_address, port]
+	if not bind_address.is_empty(): request.address = ("[%s]:%d" if ":" in bind_address else "%s:%d") % [bind_address, port]
 	reply = await _request("remote_access", request)
 	if reply.type == "error": return ERR_CANT_CREATE
 	_install_remote(reply.result)
@@ -88,11 +98,18 @@ func start(app: Node, bind_address: String, port: int, descriptor := "") -> Erro
 			return error
 	return OK
 
-func reload(rotate := false) -> Error:
-	var reply: Dictionary = await _request("auth_reload", {"rotate": rotate})
+func reload(rotate := false, remote: Dictionary = {}, auth: Dictionary = {}) -> Error:
+	var options := {"rotate":rotate}
+	if not remote.is_empty(): options.remote = remote
+	if not auth.is_empty(): options.auth = auth
+	var reply: Dictionary = await _request("auth_reload", options)
 	if reply.type == "error": return ERR_INVALID_DATA
 	_install_settings(reply.result)
-	if enabled and not _alias.is_empty(): return _publish_alias(reply.result.remote)
+	if not _alias.is_empty():
+		if enabled: return _publish_alias(reply.result.remote)
+		DirAccess.remove_absolute(_alias)
+		_alias = ""
+		connection_file = reply.result.connection_file
 	return OK
 
 func stop() -> Error:
