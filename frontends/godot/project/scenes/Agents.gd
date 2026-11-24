@@ -138,7 +138,7 @@ func _add_away(input: Dictionary, remotes: Dictionary, sessions: Dictionary, cat
 		var peer: Node = group.get("peer")
 		if not group.connected or not is_instance_valid(peer) or not is_instance_valid(group.get("host")): continue
 		# The peer publishes other sessions' agents through its live catalog.
-		for value in peer.available_sessions:
+		for value in application.agent_attention.catalog_for(peer):
 			if not value is Dictionary: continue
 			var label := preload("res://scenes/session/SessionLabel.gd").name_of(value)
 			for agent in value.get("agents", []):

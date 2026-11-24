@@ -238,6 +238,7 @@ class TerminalHolderTests(unittest.TestCase):
             reply = peer.action("rpc", first, method="graph.connect", params=edge)
             self.assertEqual(reply["type"], "ack", reply)
             read(peer)
+            catalog_revision = peer.catalog["revision"]
         finally:
             peer.socket.close()
 
@@ -245,6 +246,8 @@ class TerminalHolderTests(unittest.TestCase):
             self.gft("server", "restart")
             peer = PrivateClient(json.loads(self.descriptor.read_text())["local"], "one")
             try:
+                self.assertGreater(peer.catalog["revision"], catalog_revision)
+                catalog_revision = peer.catalog["revision"]
                 wires = peer.topology["graph"]["edges"]
                 self.assertEqual([{key: wire[key] for key in edge} for wire in wires], [edge])
                 read(peer)

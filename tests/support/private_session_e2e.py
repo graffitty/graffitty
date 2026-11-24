@@ -105,6 +105,7 @@ class PrivateClient:
         fields (titles, foreground app, holds) as `pane_update` deltas."""
         if message.get("type") == "session_list":
             self.available_sessions = message["sessions"]
+            self.catalog = message
         elif message.get("type") == "topology":
             self.topology = message
         elif message.get("type") == "pane_update" and getattr(self, "topology", None):

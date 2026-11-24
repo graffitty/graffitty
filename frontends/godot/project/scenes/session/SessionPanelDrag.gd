@@ -100,6 +100,7 @@ static func presentation(app: Node, source: Node, session: String) -> Node:
 	client.managed = true
 	client.local_return = source.get_parent().local_return
 	client.server_epoch = connection.epoch
+	client.connection.epoch = connection.epoch
 	client.connection.local_ids = connection.local_ids
 	var window := stage(app, source)
 	previews.append(client)

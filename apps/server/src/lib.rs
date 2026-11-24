@@ -108,7 +108,7 @@ struct Client {
     workspace: String,
     workspace_incarnation: u64,
     workspace_closed: bool,
-    session_catalog: Value,
+    catalog_revision: u64,
     subscribed: Vec<u64>,
     revisions: HashMap<u64, u64>,
     /// Structural topology signature last delivered; volatile pane fields
@@ -200,6 +200,8 @@ struct Server {
     next_chromium: u64,
     shell: String,
     epoch: String,
+    catalog_revision: u64,
+    catalog_snapshot: Value,
     activity_clock: graph::ActivityClock,
     graphs: HashMap<String, graph::Graph>,
     chromiums: BTreeMap<u64, chromium::Chromium>,
@@ -304,12 +306,19 @@ impl Server {
         self.remote_listener.is_none() && self.remote_error.is_none()
     }
 
-    fn session_catalog(&self) -> Value {
-        json!({
+    fn session_catalog(&mut self) -> Result<Value, Error> {
+        let mut snapshot = json!({
             "type": "session_list",
             "sessions": session_management::descriptions(self),
             "stops_when_empty": self.stops_when_empty(),
-        })
+        });
+        if self.catalog_snapshot != snapshot {
+            self.catalog_revision += 1;
+            self.save_owner_state()?;
+            self.catalog_snapshot = snapshot.clone();
+        }
+        snapshot["revision"] = json!(self.catalog_revision);
+        Ok(snapshot)
     }
 
     fn remote_descriptor(&self) -> Value {
@@ -644,9 +653,11 @@ impl Server {
                 if shell.is_none() && (node["pid"].is_null() || node["status"] == "offline") { return None; }
                 let mut root = json!({"node":key,"pid":shell,"agent_pid":node["pid"],"started":node["started"],
                     "provider_home":node["provider_home"],"launch_context":node["launch_context"]});
-                if let Some(turn) = node.get("observed_turn") {
-                    root["session_id"] = node["session_id"].clone();
-                    root["observed_turn"] = turn.clone();
+                for field in ["observed_turn", "rollout_scan"] {
+                    if let Some(value) = node.get(field).filter(|value| !value.is_null()) {
+                        root["session_id"] = node["session_id"].clone();
+                        root[field] = value.clone();
+                    }
                 }
                 registrations.insert(key, scan_registration(node));
                 Some(root)
@@ -1619,9 +1630,9 @@ impl Server {
             if kind == "sync" {
                 // Queue the authoritative workspace membership before this
                 // request's ack, so a resumed frontend can drain stale backlog.
-                let catalog = self.session_catalog();
-                send(c, catalog.clone())?;
-                c.session_catalog = catalog;
+                let catalog = self.session_catalog()?;
+                send(c, catalog)?;
+                c.catalog_revision = self.catalog_revision;
                 let topology = self.client_topology(&c.workspace, c.frontend_client);
                 send(c, topology)?;
                 return Ok(json!({}));
@@ -1808,10 +1819,10 @@ impl Server {
         if !c.authenticated {
             return Ok(());
         }
-        let catalog = self.session_catalog();
-        if c.session_catalog != catalog {
-            send(c, catalog.clone())?;
-            c.session_catalog = catalog;
+        let catalog = self.session_catalog()?;
+        if c.catalog_revision != self.catalog_revision {
+            send(c, catalog)?;
+            c.catalog_revision = self.catalog_revision;
         }
         let current_workspace = !c.workspace_closed && self.workspace_incarnations.get(&c.workspace) == Some(&c.workspace_incarnation);
         for session in self.sessions.values_mut() {
@@ -2095,7 +2106,7 @@ mod listener_tests {
 fn new_client(socket: Connection, network_generation: u64) -> Client {
     static NEXT: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(1);
     Client { frontend_client:NEXT.fetch_add(1,Ordering::Relaxed),session_switch:false,last_input:HashMap::new(),auth:Default::default(),socket,network_generation,api_reply:None,api_done:false,api_stream:false,rpc_pending:vec![],
-        authenticated:false,opened:Instant::now(),workspace:String::new(),workspace_incarnation:0,workspace_closed:false,session_catalog:Value::Null,subscribed:vec![],
+        authenticated:false,opened:Instant::now(),workspace:String::new(),workspace_incarnation:0,workspace_closed:false,catalog_revision:0,subscribed:vec![],
         revisions:HashMap::new(),topology:String::new(),pane_updates:Default::default(),scenes:Default::default(),font_pending:None,bell_events:false,clipboard_events:false,clipboard_generations:HashMap::new(),
         #[cfg(any(target_os = "macos", windows))]
         gpu: Default::default(),
@@ -2341,6 +2352,8 @@ pub fn run(options: Options, foreground_apps: fn(&Value) -> Value) -> Result<(),
         fonts: fonts::Fonts::load(&settings.terminal.font, config_path.parent().unwrap_or(std::path::Path::new(".")))?,
         settings,
         epoch,
+        catalog_revision: 0,
+        catalog_snapshot: Value::Null,
     };
     owner_state_adopt(&mut server, adopted, previous);
     server.save_owner_state()?;
@@ -2919,6 +2932,7 @@ impl Server {
         state.last_viewed = self.last_viewed.clone();
         state.agent_attention = self.saved_agent_attention();
         state.activity_revision = self.activity_clock.current();
+        state.catalog_revision = self.catalog_revision;
         state.wiring = self.saved_wiring();
         state.transcripts = self.saved_transcripts();
         state.sessions = self.sessions.values().filter(|s| s.is_held() && !s.exited).map(Session::saved).collect();
@@ -2962,6 +2976,7 @@ fn hand_over(server: &mut Server, runtime: &std::path::Path) {
     }
     state.agent_attention = server.saved_agent_attention();
     state.activity_revision = server.activity_clock.current();
+    state.catalog_revision = server.catalog_revision;
     state.wiring = server.saved_wiring();
     state.transcripts = server.saved_transcripts();
     if let Err(error) = owner_state::save(&server.descriptor, &state) {
@@ -3020,6 +3035,7 @@ fn owner_state_adopt(server: &mut Server, adopted: Vec<holder_link::Adopted>, pr
         return;
     };
     server.activity_clock.resume_after(previous.activity_revision);
+    server.catalog_revision = previous.catalog_revision;
     server.next = server.next.max(previous.next);
     server.next_chromium = server.next_chromium.max(previous.next_chromium);
     server.tab_titles = previous.tab_titles.clone();

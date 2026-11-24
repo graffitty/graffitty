@@ -33,6 +33,7 @@ class Peer extends Node:
 	var epoch := "same-server"
 	var connected := false
 	var workspace := "$1"
+	var catalog_revision := 1
 	var available_sessions: Array = []
 	var view_ready := true
 	func session_view_ready(id: String) -> bool: return view_ready and id == workspace
@@ -292,6 +293,37 @@ func test_disconnected_visible_window_cannot_read_another_windows_new_graph() ->
 	current.free()
 	old.free()
 	new_peer.free()
+
+
+func test_replacement_epoch_uses_visible_receipt_even_with_lower_revision() -> void:
+	for old_first in [false, true]:
+		var app := Application.new()
+		var cached := RemoteHost.new()
+		var current := RemoteHost.new()
+		var old := ViewPeer.new()
+		var replacement := ViewPeer.new()
+		replacement.epoch = "replacement"
+		replacement.connected = true
+		cached.session_backend.connection = old
+		current.session_backend.connection = replacement
+		cached.in_view = false
+		for host in [cached, current]:
+			host.workspace_layout.tabs.assign([_tab(1, ["t1"])])
+			host.workspace_layout.active = 1
+		app.hosts = [cached, current] if old_first else [current, cached]
+		old.topology.graph.nodes = [{"node":"t1","status":"idle","activity_revision":20,
+			"attention":{"event":"old", "kind":"completed","seen":false}}]
+		replacement.topology.graph.nodes = [{"node":"t1","status":"idle","activity_revision":3,
+			"attention":{"event":"replacement", "kind":"completed","seen":false}}]
+		app.agent_api.graph.nodes = {"t1":old.topology.graph.nodes[0]}
+		app.agent_api.graph.remote_owners = {"t1":old}
+		var attention := CapturedAttention.new()
+		attention.application = app
+		attention.in_view = func(host): return host.in_view
+		attention.refresh()
+		expect(attention.calls == [{"connection":replacement,"pane":1,"event":"replacement"}], "Only the replacement peer receives its visible event")
+		expect(attention.attention("t1").event == "replacement", "The replacement activity wins regardless of host order")
+		for entry in [attention, cached, current, old, replacement]: entry.free()
 
 
 func _tab(id: int, keys: Array, shown := []) -> Dictionary:

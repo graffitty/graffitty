@@ -807,6 +807,7 @@ func _session_client(source_client: Node, workspace: String, independent: bool, 
 	# Share the source client's ID mapping before exposing the moved controls.
 	# A quick drag back may need to translate frontend IDs before destination
 	# topology arrives.
+	client.connection.epoch = source_client.connection.epoch
 	client.connection.local_ids = source_client.connection.local_ids
 	return client
 

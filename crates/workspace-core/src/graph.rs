@@ -365,6 +365,8 @@ impl Graph {
         }
         if replaced {
             self.codex_turn_runs.remove(&key);
+            node.as_object_mut().unwrap().remove("rollout_scan");
+            node.as_object_mut().unwrap().remove("observed_turn");
             node.as_object_mut().unwrap().remove("codex_prompt_turn");
             node.as_object_mut().unwrap().remove("integrated");
         }
@@ -393,6 +395,11 @@ impl Graph {
         found.remove("status_at");
         let stopped_without_completion = stopped_without_success && found.contains_key("status") && state["provider"] == "codex"
             && (!had_turn_baseline || turn_changed || previous["status"] == "busy" || previous["status"] == "waiting");
+        // A short discovery-only turn can start and finish between idle polls.
+        let completed_between_polls = turn_changed && had_turn_baseline && state["provider"] == "codex"
+            && state["session_id"].is_string() && state["pid"].is_u64() && node["integrated"] != true
+            && previous["status"] == "idle" && found.get("status").and_then(Value::as_str) == Some("idle")
+            && turn["status"] == "completed";
         node.as_object_mut().unwrap().extend(found);
         if current_prompt && turn["status"] == "completed" && state["status"] == "idle" {
             node.as_object_mut().unwrap().remove("codex_prompt_turn");
@@ -400,6 +407,8 @@ impl Graph {
         if stopped_without_completion {
             if current_prompt { node.as_object_mut().unwrap().remove("codex_prompt_turn"); }
             node.as_object_mut().unwrap().remove("attention");
+        } else if completed_between_polls {
+            attention::issue(node, graffitty_protocol::agent_attention::AttentionKind::Completed);
         } else {
             attention::update(node, string(&previous, "status"), replaced);
         }
@@ -931,7 +940,7 @@ impl Graph {
                     node.as_object_mut().unwrap().remove("heartbeat_at");
                     // A newly launched node must not inherit the previous
                     // agent's conversation identity in the same terminal.
-                    for field in ["session_id", "transcript_path", "session_file", "provider_home", "checkpoint_state", "observed_turn"] {
+                    for field in ["session_id", "transcript_path", "session_file", "provider_home", "checkpoint_state", "observed_turn", "rollout_scan"] {
                         if reconnect && matches!(field, "session_id" | "transcript_path") { continue; }
                         node.as_object_mut().unwrap().remove(field);
                     }

@@ -75,6 +75,35 @@ class RecordingPeer extends RefCounted:
 		sent.append(JSON.parse_string(text))
 		return OK
 
+func test_ready_binds_all_views_to_the_same_epoch_namespace() -> void:
+	var first := Connection.new()
+	var old := Connection.new()
+	var fresh := Connection.new()
+	for peer in [first, old, fresh]:
+		Engine.get_main_loop().root.add_child(peer)
+		peer.url = "test://epoch-namespace"
+		peer.namespace_ids = true
+		peer.socket = RecordingPeer.new()
+		peer.password_verified = true
+	var ready := func(peer: Node, epoch: String):
+		peer._receive({"type":"ready","version":Connection.Protocol.VERSION,"epoch":epoch})
+	ready.call(first, "original")
+	ready.call(old, "original")
+	var original := old.local_id(7)
+	expect(first.local_id(7) == original, "Original views share the wire binding")
+	first.subscriptions = [original]
+	ready.call(first, "original")
+	expect(first.subscriptions == [original] and first.local_id(7) == original, "Same-epoch handover retains subscriptions and bindings")
+	ready.call(first, "replacement")
+	ready.call(fresh, "replacement")
+	var graph: Dictionary = fresh.map_graph({"target":"t7"}, true)
+	var replacement := first.local_id(7)
+	expect(replacement != original and old.local_id(7) == original, "Old and replacement epochs use separate pane identities")
+	expect(first.subscriptions.is_empty(), "Replacement drops previous-epoch subscriptions")
+	expect(graph.target == "t%d" % replacement and fresh.local_id(7) == replacement, "Graph-first and pane-first bindings match on the replacement")
+	for peer in [first, old, fresh]: peer.free()
+
+
 func test_reauthenticated_socket_restores_the_previous_session() -> void:
 	var connection := Connection.new()
 	var peer := RecordingPeer.new()
@@ -85,7 +114,7 @@ func test_reauthenticated_socket_restores_the_previous_session() -> void:
 	connection.epoch = "same-server"
 	connection._receive({"type": "ready", "version": Connection.Protocol.VERSION, "epoch": "same-server"})
 	expect(connection.workspace.is_empty() and connection.preferred_session == "$4", "Authentication retains the destination without claiming the new socket is attached")
-	connection._receive({"type": "session_list", "sessions": [{"id": "$4"}], "stops_when_empty": false})
+	connection._receive({"type": "session_list", "revision": 1, "sessions": [{"id": "$4"}], "stops_when_empty": false})
 	expect(peer.sent.any(func(message): return message.get("type") == "session_switch" and message.get("name") == "$4"), "Session discovery explicitly reattaches the previous session")
 	connection.free()
 
@@ -115,12 +144,12 @@ func test_session_close_prediction_uses_server_policy_and_inventory() -> void:
 	var connection := Connection.new()
 	connection.connected = true
 	expect(connection.session_close_stops_server("$4") == null, "An unpublished catalog gives no shutdown prediction")
-	connection._receive({"type": "session_list", "sessions": [{"id": "$4"}], "stops_when_empty": true})
+	connection._receive({"type": "session_list", "revision": 2, "sessions": [{"id": "$4"}], "stops_when_empty": true})
 	expect(connection.session_close_stops_server("$4") == true, "The final private session stops the server")
 	expect(connection.session_close_stops_server("$5") == null, "An unknown target gives no shutdown prediction")
-	connection._receive({"type": "session_list", "sessions": [{"id": "$4"}, {"id": "$5"}], "stops_when_empty": true})
+	connection._receive({"type": "session_list", "revision": 3, "sessions": [{"id": "$4"}, {"id": "$5"}], "stops_when_empty": true})
 	expect(connection.session_close_stops_server("$4") == false, "A sibling session keeps the private server running")
-	connection._receive({"type": "session_list", "sessions": [{"id": "$4"}], "stops_when_empty": false})
+	connection._receive({"type": "session_list", "revision": 4, "sessions": [{"id": "$4"}], "stops_when_empty": false})
 	expect(connection.session_close_stops_server("$4") == false, "Remote access keeps the server running without sessions")
 	connection.free()
 

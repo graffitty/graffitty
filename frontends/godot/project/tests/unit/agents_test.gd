@@ -9,6 +9,7 @@ class Connection extends Node:
 	var server_hostname := "fixture-server"
 	var display_name := "Office fixture"
 	var workspace := "$2"
+	var catalog_revision := 1
 	var available_sessions := [{"id": "$1", "name": "other"}, {"id": "$2", "automatic_name": "graffitty"}]
 	func wire_id(_id: int) -> int: return 7
 
@@ -143,6 +144,7 @@ class Peer extends Node:
 	var server_hostname := "fixture-server"
 	var connected := true
 	var workspace := "$2"
+	var catalog_revision := 1
 	var available_sessions := [
 		{"id": "$1", "name": "other", "agents": [
 			{"pane": 3, "provider": "claude", "status": "waiting", "title": "", "program": null},
@@ -247,15 +249,18 @@ func test_duplicate_catalogs_share_the_latest_background_activity() -> void:
 	expect(panel.rows.size() == 1 and panel.rows[0].status == "working", "One background row represents both connections")
 	var done := busy.duplicate()
 	done.merge({"status":"idle","activity_revision":2,"attention":{"event":"finished","kind":"completed","seen":false}}, true)
+	fresh.catalog_revision += 1
+	done.title = "Updated title"
 	fresh.available_sessions[0].agents = [done]
 	fresh.sessions_changed.emit()
 	expect(app.agent_attention.marker(["t1"]).count == 1 and panel.rows[0].status == "done",
 		"The catalog completion updates both the remapped pane marker and the representative peer's row")
-	expect(panel.rows[0].title == "Background task" and panel._away[panel.rows[0].id].peer == representative,
-		"The background row retains its navigation peer and title")
+	expect(panel.rows[0].title == "Updated title" and panel._away[panel.rows[0].id].peer == representative,
+		"The latest background descriptor supplies its title and the representative can navigate")
 	representative.sessions_changed.emit()
 	expect(panel.rows[0].status == "done", "Repeating the older catalog keeps the completion")
 	var replacement := busy.merged({"provider":"claude","activity_revision":3}, true)
+	representative.catalog_revision = fresh.catalog_revision + 1
 	representative.available_sessions[0].agents = [replacement]
 	representative.sessions_changed.emit()
 	expect(app.agent_attention.marker(["t1"]).count == 0 and panel.rows[0].status == "working" and panel.rows[0].provider == "claude",
@@ -267,6 +272,54 @@ func test_duplicate_catalogs_share_the_latest_background_activity() -> void:
 	second.free()
 	fresh.free()
 	representative.free()
+
+
+func test_split_catalog_delivery_adds_moves_and_removes_background_agents() -> void:
+	for reversed in [false, true]:
+		var app := Application.new()
+		var first := SessionHost.new()
+		var second := SessionHost.new()
+		var fresh := preload("res://scenes/remote/RemoteConnection.gd").new()
+		var delayed := preload("res://scenes/remote/RemoteConnection.gd").new()
+		for peer in [fresh, delayed]:
+			peer.url = "test://split"
+			peer.epoch = "test-epoch"
+			peer.workspace = "$3"
+			peer.connected = true
+		first.session_backend.connection = fresh
+		second.session_backend.connection = delayed
+		app.hosts = [second, first] if reversed else [first, second]
+		var panel := preload("res://scenes/Agents.gd").new()
+		panel.application = app
+		panel._sounds = {"enabled": false}
+		app.agents = panel
+		app.agent_attention.refresh()
+		var deliver := func(peer, revision, sessions):
+			peer._receive({"type":"session_list", "revision":revision, "sessions":sessions, "stops_when_empty":false})
+		var busy := {"pane":7,"provider":"pi","status":"busy","activity_revision":4}
+		var done := busy.merged({"status":"idle","activity_revision":6,"attention":{"event":"finished","kind":"completed","seen":false}}, true)
+		var origin := [{"id":"$1","agents":[busy]}]
+		var moved := [{"id":"$1","agents":[]},{"id":"$2","agents":[done]}]
+		deliver.call(delayed, 1, [])
+		deliver.call(fresh, 2, origin)
+		expect(panel.rows.size() == 1 and panel.rows[0].status == "working", "First delivery adds a previously absent agent")
+		deliver.call(fresh, 3, moved)
+		deliver.call(delayed, 2, origin)
+		expect(panel.rows.size() == 1 and panel.rows[0].status == "done" and panel._away[panel.rows[0].id].session == "$2",
+			"A delayed pre-transfer catalog preserves the new destination and completion")
+		expect(app.agent_attention.marker(["t7"]).count == 1, "The moved panel row agrees with the marker")
+		deliver.call(fresh, 4, [])
+		deliver.call(delayed, 3, moved)
+		expect(panel.rows.is_empty() and app.agent_attention.marker(["t7"]).count == 0, "Late delivery cannot resurrect a removed pane")
+		fresh.connected = false
+		app.agent_attention.refresh()
+		expect(panel.rows.is_empty(), "Losing the fresher socket cannot roll back the inventory")
+		panel.free()
+		app.free()
+		first.free()
+		second.free()
+		fresh.free()
+		delayed.free()
 
 
 func test_agents_in_other_sessions_and_servers_are_listed() -> void:

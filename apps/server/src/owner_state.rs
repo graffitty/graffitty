@@ -76,6 +76,8 @@ pub struct OwnerState {
     pub workspaces: crate::session_registry::Registry,
     #[serde(default)]
     pub activity_revision: u64,
+    #[serde(default)]
+    pub catalog_revision: u64,
     /// Optional agent metadata, bound to the live panes adopted from holders.
     #[serde(default)]
     pub agent_attention: HashMap<u64, graffitty_workspace_core::graph::AttentionState>,
@@ -209,6 +211,7 @@ impl OwnerState {
             sessions: Vec::new(),
             workspaces: Default::default(),
             activity_revision: 0,
+            catalog_revision: 0,
             agent_attention: HashMap::new(),
             wiring: HashMap::new(),
             transcripts: HashMap::new(),
@@ -261,10 +264,12 @@ mod tests {
             graph.add(2, "Short-lived task".into());
             graph.remove(2);
             state.activity_revision = clock.current();
+            state.catalog_revision = 25;
             state.agent_attention.insert(1, graph.attention_state(1).unwrap());
             save(&descriptor, &state).unwrap();
             let loaded = load(&descriptor).unwrap();
             assert_eq!(loaded.version, 1);
+            assert_eq!(loaded.catalog_revision, 25);
             let adopted_clock = ActivityClock::default();
             adopted_clock.resume_after(loaded.activity_revision);
             let mut adopted = Graph::with_activity_clock(NodeSettings::default(), adopted_clock);

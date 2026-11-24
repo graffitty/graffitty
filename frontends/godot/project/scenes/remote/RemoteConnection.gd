@@ -68,6 +68,7 @@ var _shown_session := ""
 ## The session viewed before the current one, for LastSession.
 var last_session := ""
 var available_sessions: Array = []
+var catalog_revision := -1
 var sessions_known := false
 var stops_when_empty := false
 var _selecting_session := -1
@@ -560,6 +561,13 @@ func _receive(message: Dictionary) -> void:
 				_connection_error(tr("Server protocol %s is incompatible with app protocol %s. Update Graffitty on both devices.") % [str(message.get("version", "?")), str(Protocol.VERSION)])
 				return
 			if epoch != message.epoch:
+				local_ids = {}
+				subscriptions.clear()
+				_subscribed.clear()
+				stream_quality.clear()
+				chromium_viewports.clear()
+				_shown_session = ""
+				topology_received_revision = -1
 				frames.clear()
 				topology = { "tabs": [], "panes": [], "edges": [] }
 			epoch = message.epoch
@@ -570,7 +578,8 @@ func _receive(message: Dictionary) -> void:
 			# Retain the destination, not the previous socket's attachment.
 			if not workspace.is_empty(): preferred_session = workspace
 			workspace = str(message.get("workspace", ""))
-			available_sessions.clear()
+			available_sessions = []
+			catalog_revision = -1
 			sessions_known = false
 			_selecting_session = -1
 			_failed_dials = 0
@@ -597,6 +606,7 @@ func _receive(message: Dictionary) -> void:
 				frontend_generation += 1
 				socket.send_text(JSON.stringify({"type": "frontend_register", "generation": frontend_generation}))
 		"session_list":
+			catalog_revision = int(message.revision)
 			available_sessions = message.sessions
 			stops_when_empty = message.stops_when_empty == true
 			sessions_known = true
@@ -791,16 +801,15 @@ func local_id(id: int) -> int:
 		return id
 	var allocated: int = _core.local_id(id)
 	if allocated < 0:
-		var application: Node = get_node("/root/TerminalApplication")
-		var identity := JSON.stringify([url, epoch])
-		var mapping: Dictionary = application.remote_identity_maps.get_or_add(identity, {})
-		if not mapping.has(id): mapping[id] = _allocate_id(id)
-		allocated = mapping[id]
+		allocated = _allocate_id(id)
 		_core.bind_id(id, allocated)
 	return allocated
 
 func _allocate_id(wire: int) -> int:
-	return get_node("/root/TerminalApplication").allocate_id(wire > PaneAddress.CHROMIUM_BASE)
+	var application: Node = Engine.get_main_loop().root.get_node("TerminalApplication")
+	var mapping: Dictionary = application.remote_identity_maps.get_or_add(JSON.stringify([url, epoch]), {})
+	if not mapping.has(wire): mapping[wire] = application.allocate_id(wire > PaneAddress.CHROMIUM_BASE)
+	return mapping[wire]
 
 func wire_id(id: int) -> int:
 	return _core.wire_id(id) if namespace_ids else id

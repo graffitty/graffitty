@@ -5,7 +5,7 @@ use serde_json::{Value, json};
 use sha2::{Digest, Sha256};
 use std::{
     fs,
-    io::{Read, Seek, SeekFrom, Write},
+    io::{BufRead, BufReader, Read, Seek, SeekFrom, Write},
     path::{Path, PathBuf},
     time::Duration,
 };
@@ -137,7 +137,8 @@ fn codex_files(paths: &[PathBuf], root: &Value) -> Value {
         result["transcript_path"] = json!(path);
         // A long turn can put its start outside the bounded text preview.
         // Reconstruct lifecycle facts independently, including after restart.
-        let baseline = root.get("observed_turn").filter(|_| root["session_id"] == id);
+        let baseline = root.get("rollout_scan").filter(|scan| scan.is_object()).or(root.get("observed_turn"))
+            .filter(|_| root["session_id"] == id);
         match codex_lifecycle(&path, baseline) {
             Ok(lifecycle) => result.as_object_mut().unwrap().extend(lifecycle.as_object().unwrap().clone()),
             Err(error) => result["discovery_note"] = json!(error.to_string()),
@@ -243,7 +244,7 @@ pub fn scan(roots: &Value) -> Value {
         // A short daemon turn can start and finish between discovery polls.
         // Carry a completed-record checkpoint, not just instantaneous status.
         // Reading stays in this worker and is bounded to the transcript tail.
-        if kind == "codex" && state["status"] == "idle" {
+        if kind == "codex" && state["status"] == "idle" && !state["observed_turn"]["rollout_offset"].is_u64() {
             if let Some(path) = state["transcript_path"].as_str() {
                 if let Ok(tail) = transcript(Path::new(path), None) {
                     if tail["status"] != "busy" {
@@ -310,62 +311,69 @@ fn update_local_turn(turn: &mut Value, payload: &Value, offset: u64) -> bool {
     true
 }
 
-/// Resume at the previous complete lifecycle record. On attachment, scan
-/// backwards to the current turn start. The worker skips large content records
-/// and partial trailing lines without loading the rollout into memory.
+/// Scan complete rollout records in file order, including records without lifecycle events.
 fn codex_lifecycle(path: &Path, baseline: Option<&Value>) -> Result<Value> {
-    let mut file = fs::File::open(path)?;
-    let mut end = file.metadata()?.len();
-    let resume_at = baseline.and_then(|turn| turn["rollout_offset"].as_u64()).filter(|offset| *offset <= end);
-    let mut turn = baseline.filter(|_| resume_at.is_some()).cloned().unwrap_or(Value::Null);
-    let mut line_end = None;
-    let mut records = Vec::new();
     let deadline = std::time::Instant::now() + Duration::from_secs(2);
-    let mut read_record = |start: u64, end: u64| -> Result<bool> {
-        if resume_at.is_some_and(|offset| end < offset) { return Ok(true); }
-        if end - start > 1024 * 1024 { return Ok(false); }
-        file.seek(SeekFrom::Start(start))?;
-        let mut line = vec![0; (end - start) as usize];
-        file.read_exact(&mut line)?;
-        let Ok(record) = serde_json::from_slice::<Value>(&line) else { return Ok(false); };
-        let payload = &record["payload"];
-        if record["type"] != "event_msg" || codex_turn_status(payload).is_none() { return Ok(false); }
-        let starting = matches!(payload["type"].as_str(), Some("task_started" | "turn_started"));
-        // Keep provider error details and discard conversational content.
-        records.push((end + 1, record["timestamp"].clone(), json!({"type":payload["type"],"turn_id":payload["turn_id"],
-            "error":payload["error"],"message":if payload["type"] == "error" { &payload["message"] } else { &Value::Null },"codex_error_info":payload["codex_error_info"]})));
-        Ok(resume_at.is_none() && starting)
-    };
-    let mut blocks = fs::File::open(path)?;
-    'scan: while end > 0 {
-        if std::time::Instant::now() >= deadline { return Err("Codex lifecycle scan timed out".into()); }
-        let start = end.saturating_sub(128 * 1024);
-        blocks.seek(SeekFrom::Start(start))?;
-        let mut block = vec![0; (end - start) as usize];
-        blocks.read_exact(&mut block)?;
-        for (offset, byte) in block.iter().enumerate().rev() {
-            if *byte != b'\n' { continue; }
-            let position = start + offset as u64;
-            if let Some(previous) = line_end && read_record(position + 1, previous)? { break 'scan; }
-            line_end = Some(position);
+    scan_rollout(path, baseline, || std::time::Instant::now() >= deadline)
+}
+
+fn scan_rollout(path: &Path, baseline: Option<&Value>, mut expired: impl FnMut() -> bool) -> Result<Value> {
+    const MAX_RECORD: usize = 1024 * 1024;
+    let mut file = fs::File::open(path)?;
+    let len = file.metadata()?.len();
+    let baseline = baseline.filter(|value| value["rollout_offset"].as_u64().is_some_and(|n| n <= len));
+    let attaching = baseline.is_none_or(|value| value["attachment_end"].is_u64());
+    // Finish the historical snapshot before consuming records appended during attachment.
+    let end = baseline.and_then(|value| value["attachment_end"].as_u64()).unwrap_or(len).min(len);
+    let mut offset = baseline.and_then(|value| value["rollout_offset"].as_u64()).unwrap_or(0);
+    let mut turn = baseline.map(|value| if attaching { &value["turn"] } else { value }).cloned().unwrap_or(Value::Null);
+    let mut skip = baseline.is_some_and(|value| value["skip_record"] == true);
+    file.seek(SeekFrom::Start(offset))?;
+    let mut reader = BufReader::with_capacity(128 * 1024, file.take(end - offset));
+    let mut position = offset;
+    let mut line = Vec::new();
+    let mut failures = Vec::new();
+    while position < end {
+        let chunk = reader.fill_buf()?;
+        if chunk.is_empty() { break; }
+        let newline = chunk.iter().position(|byte| *byte == b'\n');
+        let used = newline.map_or(chunk.len(), |index| index + 1);
+        position += used as u64;
+        if line.len() + used > MAX_RECORD { skip = true; }
+        if !skip { line.extend_from_slice(&chunk[..used]); }
+        reader.consume(used);
+        if newline.is_some() {
+            if !skip && let Ok(record) = serde_json::from_slice::<Value>(&line) && record["type"] == "event_msg" {
+                let was_failed = turn["status"] == "failed";
+                if update_local_turn(&mut turn, &record["payload"], position) {
+                    turn["at"] = record["timestamp"].clone();
+                    if turn["status"] == "completed" { turn["completion_checkpoint"] = json!(position); }
+                    if !attaching && turn["status"] == "failed" && !was_failed {
+                        failures.push(turn.clone());
+                    }
+                }
+            }
+            line.clear();
+            skip = false;
+            offset = position;
+        } else if skip {
+            // The oversized record is discarded until its newline, even across polls.
+            offset = position;
+        } else {
+            // Finish this bounded record before yielding, or retry it after an append.
+            continue;
         }
-        end = start;
-        if end == 0 && let Some(last) = line_end { read_record(0, last)?; }
+        if expired() { break; }
     }
-    let mut failures = Vec::<Value>::new();
-    for (offset, at, payload) in records.into_iter().rev() {
-        let was_failed = turn["status"] == "failed";
-        if !update_local_turn(&mut turn, &payload, offset) { continue; }
-        if baseline.is_some() && turn["status"] == "failed" && !was_failed {
-            failures.push(turn.clone());
-        }
-        turn["rollout_offset"] = json!(offset);
-        turn["at"] = at;
+    if attaching && position < end {
+        return Ok(json!({"rollout_scan":{"attachment_end":end,"rollout_offset":offset,"skip_record":skip,"turn":turn}}));
     }
-    let mut state = json!({"observed_turn":turn,"failed_turns":failures});
-    if turn.is_null() {
-        state["observed_turn"] = json!({"rollout_offset":0});
-    } else if turn["status"].is_string() {
+    turn["rollout_offset"] = json!(offset);
+    if skip { turn["skip_record"] = json!(true); }
+    else { turn.as_object_mut().unwrap().remove("skip_record"); }
+    let mut state = json!({"observed_turn":turn,"rollout_scan":null,"failed_turns":failures});
+    if turn["completion_checkpoint"].is_u64() { state["completion_checkpoint"] = turn["completion_checkpoint"].clone(); }
+    if turn["status"].is_string() {
         state["status"] = json!(if turn["status"] == "inProgress" { "busy" } else { "idle" });
         if !turn["at"].is_null() { state["status_at"] = turn["at"].clone(); }
     }
@@ -651,6 +659,81 @@ mod codex_discovery_tests {
         assert_eq!(live, json!({}));
         assert_eq!(reused["t1"]["status"], "offline");
         assert_eq!(scan(&roots(&started))["t1"]["status"], "offline");
+    }
+
+    #[test]
+    fn rollout_deadlines_advance_past_output_and_preserve_a_partial_failure() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("rollout.jsonl");
+        let mut file = fs::File::create(&path).unwrap();
+        let start = json!({"type":"event_msg","payload":{"type":"task_started","turn_id":"live"}});
+        writeln!(file, "{start}").unwrap();
+        let mut observed = codex_lifecycle(&path, None).unwrap()["observed_turn"].clone();
+        let start_offset = observed["rollout_offset"].as_u64().unwrap();
+        for _ in 0..1000 { writeln!(file, r#"{{"type":"response_item","payload":{{"type":"function_call_output"}}}}"#).unwrap(); }
+        let complete_offset = file.metadata().unwrap().len();
+        let failure = json!({"type":"event_msg","payload":{"type":"error","message":"Quota exceeded"}});
+        write!(file, "{failure}").unwrap();
+        let mut polls = 0;
+        while observed["rollout_offset"] != complete_offset {
+            let mut records = 0;
+            let scan = scan_rollout(&path, Some(&observed), || { records += 1; records >= 31 }).unwrap();
+            let next = &scan["observed_turn"];
+            assert!(next["rollout_offset"].as_u64() > observed["rollout_offset"].as_u64());
+            assert_eq!(next["status"], "inProgress");
+            observed = next.clone();
+            polls += 1;
+        }
+        assert!(polls > 1 && complete_offset > start_offset);
+        assert_eq!(codex_lifecycle(&path, Some(&observed)).unwrap()["observed_turn"], observed);
+        writeln!(file).unwrap();
+        let failed = codex_lifecycle(&path, Some(&observed)).unwrap();
+        assert_eq!(failed["status"], "idle");
+        assert_eq!(failed["failed_turns"][0]["id"], "live");
+        assert_eq!(codex_lifecycle(&path, failed.get("observed_turn")).unwrap()["failed_turns"], json!([]));
+    }
+
+    #[test]
+    fn oversized_unterminated_record_resumes_skipping_until_its_newline() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("rollout.jsonl");
+        let mut file = fs::File::create(&path).unwrap();
+        let mut scan = codex_lifecycle(&path, None).unwrap();
+        file.write_all(&vec![b'x'; 2 * 1024 * 1024]).unwrap();
+        let end = file.metadata().unwrap().len();
+        while scan["observed_turn"]["rollout_offset"] != end {
+            let next = scan_rollout(&path, scan.get("observed_turn"), || true).unwrap();
+            assert!(next["observed_turn"]["rollout_offset"].as_u64() > scan["observed_turn"]["rollout_offset"].as_u64());
+            assert_eq!(next["observed_turn"]["skip_record"], true);
+            scan = next;
+        }
+        writeln!(file).unwrap();
+        writeln!(file, "{}", json!({"type":"event_msg","payload":{"type":"task_complete","turn_id":"done"}})).unwrap();
+        let done = codex_lifecycle(&path, scan.get("observed_turn")).unwrap();
+        assert_eq!(done["observed_turn"]["id"], "done");
+        assert!(done["observed_turn"].get("skip_record").is_none());
+        assert_eq!(done["completion_checkpoint"], file.metadata().unwrap().len());
+    }
+
+    #[test]
+    fn timed_out_attachment_resumes_without_replaying_history_or_missing_new_records() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("rollout.jsonl");
+        let mut file = fs::File::create(&path).unwrap();
+        for payload in [json!({"type":"task_started"}), json!({"type":"error","message":"old"}),
+            json!({"type":"task_started","turn_id":"new"})] {
+            writeln!(file, "{}", json!({"type":"event_msg","payload":payload})).unwrap();
+        }
+        let first = scan_rollout(&path, None, || true).unwrap();
+        assert!(first.get("observed_turn").is_none());
+        writeln!(file, "{}", json!({"type":"event_msg","payload":{"type":"error","message":"new failure"}})).unwrap();
+        let second = scan_rollout(&path, first.get("rollout_scan"), || true).unwrap();
+        assert!(second["rollout_scan"]["rollout_offset"].as_u64() > first["rollout_scan"]["rollout_offset"].as_u64());
+        let attached = scan_rollout(&path, second.get("rollout_scan"), || true).unwrap();
+        assert_eq!(attached["observed_turn"]["id"], "new");
+        assert_eq!(attached["failed_turns"], json!([]));
+        let live = scan_rollout(&path, attached.get("observed_turn"), || true).unwrap();
+        assert_eq!(live["failed_turns"][0]["error"]["message"], "new failure");
     }
 
     #[test]

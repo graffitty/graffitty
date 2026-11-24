@@ -20,6 +20,7 @@ var _acknowledging: Dictionary = {}
 var _receipt_owners: Dictionary = {}
 var _activity: Dictionary = {}
 var _activity_scopes: Dictionary = {}
+var _catalogs := {}
 ## Shared by tab markers and the agent list. Recordings and headless fixtures
 ## can supply their viewed host without taking native window focus.
 var in_view: Callable = host_in_view
@@ -81,6 +82,13 @@ func refresh() -> void:
 	var graph: Object = application.agent_api.graph
 	var nodes: Dictionary = graph.nodes.duplicate()
 	_receipt_owners = graph.remote_owners.duplicate()
+	# A shared graph row can still belong to the previous attachment. Remote
+	# snapshots below carry the peer and epoch that actually supplied the row.
+	for key in graph.remote_owners:
+		var owner: Node = graph.remote_owners[key]
+		if is_instance_valid(owner) and "topology" in owner:
+			nodes.erase(key)
+			_receipt_owners.erase(key)
 	var visible_views := {}
 	var peers := {}
 	var scopes := {}
@@ -103,6 +111,17 @@ func refresh() -> void:
 	# Parked connections can still confirm or retry a receipt after a session switch.
 	for group in preload("res://scenes/session/SessionsList.gd").collect(application.hosts, []):
 		if is_instance_valid(group.get("peer")): peers[group.peer] = true
+	# A delayed socket can deliver an old full inventory after another socket
+	# has already reported a removal or transfer in the same server epoch.
+	var connected_scopes := {}
+	for peer in peers:
+		if not is_instance_valid(peer) or not peer.connected: continue
+		var scope := [peer.url, peer.epoch]
+		connected_scopes[scope] = true
+		if int(peer.catalog_revision) >= int(_catalogs.get(scope, {}).get("revision", -1)):
+			_catalogs[scope] = {"revision": peer.catalog_revision, "sessions": peer.available_sessions}
+	for scope in _catalogs.keys():
+		if not connected_scopes.has(scope): _catalogs.erase(scope)
 	var displayed_events := {}
 	for peer in peers:
 		if not is_instance_valid(peer): continue
@@ -116,12 +135,18 @@ func refresh() -> void:
 			for row in snapshot.get("nodes", []) if snapshot is Dictionary else []:
 				view_nodes[row.node] = row
 		else:
-			for key in nodes:
+			for key in graph.nodes:
 				if graph.remote_owners.get(key) == peer: view_nodes[key] = graph.nodes[key]
 		for key in view_nodes:
-			_merge_activity(key, view_nodes[key], peer, snapshot_session, nodes, scopes)
+			_merge_activity(key, view_nodes[key], peer, snapshot_session, nodes, scopes, visible_views)
 		if peer.connected:
-			for session in peer.available_sessions:
+			if peer.session_view_ready(peer.workspace):
+				for session in peer.available_sessions:
+					if session.id != peer.workspace: continue
+					for row in session.get("agents", []):
+						var key := PaneAddress.key(peer.local_id(int(row.pane)))
+						if _newer(row, view_nodes.get(key, {})): view_nodes[key] = row
+			for session in catalog_for(peer):
 				for summary in session.get("agents", []):
 					var pane := int(summary.get("pane", -1))
 					if pane < 0: continue
@@ -129,9 +154,7 @@ func refresh() -> void:
 					if not live.has(key): live.append(key)
 					var row: Dictionary = summary.duplicate()
 					row.program_status = summary.get("program")
-					_merge_activity(key, row, peer, session.id, nodes, scopes)
-					if session.id == peer.workspace and peer.session_view_ready(session.id) and _newer(row, view_nodes.get(key, {})):
-						view_nodes[key] = row
+					_merge_activity(key, row, peer, session.id, nodes, scopes, visible_views)
 		# Only this window's own graph or ready catalog describes what it showed.
 		# A disconnected screen can authorize its cached UUID via another route.
 		if peer.connected and not peer.session_view_ready(peer.workspace): continue
@@ -155,15 +178,26 @@ func refresh() -> void:
 		application.agents.refresh()
 
 
+func catalog_for(peer: Node) -> Array:
+	return _catalogs.get([peer.url, peer.epoch], {}).get("sessions", peer.available_sessions)
+
+
 static func _newer(candidate: Dictionary, current: Dictionary) -> bool:
 	return current.is_empty() or int(candidate.get("activity_revision", 0)) > int(current.get("activity_revision", 0))
 
 
-func _merge_activity(key: String, row: Dictionary, peer: Node, session: String, nodes: Dictionary, scopes: Dictionary) -> void:
+func _merge_activity(key: String, row: Dictionary, peer: Node, session: String, nodes: Dictionary, scopes: Dictionary, visible_views: Dictionary) -> void:
 	var current: Dictionary = nodes.get(key, {})
 	var route: Node = _receipt_owners.get(key)
 	var live_route: bool = peer.connected and (not is_instance_valid(route) or not route.connected)
-	# A live peer may replace a disconnected route at the same revision.
+	# Raw (non-namespaced) views can reuse a key on a replacement server.
+	# Revisions are comparable only within one server epoch.
+	if is_instance_valid(route) and (route.url != peer.url or route.epoch != peer.epoch):
+		if peer.connected != route.connected:
+			if not peer.connected: return
+		elif key not in visible_views.get(peer, []) or key in visible_views.get(route, []):
+			return
+		current = {}
 	if _newer(row, current) or (int(row.get("activity_revision", 0)) == int(current.get("activity_revision", 0)) and live_route):
 		nodes[key] = row
 		_receipt_owners[key] = peer

@@ -72,10 +72,14 @@ pub(super) fn update(node: &mut Value, previous_status: &str, replaced: bool) {
         _ => None,
     };
     if let Some(kind) = kind {
-        node["attention"] = json!(AgentAttention {
-            event: uuid::Uuid::new_v4().to_string(), kind, seen: false,
-        });
+        issue(node, kind);
     }
+}
+
+pub(super) fn issue(node: &mut Value, kind: AttentionKind) {
+    node["attention"] = json!(AgentAttention {
+        event: uuid::Uuid::new_v4().to_string(), kind, seen: false,
+    });
 }
 
 pub(super) fn validate(value: &Value) -> Result<Option<AgentAttention>> {
@@ -170,6 +174,47 @@ mod tests {
         assert_eq!(attention["seen"], false);
         uuid::Uuid::parse_str(attention["event"].as_str().unwrap()).unwrap();
         attention
+    }
+
+    #[test]
+    fn discovery_receipts_follow_each_verified_codex_turn() {
+        let mut graph = Graph::default();
+        graph.add(1, "Codex".into());
+        let scan = |graph: &mut Graph, id, turn_status, status, checkpoint| {
+            graph.observe_agent(1, &json!({"provider":"codex","pid":12,"session_id":"one",
+                "status":status,"observed_turn":{"id":id,"status":turn_status},"completion_checkpoint":checkpoint}));
+        };
+        scan(&mut graph, "historical", "completed", "idle", 50);
+        assert!(receipt(&graph).is_null());
+        scan(&mut graph, "a", "running", "busy", 50);
+        scan(&mut graph, "a", "completed", "idle", 100);
+        let first = receipt(&graph);
+        ack(&mut graph, &first);
+        let revision = graph.nodes["t1"]["activity_revision"].as_u64().unwrap();
+        scan(&mut graph, "b", "completed", "idle", 200);
+        let second = receipt(&graph);
+        assert_eq!(second["kind"], "completed");
+        assert_eq!(second["seen"], false);
+        assert_ne!(second["event"], first["event"]);
+        assert!(graph.nodes["t1"]["activity_revision"].as_u64().unwrap() > revision);
+        ack(&mut graph, &second);
+        let seen = receipt(&graph);
+        scan(&mut graph, "b", "completed", "idle", 201);
+        assert_eq!(receipt(&graph), seen);
+        for status in ["interrupted", "failed"] {
+            scan(&mut graph, "retry", status, "idle", 202);
+            assert!(receipt(&graph).is_null());
+            scan(&mut graph, "retry", "completed", "idle", 203);
+            assert_eq!(receipt(&graph)["kind"], "completed");
+        }
+
+        graph.dispatch(1, "agent.event", &json!({"provider":"codex","event":"UserPromptSubmit","integrated":true})).unwrap();
+        hook(&mut graph, "Stop");
+        let from_hook = receipt(&graph);
+        ack(&mut graph, &from_hook);
+        let seen = receipt(&graph);
+        scan(&mut graph, "hook-turn", "completed", "idle", 300);
+        assert_eq!(receipt(&graph), seen);
     }
 
     #[test]
