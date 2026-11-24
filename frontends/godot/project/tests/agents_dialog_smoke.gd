@@ -76,6 +76,11 @@ func run() -> void:
 	await settle()
 	shown = texts(dialog)
 	check("work" in shown and "build · api" in shown and "build · web" in shown and shown.count("build · api") == 1, "Repeated server/session is skipped; local omits the server name: %s" % [shown])
+	for index in [0, 2, 4]:
+		var caption_rect: Rect2 = dialog.view.hit_rect("ctx-test-%d" % index)
+		var agent_rect: Rect2 = dialog.view.hit_rect("ag-test-%d" % index)
+		check(caption_rect.has_area() and caption_rect.end.y <= agent_rect.position.y,
+			"Server/session caption ends above its agent row %d" % index)
 	var full_caption: float = dialog.view.hit_rect("ctx-test-0").size.y
 	var tall: Vector2i = dialog.size
 	dialog.size = Vector2i(tall.x, 120)
