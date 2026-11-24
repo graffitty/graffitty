@@ -8,6 +8,7 @@ use std::time::{Duration, Instant};
 pub(super) struct Submission {
     pub record: Value,
     pub cancelling: bool,
+    process_ended: bool,
     retry_at: Option<Instant>,
     retry_delay: Duration,
 }
@@ -68,7 +69,7 @@ pub(super) fn finish_submit(pending: &mut Pending, graphs: &mut HashMap<String, 
         // Even a late acceptance of a revoked event needs its original target for cancellation.
         record["submission_id"] = json!(submission);
         pending.insert(event_id.as_str().unwrap_or("").to_owned(), Submission {
-            record, cancelling: false, retry_at: None, retry_delay: Duration::from_secs(1),
+            record, cancelling: false, process_ended: false, retry_at: None, retry_delay: Duration::from_secs(1),
         });
     }
     if let Some(graph) = authorized {
@@ -85,9 +86,15 @@ pub(super) fn finish_poll(pending: &mut Pending, graphs: &mut HashMap<String, Gr
     if result.get("error").is_some() { return; }
     for sampled in context["records"].as_array().into_iter().flatten() {
         let Some(id) = sampled["event"]["event_id"].as_str() else { continue; };
-        let Some(submission) = pending.get(id) else { continue; };
+        let Some(submission) = pending.get_mut(id) else { continue; };
         let current = &submission.record;
         if current["submission_id"] != sampled["submission_id"] { continue; }
+        // An earlier queue poll may finish while the delete RPC is still
+        // running. Its process observation cannot settle the provider's reply.
+        if submission.cancelling {
+            if status == CodexQueueStatus::ProcessEnded { submission.process_ended = true; }
+            continue;
+        }
         let graph = graphs.get_mut(current["workspace"].as_str().unwrap_or(""));
         let final_status = match &status {
             CodexQueueStatus::Listed { queued_ids } => {
@@ -95,7 +102,7 @@ pub(super) fn finish_poll(pending: &mut Pending, graphs: &mut HashMap<String, Gr
                     || !graph.as_deref().is_some_and(|g| allowed(g, current)) { continue; }
                 "started or removed in Codex"
             }
-            CodexQueueStatus::ProcessEnded if submission.cancelling || submission.retry_at.is_some()
+            CodexQueueStatus::ProcessEnded if submission.retry_at.is_some()
                 || !graph.as_deref().is_some_and(|g| allowed(g, current)) =>
                 "cancellation unconfirmed: original Codex process ended",
             CodexQueueStatus::ProcessEnded => "delivery unconfirmed: original Codex process ended",
@@ -110,7 +117,9 @@ pub(super) fn finish_cancel(pending: &mut Pending, graphs: &mut HashMap<String, 
     let Some(submission) = pending.get_mut(id) else { return; };
     if submission.record["submission_id"] != record["submission_id"] { return; }
     let graph = graphs.get_mut(submission.record["workspace"].as_str().unwrap_or(""));
-    let outcome = serde_json::from_value::<CodexCancelOutcome>(result.clone()).ok().filter(|_| result.get("error").is_none());
+    let outcome = serde_json::from_value::<CodexCancelOutcome>(result.clone()).ok()
+        .filter(|_| result.get("error").is_none())
+        .or_else(|| submission.process_ended.then_some(CodexCancelOutcome::ProcessEnded));
     let status = match outcome {
         Some(CodexCancelOutcome::Deleted) => "cancelled in Codex".to_owned(),
         Some(CodexCancelOutcome::Absent) => "already started or removed in Codex; cannot recall".to_owned(),
@@ -129,6 +138,58 @@ pub(super) fn finish_cancel(pending: &mut Pending, graphs: &mut HashMap<String, 
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn cancel_reply_settles_the_submission_when_a_process_exit_poll_races_it() {
+        for poll_first in [false, true] {
+            for (reply, expected) in [
+                (json!(CodexCancelOutcome::Deleted), "cancelled in Codex"),
+                (json!(CodexCancelOutcome::Absent), "already started or removed in Codex; cannot recall"),
+                (json!(CodexCancelOutcome::Absent), "sent to receiver"),
+                (json!(CodexCancelOutcome::ProcessEnded), "cancellation unconfirmed: original Codex process ended"),
+                (json!({"error":{"message":"lost reply"}}), "cancellation unconfirmed: original Codex process ended"),
+            ] {
+                let mut graph = Graph::default();
+                for id in [1,2] {
+                    graph.add(id, "Agent".into());
+                    graph.dispatch(id, "agent.event", &json!({"provider":"codex","event":"SessionStart","pid":id,"session_id":format!("s{id}")})).unwrap();
+                }
+                let wire = graph.dispatch(1, "graph.connect", &json!({"from":"t1","to":"t2","send":true})).unwrap();
+                graph.dispatch(1, "graph.send", &json!({"to":"t2","text":"test"})).unwrap();
+                let event = graph.queues["t2"][0].clone();
+                let id = event["event_id"].as_str().unwrap();
+                let record = json!({"workspace":"one","id":2,"target":graph.nodes["t2"],"event":event,"inbox_generation":graph.inbox_generation("t2"),"text":graph.delivery_prompt(&event)});
+                let mut graphs = HashMap::from([("one".into(), graph)]);
+                let mut pending = HashMap::new();
+                finish_submit(&mut pending, &mut graphs, record, &json!({"queuedSubmission":{"id":"sub-A"}}));
+                let poll = json!({"records":[pending[id].record]});
+                graphs.get_mut("one").unwrap().dispatch(1, "graph.disconnect", &wire).unwrap();
+                let cancel = cancellations(&mut pending, &graphs).pop().unwrap().1;
+                pending.get_mut(id).unwrap().cancelling = true;
+                let gone = json!(CodexQueueStatus::ProcessEnded);
+                if poll_first {
+                    finish_poll(&mut pending, &mut graphs, &poll, &gone);
+                    assert!(pending[id].cancelling);
+                    assert!(cancellations(&mut pending, &graphs).is_empty());
+                }
+                // The receiver can move again after either worker launched.
+                let moved = HashSet::from([1,2]);
+                let mut destination = Graph::default();
+                graphs.get_mut("one").unwrap().transfer_nodes_to(&moved, &mut destination);
+                graphs.insert("two".into(), destination);
+                move_record(&mut pending.get_mut(id).unwrap().record, "one", "two", &moved);
+                if expected == "sent to receiver" {
+                    let hook = json!({"provider":"codex","event":"UserPromptSubmit","session_id":"s2","pid":2,"prompt":cancel["text"]});
+                    pending.retain(|_, submission| !prompt_started(submission, 2, &hook));
+                    graphs.get_mut("two").unwrap().dispatch(2, "agent.event", &hook).unwrap();
+                }
+                finish_cancel(&mut pending, &mut graphs, &cancel, &reply);
+                if !poll_first { finish_poll(&mut pending, &mut graphs, &poll, &gone); }
+                assert!(pending.is_empty());
+                assert_eq!(graphs["two"].snapshot()["journal"]["events"][0]["status"], expected, "{poll_first} / {reply}");
+            }
+        }
+    }
 
     #[test]
     fn retired_process_releases_native_admission_with_unconfirmed_provider_outcome() {
