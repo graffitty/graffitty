@@ -724,6 +724,7 @@ fn native_prompt_start_is_receiver_scoped_and_wins_a_late_queue_ack() {
 fn queue_acceptance_remains_pending_until_the_receiver_starts() {
     let mut g = graph();
     let sent = send(&mut g, "run").unwrap();
+    let revision = g.queues["t2"][0]["edge_revision"].as_u64().unwrap();
     g.dispatch(
         2,
         "graph.ack",
@@ -734,7 +735,10 @@ fn queue_acceptance_remains_pending_until_the_receiver_starts() {
     assert!(g.queues["t2"].is_empty());
     assert_eq!(g.journal.snapshot("")["pending"], 1);
     let row = g.journal.snapshot("")["events"][0].clone();
+    assert_eq!(row["edge_revision"],revision);
+    assert_eq!(g.receipts.last().unwrap()["edge_revision"],revision);
     g.record_delivery(&row, "started or removed in Codex", false);
+    assert_eq!(g.receipts.last().unwrap()["edge_revision"],revision);
     assert!(!g.native_pending(sent["event_id"].as_str().unwrap()));
     assert_eq!(g.journal.snapshot("")["pending"], 0);
 }
@@ -847,7 +851,7 @@ fn configured_node_budgets_and_history_are_used() {
     assert_eq!(snapshot["limits"]["pending_per_node"],1);
     assert_eq!(snapshot["limits"]["run_messages"],2);
     for id in 0..4 {
-        graph.record_delivery(&json!({"event_id":format!("custom-{id}"),"source":"t1","target":"t2"}), "delivered", false);
+        graph.record_delivery(&json!({"event_id":format!("custom-{id}"),"source":"t1","target":"t2","edge_revision":1}), "delivered", false);
     }
     assert_eq!(graph.receipts.len(),2);
 }

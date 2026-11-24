@@ -44,7 +44,7 @@ func test_inspector_coalesces_changes_and_does_not_poll_hidden_or_unrelated_queu
 	graph.free()
 
 func event(id: String) -> Dictionary:
-	return {"event_id":id, "source":"t1", "target":"t2", "kind":"test", "created":1.0, "text":"private", "payload":{"secret":"private"}, "sessions":[{"path":"/private"}]}
+	return {"event_id":id, "edge_revision":1, "source":"t1", "target":"t2", "kind":"test", "created":1.0, "text":"private", "payload":{"secret":"private"}, "sessions":[{"path":"/private"}]}
 
 func test_connection_inspector_updates_in_place_and_excludes_other_wires() -> void:
 	var g := Graph.new()
@@ -77,7 +77,7 @@ func test_connection_inspector_updates_in_place_and_excludes_other_wires() -> vo
 func record(log: RefCounted, event: Dictionary, status: String, pending: bool) -> void:
 	var id := str(event.event_id)
 	var rows: Dictionary = log.entries.duplicate(true)
-	rows[id] = {"event_id":id,"source":event.source,"target":event.target,"edge":event.source+">"+event.target,"kind":"test","queued_at":1.0,"updated_at":2.0,"status":status,"pending":pending,"transitions":[],"run_id":""}
+	rows[id] = {"event_id":id,"edge_revision":event.edge_revision,"source":event.source,"target":event.target,"edge":event.source+">"+event.target,"kind":"test","queued_at":1.0,"updated_at":2.0,"status":status,"pending":pending,"transitions":[],"run_id":""}
 	var counts := {}
 	var pending_count := 0
 	for row in rows.values():

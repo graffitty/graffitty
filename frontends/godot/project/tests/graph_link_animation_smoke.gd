@@ -117,6 +117,7 @@ func run() -> void:
 	check(resized_link.points[0].is_equal_approx(overlay.port_center("t0/out", true)),
 		"Resized socket keeps its wire endpoint on the visible center")
 	test_failed_marker_during_zoom()
+	test_same_ports_reconnected()
 	canvas.free()
 	graph.free()
 	quit(1 if failures else 0)
@@ -158,3 +159,63 @@ func test_failed_marker_during_zoom() -> void:
 	painter.free()
 	parent.free()
 	graph.free()
+
+
+func journal_row(id: String, revision: int, status: String, pending := false) -> Dictionary:
+	return {"event_id":id, "source":"t1", "target":"t2", "source_port":"send", "target_port":"in",
+		"edge":"t1/send>t2/in", "edge_revision":revision, "status":status, "pending":pending,
+		"queued_at":1.0, "updated_at":2.0}
+
+
+func test_same_ports_reconnected() -> void:
+	var graph := preload("res://scenes/AgentGraph.gd").new()
+	var owner := Node.new()
+	var overlay := Overlay.new()
+	root.add_child(overlay)
+	overlay.graph = graph
+	var edge := {"from":"t1","to":"t2","from_port":"send","to_port":"in","send":true,"revision":1}
+	var snapshot := {"nodes":[{"node":"t1","provider":"codex"},{"node":"t2","provider":"codex"}],
+		"edges":[edge], "queues":{}, "journal":{"events":[]}}
+	var rects := {"t1":Rect2(0,0,200,200), "t2":Rect2(600,0,200,200)}
+	var project := func(point): return point
+	graph.import_remote(owner, snapshot)
+	overlay.sync(rects, graph.edges.values(), project, true)
+	var old_path: PackedVector2Array = overlay.sheet_links[0].points
+	var pending := journal_row("old-pending", 1, "queued in Codex", true)
+	snapshot.journal.events = [pending, journal_row("in-flight", 1, "delivered")]
+	graph.import_remote(owner, snapshot)
+	check(overlay.waiting.size() == 1 and overlay.pulses.size() == 1, "The original wire has a pending indicator and a moving delivery")
+
+	# One snapshot can coalesce removal and reconnect before the next frame.
+	# Move the receiver to give its replacement a visibly different path.
+	edge.revision = 2
+	graph.import_remote(owner, snapshot)
+	rects.t2.position += Vector2(0, 250)
+	overlay.sync(rects, graph.edges.values(), project, true)
+	overlay._process(0.0)
+	check(overlay.waiting.is_empty() and overlay.pulses.is_empty(), "The replacement wire inherits neither a queued indicator nor a moving delivery")
+	var fresh := journal_row("fresh", 2, "queued in Codex", true)
+	snapshot.journal.events = [pending, fresh, journal_row("late-success", 1, "delivered"),
+		journal_row("unseen-failure", 1, "failed: delayed")]
+	snapshot.queues = {"t2":[pending, fresh]}
+	graph.import_remote(owner, snapshot)
+	check(overlay.waiting.size() == 1 and overlay.waiting.values()[0].ids.keys() == ["fresh"],
+		"Only the new revision's pending event contributes a queue indicator")
+	check(overlay.pulses.is_empty(), "Late unseen outcomes cannot animate the same ports' replacement wire")
+
+	snapshot.queues = {}
+	snapshot.journal.events = [journal_row("old-pending", 1, "failed: delayed"), journal_row("fresh", 2, "delivered")]
+	graph.import_remote(owner, snapshot)
+	var failures_on_old := overlay.pulses.filter(func(p): return p.event_id == "old-pending" and p.get("failed", false))
+	var successes_on_new := overlay.pulses.filter(func(p): return p.event_id == "fresh" and not p.get("failed", false))
+	check(overlay.waiting.is_empty() and failures_on_old.size() == 1 and successes_on_new.size() == 1,
+		"The cached failure and the current delivery each animate once after terminal status arrives")
+	if failures_on_old.size() == 1:
+		var route: Dictionary = overlay._pulse_route(failures_on_old[0])
+		check(route.detached and route.link.points == old_path, "The delayed failure follows its original detached geometry")
+	if successes_on_new.size() == 1:
+		var route: Dictionary = overlay._pulse_route(successes_on_new[0])
+		check(route.link.points == overlay.links[0].points and route.link.points != old_path, "The new success follows the replacement wire")
+	overlay.free()
+	graph.free()
+	owner.free()

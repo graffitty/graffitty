@@ -532,7 +532,7 @@ func _show_edge_hint() -> void:
 
 func queue_indicator_position(queued: Dictionary) -> Vector2:
 	var route := _route(queued.source, queued.target, queued.key)
-	if route.is_empty(): return Vector2.INF
+	if route.is_empty() or route.link.revision != queued.revision: return Vector2.INF
 	var link: Dictionary = route.link
 	var distance: float = minf(12.0, link.lengths[-1] * 0.2)
 	if queued.get("received", false): distance = link.lengths[-1] - distance
@@ -579,9 +579,11 @@ func _route(source: String, target: String, key := "") -> Dictionary:
 func _message_transferred(source: String, target: String, event_id: String) -> void:
 	queued_routes.erase(event_id)
 	var key: String = graph.event_edges.get(event_id, source + ">" + target)
-	if not is_visible_in_tree() or _route(source, target, key).is_empty(): return
+	var revision = graph.queue_log.entries.get(event_id, {}).get("edge_revision")
+	var link := _sheet_link(source, target, key)
+	if not is_visible_in_tree() or link.is_empty() or link.revision != revision: return
 	# Flow means sent/received by the adapter, or dequeued by Codex, not model completion.
-	pulses.append({"source": source, "target": target, "event_id": event_id, "key": key, "distance": 0.0, "age": 0.0})
+	pulses.append({"source": source, "target": target, "event_id": event_id, "key": key, "revision": revision, "distance": 0.0, "age": 0.0})
 	if pulses.size() > 64: pulses.pop_front()
 	set_process(true)
 	marker_layer.queue_redraw()
@@ -589,9 +591,11 @@ func _message_transferred(source: String, target: String, event_id: String) -> v
 
 func _message_rejected(source: String, target: String, event_id: String, reason: String) -> void:
 	var key: String = graph.event_edges.get(event_id, source + ">" + target)
-	var link: Dictionary = queued_routes.get(event_id, _sheet_link(source, target, key))
+	var revision = graph.queue_log.entries.get(event_id, {}).get("edge_revision")
+	var link := _sheet_link(source, target, key)
+	if link.is_empty() or link.revision != revision: link = queued_routes.get(event_id, {})
 	queued_routes.erase(event_id)
-	if not is_visible_in_tree() or link.is_empty(): return
+	if not is_visible_in_tree() or link.is_empty() or link.revision != revision: return
 	for pulse in pulses.duplicate():
 		if pulse.event_id == event_id:
 			if pulse.get("failed", false): return
@@ -606,8 +610,10 @@ func _message_rejected(source: String, target: String, event_id: String, reason:
 
 
 func _pulse_route(pulse: Dictionary) -> Dictionary:
-	if not pulse.get("failed", false): return _route(pulse.source, pulse.target, pulse.key)
 	var live := _sheet_link(pulse.source, pulse.target, pulse.key)
+	if not pulse.get("failed", false):
+		if live.is_empty() or live.revision != pulse.revision: return {}
+		return {"link": _screen_link(live), "reverse": false}
 	var fallback: Dictionary = pulse.link
 	var detached: bool = live.is_empty() or live.revision != fallback.revision
 	if not detached: pulse.link = live
@@ -631,15 +637,16 @@ func _refresh_waiting() -> void:
 func _add_waiting(event: Dictionary) -> void:
 	if not is_visible_in_tree(): return
 	var key: String = graph.event_edge(event)
-	if not graph.edges.has(key) or _edge_paused(graph.edges[key]): return
+	var edge: Dictionary = graph.edges.get(key, {})
+	if edge.is_empty() or edge.revision != event.edge_revision or _edge_paused(edge): return
 	var link := _sheet_link(event.source, event.target, key)
-	if link.is_empty(): return
+	if link.is_empty() or link.revision != event.edge_revision: return
 	queued_routes[event.event_id] = link
 	if queued_routes.size() > 256: queued_routes.erase(queued_routes.keys()[0])
 	var failed: bool = event.get("progress", {}).get("status", "") == "failed"
 	var received: bool = failed or event.get("progress", {}).get("status", "") == "pending"
 	var group := key + (":failed" if failed else (":received" if received else ""))
-	if not waiting.has(group): waiting[group] = {"source": event.source, "target": event.target, "key": key, "ids": {}, "received": received, "failed": failed}
+	if not waiting.has(group): waiting[group] = {"source": event.source, "target": event.target, "key": key, "revision": link.revision, "ids": {}, "received": received, "failed": failed}
 	waiting[group].ids[event.event_id] = true
 
 

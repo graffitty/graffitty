@@ -292,7 +292,7 @@ mod tests {
         "edges":[],"queues":{},"journal":{"events":[]},"limits":{"run_messages":100}})
     }
     fn row(status: &str, pending: bool) -> Value {
-        json!({"event_id":"e","source":"t1","target":"t2","edge":"t1/send>t2/in", "pending":pending,
+        json!({"event_id":"e","source":"t1","target":"t2","edge_revision":1,"edge":"t1/send>t2/in", "pending":pending,
         "status":status,"queued_at":1.,"updated_at":2.})
     }
     #[test]
@@ -317,6 +317,22 @@ mod tests {
         );
         assert!(decode_message(br#"{"type":"topology","graph":{"queues":[]}}"#).is_err());
     }
+    #[test]
+    fn newly_imported_cancellation_identifies_the_original_wire() {
+        let mut state = GraphState::default();
+        let mut snapshot = snapshot();
+        state.receive(1, snapshot.clone()).unwrap();
+        snapshot["edges"] = json!([{"from":"t1","to":"t2","from_port":"send","to_port":"in","revision":4}]);
+        snapshot["journal"]["events"] = json!([row("cancelled: connection changed",false)]);
+        let changes = state.receive(1, snapshot).unwrap();
+        assert_eq!(changes.transfers.len(), 1);
+        let failure = &changes.transfers[0];
+        assert!(failure.failed);
+        let view = state.view();
+        assert_eq!(view["journal_entries"][&failure.event_id]["edge_revision"],1);
+        assert_eq!(view["edges"]["t1/send>t2/in"]["revision"],4);
+    }
+
     #[test]
     fn previews_stay_visual_and_other_workspaces_survive_rejection() {
         let mut state = GraphState::default();

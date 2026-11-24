@@ -425,6 +425,7 @@ pub fn connection(
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 pub struct Delivery {
     pub event_id: String,
+    pub edge_revision: u64,
     pub source: String,
     pub target: String,
     #[serde(default, skip_serializing_if = "Option::is_none")]

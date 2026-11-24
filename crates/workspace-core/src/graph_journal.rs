@@ -80,7 +80,7 @@ impl Journal {
             json!({
                 "event_id":id,"source":event["source"],"target":event["target"],
                 "source_port":event["source_port"],"target_port":event["target_port"],
-                "edge":super::graph::event_key(event),"run_id":event["run_id"],
+                "edge":super::graph::event_key(event),"edge_revision":event["edge_revision"],"run_id":event["run_id"],
                 "kind":event.get("kind").unwrap_or(&event["type"]),
                 "queued_at":event.get("created").cloned().unwrap_or(json!(now)),"transitions":[],
             })

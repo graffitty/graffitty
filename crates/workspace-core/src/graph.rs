@@ -260,7 +260,7 @@ impl Graph {
     pub fn record_delivery(&mut self, event: &Value, status: &str, pending: bool) {
         self.journal.record(event, status, pending);
         self.receipts.retain(|receipt| receipt["event_id"] != event["event_id"]);
-        self.receipts.push(json!({"event_id":event["event_id"],"source":event["source"],"target":event["target"],"edge":event_key(event),"status":status}));
+        self.receipts.push(json!({"event_id":event["event_id"],"source":event["source"],"target":event["target"],"edge":event_key(event),"edge_revision":event["edge_revision"],"status":status}));
         if self.receipts.len() > self.settings.receipts { self.receipts.remove(0); }
     }
     pub fn delivery_prompt(&self, event: &Value) -> String {
@@ -347,10 +347,10 @@ impl Graph {
         let edges: Vec<_> = self.outcome_edges(key, None, routes).map(|(_, edge)| edge.clone()).collect();
         for edge in edges {
             if let Err(error) = self.enqueue(&edge, params, None, true, checkpoint) {
-                let event = json!({"event_id":uuid(),"source":edge["from"],"target":edge["to"],"source_port":edge["from_port"],"target_port":edge["to_port"],"run_id":params["run_id"],"type":"turn.completed"});
+                let event = json!({"event_id":uuid(),"source":edge["from"],"target":edge["to"],"source_port":edge["from_port"],"target_port":edge["to_port"],"edge_revision":edge["revision"],"run_id":params["run_id"],"type":"turn.completed"});
                 let status = format!("failed: {error}");
                 self.journal.record(&event, &status, false);
-                self.receipts.push(json!({"event_id":event["event_id"],"source":event["source"],"target":event["target"],"edge":event_key(&event),"status":status}));
+                self.receipts.push(json!({"event_id":event["event_id"],"source":event["source"],"target":event["target"],"edge":event_key(&event),"edge_revision":event["edge_revision"],"status":status}));
                 if self.receipts.len() > self.settings.receipts { self.receipts.remove(0); }
                 return Err(error);
             }
@@ -376,7 +376,7 @@ impl Graph {
         for edge in edges {
             if let Err(error) = self.enqueue(&edge, &params, None, false, None) {
                 let event = json!({"event_id":uuid(),"source":key,"target":edge["to"],
-                    "source_port":output,"target_port":edge["to_port"],"run_id":params["run_id"],"type":"message"});
+                    "source_port":output,"target_port":edge["to_port"],"edge_revision":edge["revision"],"run_id":params["run_id"],"type":"message"});
                 self.journal.record(&event, &format!("failed: {error}"), false);
             }
         }
@@ -1301,7 +1301,7 @@ impl Graph {
                 } else { status_text.into() };
                 self.journal.record(&event, &journal_status, pending);
                 self.receipts.retain(|e| e["event_id"] != event["event_id"]);
-                self.receipts.push(json!({"event_id":event["event_id"],"source":event["source"],"target":key,"edge":event_key(&event),"status":status,"message":p["message"],"details":p["details"]}));
+                self.receipts.push(json!({"event_id":event["event_id"],"source":event["source"],"target":key,"edge":event_key(&event),"edge_revision":event["edge_revision"],"status":status,"message":p["message"],"details":p["details"]}));
                 if self.receipts.len() > self.settings.receipts {
                     self.receipts.remove(0);
                 }

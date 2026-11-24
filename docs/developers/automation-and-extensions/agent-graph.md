@@ -59,6 +59,8 @@ A connection from A's output to B's input determines what B receives or can read
 - An idle agent is not necessarily waiting for human input.
 - Connections stay within one tab. Moving a connected group carries its connections with it, including paused ones.
 
+A red × marks a failed or cancelled delivery. It follows the wire that carried the message as you pan or zoom. If you remove that wire before cancellation finishes, the × follows its last visible path when available. Reconnecting the same ports starts a new wire with its own indicators.
+
 ### Wire patterns
 
 Patterns describe whether delivery depends on another agent decision:
