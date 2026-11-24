@@ -142,14 +142,15 @@ impl Agents {
             let recorded = item.status_history.last()
                 .filter(|change| change.status == item.status)
                 .and_then(|change| chrono::DateTime::parse_from_rfc3339(&change.at).ok())
-                .and_then(|time| u64::try_from(time.timestamp()).ok());
-            if let Some(at) = recorded {
-                *stamp = Stamp { state: next.into(), at };
+                .and_then(|time| u64::try_from(time.timestamp_millis()).ok());
+            if let Some(millis) = recorded {
+                *stamp = Stamp { state: next.into(), at: millis / 1000 };
             } else if stamp.state != next {
                 *stamp = Stamp { state: next.into(), at: if observed_change { now } else { 0 } };
             }
             let pinned = self.saved.pins.contains(&item.id);
-            order.insert(item.id.clone(), (if pinned { rank(status) } else { shown_rank }, stamp.at, seq));
+            let sort_millis = recorded.unwrap_or_else(|| stamp.at.saturating_mul(1000));
+            order.insert(item.id.clone(), (if pinned { rank(status) } else { shown_rank }, sort_millis, seq));
             rows.push(Row { id: item.id, key: item.key, title: item.title, provider: item.provider,
                 status: status.into(), section: if pinned { "Pinned" } else { section(shown_rank) }.into(),
                 at: stamp.at, focused: item.focused, pinned });
@@ -161,7 +162,8 @@ impl Agents {
         for row in &rows {
             if let Some(root) = groups.get(&row.id) {
                 let urgency = match row.status.as_str() { "blocked" => 4, "working" => 2, _ => 1 };
-                let priority = (urgency, row.at, self.agents[&row.id].seq);
+                let (_, millis, seq) = order[&row.id];
+                let priority = (urgency, millis, seq);
                 let highest = child_ranks.entry(root.clone()).or_default();
                 *highest = priority.max(*highest);
             }
@@ -470,6 +472,30 @@ mod tests {
         held.attention.as_mut().unwrap().seen = true;
         let rows = model.observe(vec![held,worker.clone()],11).0;
         assert_eq!((rows[0].id.as_str(),rows[1].status.as_str()),(worker.id.as_str(),"idle"));
+    }
+
+    #[test]
+    fn fresh_clients_sort_same_second_requests_by_server_milliseconds() {
+        for newest_is_child in [false,true] {
+            let root = input("unknown",false,false).remove(0);
+            let mut child = input("waiting",false,false).remove(0);
+            child.id = "child".into();
+            child.group = Some(root.id.clone());
+            let mut standalone = child.clone();
+            standalone.id = "standalone".into();
+            standalone.group = None;
+            for (item,newest) in [(&mut child,newest_is_child),(&mut standalone,!newest_is_child)] {
+                let millis = if newest { 900 } else { 100 };
+                item.status_history.push(StatusChange {status:"waiting".into(),at:format!("2030-01-01T00:00:10.{millis}Z")});
+            }
+            let expected = if newest_is_child { &root.id } else { &standalone.id };
+            for items in [vec![root.clone(),child.clone(),standalone.clone()],vec![standalone.clone(),child.clone(),root.clone()]] {
+                let (rows,_) = Agents::default().observe(items,0);
+                assert_eq!(&rows[0].id,expected);
+                assert_eq!(rows.iter().find(|r|r.id==child.id).unwrap().at,1893456010);
+                assert_eq!(rows.iter().find(|r|r.id==root.id).unwrap().at,0);
+            }
+        }
     }
 
     #[test]

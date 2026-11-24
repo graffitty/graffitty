@@ -730,11 +730,11 @@ func test_newer_blocked_child_orders_its_group_before_an_older_request() -> void
 	var windows := []
 	for id in [1, 2, 3]:
 		var key := PaneAddress.key(id)
-		var state: String = ["unknown", "busy", "waiting"][id - 1]
+		var state: String = ["unknown", "busy", "busy"][id - 1]
 		host.terminal(id)
 		windows.append({"pane":key, "shown":true, "rect":Rect2(150 * id, 0, 100, 90)})
 		app.agent_api.graph.nodes[key] = {"provider":"claude", "status":state,
-			"status_history":[{"status":state, "at":"2026-11-24T00:00:10Z"}]}
+			"status_history":[{"status":state, "at":"2026-11-24T00:00:09Z"}]}
 		app.agent_api.graph.remote_owners[key] = peer
 	host.workspace_layout.tabs = [{"id":1, "tree":{"type":"windows","windows":windows}}]
 	host.workspace_layout.active = 1
@@ -744,19 +744,23 @@ func test_newer_blocked_child_orders_its_group_before_an_older_request() -> void
 	panel.application = app
 	panel._sounds = {"enabled":false}
 	panel.refresh()
-	expect(panel.rows.map(func(row): return row.key) == ["t3","t1"], "The older standalone blocker precedes the still-working group")
 	var leader: Dictionary = panel.rows.filter(func(row): return row.key == "t1")[0]
 	app.agent_api.graph.nodes.t2.status = "waiting"
-	app.agent_api.graph.nodes.t2.status_history = [{"status":"waiting", "at":"2026-11-24T00:00:50Z"}]
+	app.agent_api.graph.nodes.t2.status_history = [{"status":"waiting", "at":"2026-11-24T00:00:10.900Z"}]
+	app.agent_api.graph.nodes.t3.status = "waiting"
+	app.agent_api.graph.nodes.t3.status_history = [{"status":"waiting", "at":"2026-11-24T00:00:10.100Z"}]
 	panel.refresh()
 	expect(panel.rows.map(func(row): return [row.key, row.section]) == [["t1","Needs you"],["t3","Needs you"]],
-		"The newest blocked request moves its whole group to the first visible position")
+		"Two requests in one refresh place the group with the later subsecond transition first")
 	var current: Dictionary = panel.rows.filter(func(row): return row.key == "t1")[0]
 	var child: Dictionary = panel.trees[current.id][0]
 	expect(current.status == "unknown" and current.at == 0 and current.at == leader.at,
 		"The unknown leader retains its own glyph and empty age after its child blocks")
-	expect(child.status == "blocked" and child.icon == "claude" and child.at == int(Time.get_unix_time_from_datetime_string("2026-11-24T00:00:50")),
-		"The child's blocked glyph and timestamp stay on its own row")
+	var standalone: Dictionary = panel.rows.filter(func(row): return row.key == "t3")[0]
+	var display_second := int(Time.get_unix_time_from_datetime_string("2026-11-24T00:00:10"))
+	expect(child.status == "blocked" and child.icon == "claude", "The child's blocked glyph stays on its own row")
+	expect(child.at == display_second and standalone.at == display_second,
+		"Both rows expose the same whole-second display timestamp despite their different ordering")
 	for key in ["t1","t2","t3"]:
 		panel.step(1)
 		expect(host.revealed == key, "NextAgent follows the visible group, child and older request in order: " + key)
