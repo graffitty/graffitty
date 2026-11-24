@@ -9,11 +9,8 @@
 // and session share a caption.
 
 import { View, div, svg, image, v_flex, h_flex } from "graffitty-ui";
-import { agents, run, theme, props, tr } from "graffitty";
+import { agents, live, run, theme, props, tr } from "graffitty";
 
-// Translucent so the panel's blurred backdrop shows through. The focused row
-// is clearly brighter than a hovered one, and does not change under the pointer.
-const SELECTED = "#ffffff1f";
 const HOVER = "#ffffff0a";
 const RANK = { blocked: 3, working: 2, done: 1, idle: 0 };
 const SECTION_COLOR = { "Needs you": "blocked", Done: "done", Working: "working" };
@@ -62,13 +59,13 @@ export default class Agents extends View {
     return div().size(7).mx(3).flex_none().rounded(4).bg(status === "done" ? color : t.dim + "00");
   }
 
-  subRow(t, row, sub) {
+  subRow(t, row, sub, selected) {
     const key = `${row.id}|${sub.key}`;
     return h_flex()
       .id(`sub-${key}`)
       .pl(20).pr(8).h(26).flex_none().items_center().gap(0).text_size(12).rounded(8)
-      .when(sub.focused, (el) => el.bg(SELECTED))
-      .when(!sub.focused, (el) => el.hover((s) => s.bg(HOVER)))
+      .when(selected, (el) => el.bg(t.selected))
+      .when(!selected, (el) => el.hover((s) => s.bg(HOVER)))
       .on_click(() => sub.away_id ? run("FocusAgent", { id: sub.away_id }) : run("FocusPane", { host: sub.host_id, key: sub.key }))
       .children(sub.lines.map((l) => div().self_start().mt(-4).w(9).h(17).mr(4).flex_none()
         .when(Boolean(l), (el) => el.border_l(1.5).border_color(t.input))
@@ -78,7 +75,7 @@ export default class Agents extends View {
       .when(sub.kind === "agent" && Boolean(sub.status), (el) => el.child(this.status(t, sub.status, true)));
   }
 
-  row(t, a, now) {
+  row(t, a, now, selected) {
     const subs = a.subs ?? [];
     const open = !this.foldedRows.has(a.id);
     const hovered = this.hovered === a.id;
@@ -110,8 +107,8 @@ export default class Agents extends View {
     return h_flex()
       .id(`ag-${a.id}`)
       .px(4).h(28).flex_none().rounded(8).items_center().gap(6).text_size(13)
-      .when(a.focused, (el) => el.bg(SELECTED))
-      .when(!a.focused, (el) => el.hover((s) => s.bg(HOVER)))
+      .when(selected, (el) => el.bg(t.selected))
+      .when(!selected, (el) => el.hover((s) => s.bg(HOVER)))
       .on_hover((on, cx) => {
         if (on) this.hovered = a.id;
         else if (this.hovered === a.id) this.hovered = null;
@@ -119,7 +116,7 @@ export default class Agents extends View {
       })
       .on_click(() => run("FocusAgent", { id: a.id }))
       .child(icon(a.provider, 16, a.status))
-      .child(div().flex_1().min_w(0).truncate().tooltip_on_truncate().text_color(a.status === "idle" && !a.focused ? t.idle : t.foreground).child(a.title))
+      .child(div().flex_1().min_w(0).truncate().tooltip_on_truncate().text_color(a.status === "idle" && !selected ? t.idle : t.foreground).child(a.title))
       .when(subs.length > 0, (el) => el.child(fold))
       .when(!hovered && a.at > 0, (el) => el.child(div().id(`time-${a.id}`).flex_none().text_size(11).text_color(t.idle).child(duration(now - a.at))))
       .when(hovered, (el) => el.child(pin))
@@ -127,11 +124,11 @@ export default class Agents extends View {
         .child(a.status === "blocked" && !a.pinned ? this.status(t, "blocked", true) : this.status(t, a.status)));
   }
 
-  compactRow(t, a, number) {
+  compactRow(t, a, number, selected) {
     return h_flex()
       .id(`ag-${a.id}`).h(26).px(4).flex_none().items_center().gap(2)
-      .when(a.focused, (el) => el.bg(SELECTED))
-      .when(!a.focused, (el) => el.hover((s) => s.bg(HOVER)))
+      .when(selected, (el) => el.bg(t.selected))
+      .when(!selected, (el) => el.hover((s) => s.bg(HOVER)))
       .tooltip(compactTitle(a, a.title))
       .on_click(() => run("FocusAgent", { id: a.id }))
       .child(div().flex_1().min_w(0).whitespace_nowrap().text_right().text_size(12).text_color(t.idle).child(String(number)))
@@ -140,11 +137,11 @@ export default class Agents extends View {
 
   // A connected agent gets its own compact row too: grouping it under the
   // lead would hide that it exists and whether it is working.
-  compactSubRow(t, row, sub, number) {
+  compactSubRow(t, row, sub, number, selected) {
     return h_flex()
       .id(`ag-sub-${row.id}|${sub.key}`).h(26).px(4).flex_none().items_center().gap(2)
-      .when(sub.focused, (el) => el.bg(SELECTED))
-      .when(!sub.focused, (el) => el.hover((s) => s.bg(HOVER)))
+      .when(selected, (el) => el.bg(t.selected))
+      .when(!selected, (el) => el.hover((s) => s.bg(HOVER)))
       .tooltip(compactTitle(sub.row_id ? sub : row, sub.title))
       .on_click(() => sub.away_id ? run("FocusAgent", { id: sub.away_id }) : run("FocusPane", { host: sub.host_id, key: sub.key }))
       .child(div().flex_1().min_w(0).whitespace_nowrap().text_right().text_size(12).text_color(t.idle).child(String(number)))
@@ -154,13 +151,14 @@ export default class Agents extends View {
   render() {
     const t = theme();
     const list = agents();
+    const selected = live("agent_selection") || "";
     const now = Date.now() / 1000;
     if (props()?.compact) {
       const rows = [];
       for (const a of list) {
-        rows.push(this.compactRow(t, a, rows.length + 1));
+        rows.push(this.compactRow(t, a, rows.length + 1, a.id === selected));
         for (const sub of a.subs ?? []) {
-          if (sub.kind === "agent") rows.push(this.compactSubRow(t, a, sub, rows.length + 1));
+          if (sub.kind === "agent") rows.push(this.compactSubRow(t, a, sub, rows.length + 1, Boolean(selected) && sub.row_id === selected));
         }
       }
       return v_flex().id("ag-list").size_full().min_h(0).overflow_y_scrollbar().children(rows);
@@ -199,9 +197,9 @@ export default class Agents extends View {
           rows.push(div().id(`ctx-${a.id}`).flex_none().pl(26).pr(4).mt(3).mb(-4).text_size(10).text_color(t.idle + "bf").truncate().tooltip_on_truncate().child(next));
         }
         caption = next;
-        rows.push(this.row(t, a, now));
+        rows.push(this.row(t, a, now, a.id === selected));
         if (this.foldedRows.has(a.id)) continue;
-        for (const sub of a.subs ?? []) rows.push(this.subRow(t, a, sub));
+        for (const sub of a.subs ?? []) rows.push(this.subRow(t, a, sub, Boolean(selected) && sub.row_id === selected));
       }
     }
     return v_flex().size_full().min_h(0).text_size(13)

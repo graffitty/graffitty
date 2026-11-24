@@ -20,7 +20,8 @@ class Host extends Node:
 	var sessions: Dictionary = {}
 	var chromiums: Dictionary = {}
 	func is_terminal_pane(key: String) -> bool: return PaneAddress.id(key) > 0
-	func pane_is_presented(_key: String) -> bool: return true
+	var offscreen := ""
+	func pane_is_presented(key: String) -> bool: return key != offscreen
 	func is_chromium_pane(_key: String) -> bool: return false
 	func pane_title(_key: String) -> String: return "Agent task"
 
@@ -137,7 +138,8 @@ func test_controller_keeps_pins_across_local_id_remapping() -> void:
 
 class Peer extends Node:
 	signal sessions_changed
-	func session_view_ready(id: String) -> bool: return workspace == id
+	var view_ready := true
+	func session_view_ready(id: String) -> bool: return view_ready and workspace == id
 	var url := "test://server"
 	var epoch := "test-epoch"
 	var display_name := "Office fixture"
@@ -186,6 +188,63 @@ func test_catalog_only_agent_keeps_local_focus_and_traversal() -> void:
 	app.free()
 	host.free()
 	peer.free()
+
+
+func test_selected_agent_is_scoped_to_each_presented_window_without_keyboard_focus() -> void:
+	var app := Application.new()
+	var panel := preload("res://scenes/Agents.gd").new()
+	panel.application = app
+	panel._sounds = {"enabled":false}
+	app.agent_attention.in_view = func(_host): return false
+	var hosts: Array[SessionHost] = [SessionHost.new(), SessionHost.new()]
+	var peers := [Peer.new(), Peer.new()]
+	app.hosts = hosts
+	for i in hosts.size():
+		peers[i].epoch = "epoch%d" % i
+		peers[i].available_sessions = [{"id":"$2","agents":[{"pane":7,"provider":"pi","status":"busy"},{"pane":8,"provider":"pi","status":"idle"}]}]
+		hosts[i].session_backend.connection = peers[i]
+		hosts[i].workspace_layout.active = 1
+		hosts[i].workspace_layout.tabs = [{"id":1,"tree":{"windows":[{"pane":"t1","shown":true},{"pane":"t8","shown":true}]}},{"id":2,"tree":{"windows":[{"pane":"t9","shown":true}]}}]
+	app.agent_api.graph.nodes["t1"] = {"provider":"pi","status":"busy"}
+	app.agent_api.graph.remote_owners["t1"] = peers[0]
+	panel.refresh()
+	for i in hosts.size():
+		expect(panel.selected_id(hosts[i]) == JSON.stringify([peers[i].url,peers[i].epoch,7]), "Each window resolves its own wire ID and epoch")
+	expect(panel.rows.all(func(r): return not r.focused), "Selection in unfocused windows leaves attention focus clear")
+	var changes := []
+	panel.changed.connect(func(): changes.append(true))
+	hosts[1].pane_focus = "t8"
+	panel.refresh()
+	expect(panel.selected_id(hosts[1]) == JSON.stringify([peers[1].url,peers[1].epoch,8]) and changes.size() == 1, "Blurred catalog selection publishes even with unchanged rows")
+	panel.refresh()
+	expect(changes.size() == 1, "Repeated selection leaves the published snapshot stable")
+	hosts[1].offscreen = "t8"
+	app.agent_attention.in_view = func(host): return host == hosts[1]
+	panel.refresh()
+	expect(panel.selected_id(hosts[1]) == JSON.stringify([peers[1].url,peers[1].epoch,8]), "Panning away retains the active selected agent")
+	expect("t8" not in app.agent_attention.panes(hosts[1]).visible, "Offscreen selection remains outside read-receipt visibility even in the focused window")
+	hosts[1].workspace_layout.active = 2
+	panel.refresh()
+	expect(panel.selected_id(hosts[1]).is_empty(), "Inactive tabs cannot select a row")
+	hosts[1].workspace_layout.active = 1
+	hosts[1].workspace_layout.tabs[0].tree.windows[1].shown = false
+	panel.refresh()
+	expect(panel.selected_id(hosts[1]).is_empty(), "Hidden panes cannot select a row")
+	hosts[1].pane_focus = "t1"
+	peers[1].view_ready = false
+	panel.refresh()
+	expect(panel.selected_id(hosts[1]).is_empty(), "A switching attachment cannot select its catalog row")
+	peers[1].view_ready = true
+	hosts[1].presentation_active = false
+	panel.refresh()
+	expect(panel.selected_id(hosts[1]).is_empty(), "Background presentations have no selected row")
+	peers[0].connected = false
+	panel.refresh()
+	expect(panel.selected_id(hosts[0]).is_empty(), "A disconnected graph owner cannot select its retained row")
+	panel.free()
+	app.free()
+	for host in hosts: host.free()
+	for peer in peers: peer.free()
 
 
 func test_catalog_completion_updates_panel_after_visible_receipt() -> void:

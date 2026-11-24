@@ -474,6 +474,9 @@ func _publish_agents() -> void:
 		copy["subs"] = application.agents.trees.get(row.id, [])
 		rows.append(copy)
 	host.publish("agents", JSON.stringify(rows))
+	for terminal_host in application.hosts:
+		if is_instance_valid(terminal_host):
+			host.publish("agent_selection@" + str(terminal_host.get_instance_id()), JSON.stringify(application.agents.selected_id(terminal_host)))
 	queue_refresh()
 
 

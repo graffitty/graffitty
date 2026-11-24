@@ -16,6 +16,11 @@ var rows: Array = []
 var trees: Dictionary = {}
 var _core: RefCounted = ClassDB.instantiate("AgentsCore")
 var _owners: Dictionary = {}
+var _selected: Dictionary = {}
+
+func selected_id(host: Node) -> String:
+	return _selected.get(host.get_instance_id(), "") if is_instance_valid(host) else ""
+
 ## Rows from sessions no window shows: id → {host, peer, session, pane}.
 var _away: Dictionary = {}
 var _audio: RefCounted
@@ -50,6 +55,7 @@ func refresh_body() -> void:
 	_owners.clear()
 	var host_trees: Array = []
 	var catalog_views := {}
+	var selected := {}
 	var groups := preload("res://scenes/session/SessionsList.gd").collect(application.hosts, [])
 	var membership := {}
 	var connected_scopes := {}
@@ -65,6 +71,10 @@ func refresh_body() -> void:
 		var transport: Node = backend.connection if backend != null and backend.is_remote else null
 		var ids_by_key: Dictionary = {}
 		var stale_keys := {}
+		var selected_key: String = host.pane_focus
+		var active_tab: Dictionary = host.workspace_layout.tab(host.workspace_layout.active)
+		if not host.get("presentation_active") or selected_key not in Layout.keys(active_tab.get("tree", {}), true):
+			selected_key = ""
 		for tab in host.workspace_layout.tabs:
 			for key in Layout.keys(tab.tree):
 				if not host.is_terminal_pane(key): continue
@@ -91,6 +101,10 @@ func refresh_body() -> void:
 					if is_instance_valid(connection):
 						if connection.url != peer.url or connection.epoch != peer.epoch or connection.workspace != peer.workspace: node = {}
 						connection = peer
+				if key == selected_key and tab.id == host.workspace_layout.active:
+					var route: Node = peer if backend != null and backend.is_remote else connection
+					if is_instance_valid(route) and route.connected and route.session_view_ready(route.workspace):
+						selected[host.get_instance_id()] = JSON.stringify([route.url, route.epoch, route.wire_id(local_id)])
 				if node.is_empty() or not is_instance_valid(connection):
 					if not is_instance_valid(peer) or not peer.connected or not peer.session_view_ready(peer.workspace): continue
 					var identity := [peer.url, peer.epoch, peer.workspace, peer.wire_id(local_id)]
@@ -144,8 +158,12 @@ func refresh_body() -> void:
 				hidden[child] = true
 			elif sub.kind == "agent" and input.has(child):
 				sub.focused = input[child].focused
+				hidden[child] = true
 	next = next.filter(func(row): return not hidden.has(row.id))
-	if next != rows or next_trees != trees:
+	for host_id in selected.keys():
+		if not by_id.has(selected[host_id]) and not hidden.has(selected[host_id]): selected.erase(host_id)
+	if next != rows or next_trees != trees or selected != _selected:
+		_selected = selected
 		rows = next
 		trees = next_trees
 		changed.emit()

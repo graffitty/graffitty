@@ -10,7 +10,7 @@ fn host() -> Mods {
     .unwrap();
     mods.set_theme(
         json!({"foreground":"#e4e4e7", "dim":"#8b93a1", "idle":"#8b93a1", "working":"#8ab4f8",
-        "hover":"#ffffff0f", "input":"#28282f", "blocked":"#ffd078", "done":"#89ddbd"}),
+        "hover":"#ffffff0f", "input":"#28282f", "selected":"#12a64f", "blocked":"#ffd078", "done":"#89ddbd"}),
     );
     mods
 }
@@ -126,4 +126,61 @@ fn agents_keep_pi_coloured_and_desaturate_offline_children() {
         .unwrap();
     assert_logo(&frame, "pi", false);
     assert_logo(&frame, "codex", true);
+}
+
+#[test]
+fn agents_paint_the_selected_row_for_each_source_window() {
+    let mut mods = host();
+    let selected = "#12a64f";
+    let color = graffitty_mods::Color::parse(selected, &Default::default()).unwrap();
+    mods.publish(
+        "agents",
+        json!([{"id":"parent", "key":"t1", "provider":"pi", "status":"idle",
+        "section":"Pinned", "title":"Parent", "at":0, "pinned":true, "focused":true, "subs":[
+            {"key":"t2", "row_id":"child", "host_id":1, "kind":"agent", "icon":"codex",
+             "status":"idle", "focused":false, "title":"Child", "lines":["└"]}
+        ]}]),
+    );
+    for compact in [false, true] {
+        mods.publish("agent_selection@1", json!("parent"));
+        mods.publish("agent_selection@2", json!("child"));
+        let views = [1, 2].map(|window| {
+            mods.load(
+                &folder("agents"),
+                json!({"window":window, "compact":compact}),
+            )
+            .unwrap()
+        });
+        let child = if compact {
+            "ag-sub-parent|t2"
+        } else {
+            "sub-parent|t2"
+        };
+        let check = |mods: &mut Mods, view, key| {
+            let frame = mods
+                .frame(view, (300.0, 300.0), &mut MonospaceMeasure)
+                .unwrap();
+            let fills: Vec<_> = frame
+                .draws
+                .iter()
+                .filter_map(|draw| match draw {
+                    Draw::Rect {
+                        rect, color: fill, ..
+                    } if *fill == color => Some(*rect),
+                    _ => None,
+                })
+                .collect();
+            let row = frame.hits.iter().find(|hit| hit.key == key).unwrap();
+            assert_eq!(fills, [row.rect]);
+        };
+        check(&mut mods, views[0], "ag-parent");
+        check(&mut mods, views[1], child);
+        mods.publish("agent_selection@1", json!("child"));
+        assert!(mods.needs_frame(views[0]));
+        assert!(!mods.needs_frame(views[1]));
+        check(&mut mods, views[0], child);
+        for view in views {
+            mods.unload(view);
+        }
+    }
 }
