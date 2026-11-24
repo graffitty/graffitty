@@ -4,9 +4,10 @@ from __future__ import annotations
 import argparse, hashlib, json, os, pathlib, platform, subprocess, sys, threading
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 ROOT = pathlib.Path(__file__).resolve().parents[2]
-sys.path[:0] = [str(ROOT / d) for d in ("tests/support",)]
+sys.path[:0] = [str(ROOT / d) for d in ("tests/support", "tools")]
 from e2e_server import PrivateServer
 from e2e_background import prepare_background, background_failures
+from check_godot import failed
 
 
 def main():
@@ -99,7 +100,7 @@ def main():
             text=(out/'godot.log').read_text(encoding='utf-8')
             report['checks']=[line.removeprefix('[replay] PASS ') for line in text.splitlines() if line.startswith('[replay] PASS ')]
             report['guard_failures']=[] if args.headful else background_failures(out/'guard')
-            assert result.returncode==0, f'Godot failed: {result.returncode}; see godot.log'
+            assert not failed(result.returncode, text), f'Godot failed or logged engine errors: {result.returncode}; see godot.log'
             if args.float_test_windows:
                 report['window_isolation']=json.loads((out/'window-move-initial.json').read_text())['isolation']
             assert 'REPLAY_PASS' in text and 'SCRIPT ERROR' not in text, 'Replay did not complete successfully'

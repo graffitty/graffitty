@@ -21,6 +21,10 @@ See Claude, Codex, Pi and OpenCode across connected servers and sessions.
 The elapsed time starts at the server-recorded status change, including time
 while this client was disconnected. Viewing a finished agent changes Done to Idle
 without resetting its age. If no transition time is known, the age stays blank.
+Read receipts are shared by the session server: viewing a completion on your
+phone also clears its unread dot and tab badge on your other connected clients.
+Each receipt identifies the event you viewed, so a delayed acknowledgement
+cannot clear a newer completion. Receipts retry after a connection interruption.
 Codex discovery reads the latest complete lifecycle record even when a long turn
 has pushed it outside the transcript preview. Its original timestamp survives a
 server restart; partial trailing records do not change the displayed state.

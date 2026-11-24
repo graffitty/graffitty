@@ -1,31 +1,10 @@
-//! Unseen agent outcomes for tab markers.
+//! Tab markers project server-owned attention and pending read receipts.
 //!
-//! The workspace server timestamps every agent status change in
-//! `status_history`.
-//!
-//! That history is the evidence: a completion is a busy or waiting entry
-//! followed by idle, a wait is an entry entering `waiting`.
-//!
-//! Live status transitions between observations are a second source when
-//! history is missing or its clock moved backwards.
-//!
-//! Server timestamps are only compared with server timestamps, so client
-//! clock skew cannot create or hide markers.
-//!
-//! Each pane holds at most one unseen completion and one unseen wait. Seeing
-//! the pane clears both; a tab marker clears only when every pane in it was
-//! seen.
-//!
-//! The current status always wins over remembered events: a pane that runs
-//! again is no longer completed, and one that stopped waiting no longer needs
-//! input.
-//!
-//! This keeps a missed lifecycle event from leaving a marker stuck.
-use chrono::{DateTime, FixedOffset};
+//! Only a current graph node can be read. Receipts survive looking away and
+//! reconnect gaps and presentation remaps until server evidence settles them.
+use graffitty_protocol::agent_attention::{AgentAttention as ServerAttention, AttentionKind};
 use serde_json::{Value, json};
-use std::collections::{HashMap, HashSet};
-
-const PROVIDERS: [&str; 4] = ["claude", "codex", "opencode", "pi"];
+use std::collections::{BTreeMap, HashSet};
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Marker {
@@ -35,125 +14,119 @@ pub enum Marker {
 
 #[derive(Default, Debug)]
 struct Pane {
-    /// Latest history time already applied, and how many entries at exactly
-    /// that time were applied (several can share one millisecond).
-    cursor: Option<(DateTime<FixedOffset>, usize)>,
-    status: String,
-    completed: bool,
-    waiting: bool,
+    attention: Option<ServerAttention>,
+    /// A heartbeat timeout hides waiting presentation without changing the receipt.
+    offline: bool,
+    /// Missing or invalid nodes preserve the projection, but cannot authorize a receipt.
+    current: bool,
 }
 
 #[derive(Default, Debug)]
 pub struct AgentAttention {
-    panes: HashMap<String, Pane>,
-}
-
-fn history(node: &Value) -> Vec<(DateTime<FixedOffset>, &str)> {
-    // Malformed entries are not evidence; skip them rather than guess.
-    node["status_history"].as_array().into_iter().flatten().filter_map(|entry| {
-        let at = DateTime::parse_from_rfc3339(entry["at"].as_str()?).ok()?;
-        Some((at, entry["status"].as_str()?))
-    }).collect()
-}
-
-fn agent_status(node: &Value) -> &str {
-    if PROVIDERS.contains(&node["provider"].as_str().unwrap_or("")) {
-        node["status"].as_str().unwrap_or("unknown")
-    } else {
-        // A shell or custom node is not an agent awaiting input or completing.
-        "none"
-    }
-}
-
-impl Pane {
-    fn apply(&mut self, previous: &str, next: &str) {
-        match next {
-            "idle" if matches!(previous, "busy" | "waiting") => { self.completed = true; self.waiting = false; }
-            "busy" => { self.completed = false; self.waiting = false; }
-            "waiting" if previous != "waiting" => { self.waiting = true; self.completed = false; }
-            _ => {}
-        }
-    }
-
-    fn observe(&mut self, node: &Value, first: bool) {
-        let entries = history(node);
-        let status = agent_status(node).to_owned();
-        if first {
-            // Outcomes before this client first saw the pane are not unseen
-            // here. A current wait is still evidence that input is needed now.
-            self.waiting = status == "waiting";
-        } else {
-            let mut at_cursor = 0;
-            for (index, (at, entry)) in entries.iter().enumerate() {
-                let new = match self.cursor {
-                    None => true,
-                    Some((cursor, applied)) if *at == cursor => { at_cursor += 1; at_cursor > applied }
-                    Some((cursor, _)) => *at > cursor,
-                };
-                if new {
-                    // The first retained entry follows the last status this pane saw.
-                    let before = if index == 0 { self.status.clone() } else { entries[index - 1].1.to_owned() };
-                    self.apply(&before, entry);
-                }
-            }
-            // Live transition: covers absent history and a server clock that
-            // moved backwards. Repeating an already applied change is harmless.
-            let before = self.status.clone();
-            self.apply(&before, &status);
-        }
-        // Current status is authoritative over remembered events.
-        if status == "busy" { self.completed = false; }
-        if status != "waiting" { self.waiting = false; }
-        // Never move the cursor back: entries the server re-stamps earlier are
-        // covered by the live transition instead of being replayed.
-        if let Some(latest) = entries.iter().map(|(at, _)| *at).max()
-            && self.cursor.is_none_or(|(cursor, _)| latest >= cursor)
-        {
-            self.cursor = Some((latest, entries.iter().filter(|(at, _)| *at == latest).count()));
-        }
-        self.status = status;
-    }
+    panes: BTreeMap<String, Pane>,
+    /// Event UUIDs outlive presentation-local pane keys and session switches.
+    pending: HashSet<String>,
 }
 
 impl AgentAttention {
     /// Apply one graph view. `nodes` maps pane keys to public graph nodes;
     /// `visible` panes are currently in front of the user; `live` lists every
-    /// pane that still exists in any window.
-    ///
+    /// currently tracked pane, including away-session catalog nodes. Dropping
+    /// a key removes its presentation, never its unconfirmed receipt.
     /// Returns whether a marker changed.
     pub fn observe(&mut self, nodes: &Value, visible: &HashSet<String>, live: &HashSet<String>) -> bool {
         let before = self.snapshot();
         self.panes.retain(|key, _| live.contains(key));
+        // Inspect the whole view before replacing keys: an old event may have
+        // moved to another local key in this same observation.
+        let current: BTreeMap<_, _> = live.iter().filter_map(|key| {
+            let node = nodes.get(key).filter(|node| node.is_object())?;
+            let attention = serde_json::from_value::<Option<ServerAttention>>(node["attention"].clone()).ok()?;
+            Some((key, attention))
+        }).collect();
+        let current_events: HashSet<_> = current.values().flatten().map(|attention| attention.event.as_str()).collect();
         for key in live {
-            // A node briefly absent during a reconnect keeps what it knew.
-            let Some(node) = nodes.get(key).filter(|node| node.is_object()) else {
-                if visible.contains(key) {
-                    if let Some(pane) = self.panes.get_mut(key) { pane.completed = false; pane.waiting = false; }
-                }
-                continue;
-            };
-            let first = !self.panes.contains_key(key);
             let pane = self.panes.entry(key.clone()).or_default();
-            pane.observe(node, first);
-            if visible.contains(key) {
-                pane.completed = false;
-                pane.waiting = false;
+            pane.current = false;
+            // Absent/null means no event. Malformed data is not evidence to
+            // read or acknowledge a remembered event during graph repair.
+            let Some(attention) = current.get(key) else { continue; };
+            if let Some(previous) = pane.attention.as_ref()
+                && !current_events.contains(previous.event.as_str()) {
+                // A current node replaced/removed this event; a missing
+                // presentation or a key remap alone cannot settle a receipt.
+                self.pending.remove(&previous.event);
             }
+            pane.attention = attention.clone();
+            pane.offline = nodes[key]["status"].as_str() == Some("offline");
+            pane.current = true;
+            if let Some(attention) = attention.as_ref()
+                && !attention.seen && visible.contains(key)
+                && !self.pending.contains(&attention.event) {
+                self.pending.insert(attention.event.clone());
+            }
+        }
+        for attention in current.values().flatten().filter(|attention| attention.seen) {
+            self.confirm(&attention.event);
         }
         self.snapshot() != before
     }
 
-    fn snapshot(&self) -> Vec<(String, bool, bool)> {
-        let mut state: Vec<_> = self.panes.iter()
-            .filter(|(_, pane)| pane.completed || pane.waiting)
-            .map(|(key, pane)| (key.clone(), pane.completed, pane.waiting)).collect();
-        state.sort();
-        state
+    fn snapshot(&self) -> Vec<(String, Marker)> {
+        self.panes.keys().filter_map(|key| self.pane(key).map(|marker| (key.clone(), marker))).collect()
+    }
+
+    /// Server attention with a matching pending local receipt applied.
+    pub fn attention(&self, key: &str) -> Value {
+        json!(self.panes.get(key).and_then(|pane| pane.attention.as_ref()).map(|attention| self.effective(attention)))
+    }
+
+    fn effective(&self, attention: &ServerAttention) -> ServerAttention {
+        let mut attention = attention.clone();
+        attention.seen |= self.pending.contains(&attention.event);
+        attention
+    }
+
+    fn confirm(&mut self, event: &str) {
+        self.pending.remove(event);
+        // An away catalog receipt also settles any cached presentation of the
+        // same event; removing pending must not revive that cached marker.
+        for pane in self.panes.values_mut() {
+            if let Some(attention) = pane.attention.as_mut()
+                && attention.event == event {
+                attention.seen = true;
+            }
+        }
+    }
+
+    /// Project an arbitrary server attention field, such as an away-session
+    /// row. A server receipt settles its UUID; projection never creates a read.
+    /// Null or malformed input returns null without discarding pending tokens.
+    pub fn project_attention(&mut self, value: &Value) -> Value {
+        let Ok(Some(attention)) = serde_json::from_value::<Option<ServerAttention>>(value.clone()) else { return Value::Null; };
+        if attention.seen { self.confirm(&attention.event); }
+        json!(self.effective(&attention))
+    }
+
+    /// Retryable receipts for current, matching, unread server events only.
+    /// Reading this queue never consumes it; only server evidence settles it.
+    pub fn acknowledgements(&self) -> Value {
+        Value::Array(self.panes.iter().filter_map(|(key, pane)| {
+            let attention = pane.attention.as_ref()?;
+            (pane.current && !attention.seen && self.pending.contains(&attention.event))
+                .then(|| json!({"key":key, "event":attention.event}))
+        }).collect())
     }
 
     pub fn pane(&self, key: &str) -> Option<Marker> {
         let pane = self.panes.get(key)?;
-        if pane.waiting { Some(Marker::Waiting) } else if pane.completed { Some(Marker::Completed) } else { None }
+        let attention = pane.attention.as_ref()?;
+        if attention.seen || self.pending.contains(&attention.event)
+            || (pane.offline && attention.kind == AttentionKind::Waiting) { return None; }
+        Some(match attention.kind {
+            AttentionKind::Completed => Marker::Completed,
+            AttentionKind::Waiting => Marker::Waiting,
+        })
     }
 
     /// A tab shows one marker: waiting wins over completed, and the count is
@@ -177,158 +150,317 @@ impl AgentAttention {
 mod tests {
     use super::*;
 
+    const FIRST: &str = "00000000-0000-4000-8000-000000000001";
+    const SECOND: &str = "00000000-0000-4000-8000-000000000002";
+    const THIRD: &str = "00000000-0000-4000-8000-000000000003";
+    const FOURTH: &str = "00000000-0000-4000-8000-000000000004";
+
     fn set(keys: &[&str]) -> HashSet<String> { keys.iter().map(|k| k.to_string()).collect() }
-    fn node(status: &str, history: &[(&str, &str)]) -> Value {
-        json!({"provider":"claude","status":status,"status_history":history.iter()
-            .map(|(at, status)| json!({"at":format!("2030-01-01T00:00:{at}.000+00:00"),"status":status})).collect::<Vec<_>>()})
+    fn event(event: &str, kind: &str, seen: bool) -> Value {
+        json!({"event":event, "kind":kind, "seen":seen})
+    }
+    fn node(event: &str, kind: &str, seen: bool) -> Value {
+        json!({"provider":"claude", "attention":self::event(event, kind, seen)})
     }
     fn view(panes: &[(&str, Value)]) -> Value {
         Value::Object(panes.iter().map(|(k, v)| (k.to_string(), v.clone())).collect())
     }
 
     #[test]
-    fn hidden_completion_marks_until_seen() {
+    fn two_clients_clear_after_a_shared_server_receipt() {
+        let (mut a, mut b) = (AgentAttention::default(), AgentAttention::default());
+        let live = set(&["%1"]);
+        let nodes = view(&[("%1", node(FIRST, "completed", false))]);
+        for client in [&mut a, &mut b] {
+            assert!(client.observe(&nodes, &set(&[]), &live));
+            assert_eq!(client.marker(["%1"]), json!({"state":"completed","count":1}));
+        }
+        assert!(a.observe(&nodes, &live, &live));
+        assert_eq!(a.attention("%1"), event(FIRST, "completed", true));
+        assert_eq!(a.acknowledgements(), json!([{"key":"%1","event":FIRST}]));
+        assert_eq!(b.pane("%1"), Some(Marker::Completed));
+        let seen = view(&[("%1", node(FIRST, "completed", true))]);
+        assert!(!a.observe(&seen, &set(&[]), &live), "optimistic marker already cleared");
+        assert!(b.observe(&seen, &set(&[]), &live));
+        for client in [&a, &b] {
+            assert_eq!(client.pane("%1"), None);
+            assert_eq!(client.attention("%1"), event(FIRST, "completed", true));
+            assert_eq!(client.acknowledgements(), json!([]));
+        }
+    }
+
+    #[test]
+    fn visible_event_is_read_on_first_observation_and_retries_after_looking_away() {
         let mut a = AgentAttention::default();
         let live = set(&["%1"]);
-        a.observe(&view(&[("%1", node("busy", &[("00", "idle"), ("01", "busy")]))]), &set(&[]), &live);
+        let nodes = view(&[("%1", node(FIRST, "waiting", false))]);
+        assert!(!a.observe(&nodes, &live, &live));
         assert_eq!(a.pane("%1"), None);
-        assert!(a.observe(&view(&[("%1", node("idle", &[("00", "idle"), ("01", "busy"), ("02", "idle")]))]), &set(&[]), &live));
-        assert_eq!(a.marker(["%1"]), json!({"state":"completed","count":1}));
-        // Repeated identical snapshots do not re-arm or clear it.
-        assert!(!a.observe(&view(&[("%1", node("idle", &[("00", "idle"), ("01", "busy"), ("02", "idle")]))]), &set(&[]), &live));
-        assert!(a.observe(&view(&[("%1", node("idle", &[("00", "idle"), ("01", "busy"), ("02", "idle")]))]), &live, &live));
+        let receipt = json!([{"key":"%1","event":FIRST}]);
+        assert_eq!(a.acknowledgements(), receipt);
+        assert!(!a.observe(&nodes, &set(&[]), &live));
+        assert_eq!(a.acknowledgements(), receipt, "sending is not confirmation");
+        assert_eq!(a.attention("%1"), event(FIRST, "waiting", true));
+    }
+
+    #[test]
+    fn pending_survives_a_transport_gap_without_sending_until_matching_node_returns() {
+        let mut a = AgentAttention::default();
+        let live = set(&["%1"]);
+        let nodes = view(&[("%1", node(FIRST, "completed", false))]);
+        a.observe(&nodes, &live, &live);
+        a.observe(&json!({}), &set(&[]), &live);
+        assert_eq!(a.acknowledgements(), json!([]));
+        assert_eq!(a.attention("%1"), event(FIRST, "completed", true));
+        a.observe(&nodes, &set(&[]), &live);
+        assert_eq!(a.acknowledgements(), json!([{"key":"%1","event":FIRST}]));
         assert_eq!(a.pane("%1"), None);
-        // Seen history is never replayed after the user looks away.
-        a.observe(&view(&[("%1", node("idle", &[("00", "idle"), ("01", "busy"), ("02", "idle")]))]), &set(&[]), &live);
+    }
+
+    #[test]
+    fn heartbeat_timeout_hides_waiting_but_preserves_pending_receipt_through_recovery() {
+        let mut a = AgentAttention::default();
+        let live = set(&["%1"]);
+        let mut nodes = view(&[("%1", node(FIRST, "waiting", false))]);
+        nodes["%1"]["status"] = "waiting".into();
+        a.observe(&nodes, &set(&[]), &live);
+        assert_eq!(a.pane("%1"), Some(Marker::Waiting));
+        a.observe(&nodes, &live, &live);
+        let receipt = json!([{"key":"%1","event":FIRST}]);
+        assert_eq!(a.acknowledgements(), receipt);
+        nodes["%1"]["status"] = "offline".into();
+        assert!(!a.observe(&nodes, &set(&[]), &live));
         assert_eq!(a.pane("%1"), None);
+        assert_eq!(a.attention("%1"), event(FIRST, "waiting", true));
+        assert_eq!(a.acknowledgements(), receipt, "timeout still permits matching receipt retries");
+        nodes["%1"]["status"] = "waiting".into();
+        assert!(!a.observe(&nodes, &set(&[]), &live));
+        assert_eq!(a.pane("%1"), None, "recovery cannot rearm a locally read event");
+        assert_eq!(a.acknowledgements(), receipt);
+        nodes["%1"]["attention"]["seen"] = true.into();
+        a.observe(&nodes, &set(&[]), &live);
+        assert_eq!(a.acknowledgements(), json!([]));
+        for status in ["offline", "waiting"] {
+            nodes["%1"]["status"] = status.into();
+            assert!(!a.observe(&nodes, &set(&[]), &live));
+            assert_eq!(a.pane("%1"), None, "server receipt also survives heartbeat recovery");
+        }
     }
 
     #[test]
-    fn completion_while_visible_never_marks() {
-        let mut a = AgentAttention::default();
-        let live = set(&["%1"]);
-        a.observe(&view(&[("%1", node("busy", &[("01", "busy")]))]), &live, &live);
-        a.observe(&view(&[("%1", node("idle", &[("01", "busy"), ("02", "idle")]))]), &live, &live);
-        assert_eq!(a.pane("%1"), None);
-    }
-
-    #[test]
-    fn missed_snapshots_are_repaired_from_history() {
-        let mut a = AgentAttention::default();
-        let live = set(&["%1"]);
-        a.observe(&view(&[("%1", node("idle", &[("00", "idle")]))]), &set(&[]), &live);
-        // The frontend never saw busy: idle -> idle, but history proves a turn ran.
-        a.observe(&view(&[("%1", node("idle", &[("00", "idle"), ("01", "busy"), ("02", "idle")]))]), &set(&[]), &live);
-        assert_eq!(a.pane("%1"), Some(Marker::Completed));
-    }
-
-    #[test]
-    fn entries_sharing_a_millisecond_are_each_applied_once() {
-        let mut a = AgentAttention::default();
-        let live = set(&["%1"]);
-        a.observe(&view(&[("%1", node("busy", &[("01", "busy")]))]), &set(&[]), &live);
-        a.observe(&view(&[("%1", node("idle", &[("01", "busy"), ("01", "idle")]))]), &set(&[]), &live);
-        assert_eq!(a.pane("%1"), Some(Marker::Completed));
-    }
-
-    #[test]
-    fn without_history_live_transitions_are_evidence() {
-        let mut a = AgentAttention::default();
-        let live = set(&["%1"]);
-        a.observe(&view(&[("%1", json!({"provider":"codex","status":"busy"}))]), &set(&[]), &live);
-        a.observe(&view(&[("%1", json!({"provider":"codex","status":"idle"}))]), &set(&[]), &live);
-        assert_eq!(a.pane("%1"), Some(Marker::Completed));
-    }
-
-    #[test]
-    fn server_clock_moving_back_still_counts_live_change() {
-        let mut a = AgentAttention::default();
-        let live = set(&["%1"]);
-        a.observe(&view(&[("%1", node("busy", &[("09", "busy")]))]), &set(&[]), &live);
-        a.observe(&view(&[("%1", node("idle", &[("09", "busy"), ("03", "idle")]))]), &set(&[]), &live);
-        assert_eq!(a.pane("%1"), Some(Marker::Completed));
-    }
-
-    #[test]
-    fn old_history_and_startup_idle_are_not_unseen() {
+    fn offline_hides_only_waiting_presentation_and_still_allows_reading_current_events() {
         let mut a = AgentAttention::default();
         let live = set(&["%1", "%2"]);
-        a.observe(&view(&[("%1", node("idle", &[("00", "busy"), ("01", "idle")])),
-            ("%2", node("waiting", &[("00", "busy"), ("01", "waiting")]))]), &set(&[]), &live);
+        let mut nodes = view(&[("%1", node(FIRST, "waiting", false)), ("%2", node(SECOND, "completed", false))]);
+        a.observe(&nodes, &set(&[]), &live);
+        nodes["%1"]["status"] = "offline".into();
+        nodes["%2"]["status"] = "offline".into();
+        assert!(a.observe(&nodes, &set(&[]), &live));
+        assert_eq!(a.marker(["%1", "%2"]), json!({"state":"completed","count":1}));
+        assert_eq!(a.attention("%1"), event(FIRST, "waiting", false), "offline does not alter server attention");
+        a.observe(&nodes, &set(&["%1"]), &live);
+        assert_eq!(a.acknowledgements(), json!([{"key":"%1","event":FIRST}]));
+        nodes["%1"]["status"] = "waiting".into();
+        a.observe(&nodes, &set(&[]), &live);
         assert_eq!(a.pane("%1"), None);
-        assert_eq!(a.pane("%2"), Some(Marker::Waiting), "a current wait still needs input");
-        let ready = json!({"provider":"opencode","status":"idle","status_history":[]});
-        let mut b = AgentAttention::default();
-        b.observe(&view(&[("%1", json!({"provider":"opencode","status":"unknown"}))]), &set(&[]), &set(&["%1"]));
-        b.observe(&view(&[("%1", ready)]), &set(&[]), &set(&["%1"]));
-        assert_eq!(b.pane("%1"), None, "starting up idle is not a completed turn");
     }
 
     #[test]
-    fn waiting_wins_and_counts_require_seeing_every_pane() {
+    fn visibility_without_current_node_evidence_cannot_read_a_remembered_event() {
         let mut a = AgentAttention::default();
-        let live = set(&["%1", "%2", "%3"]);
-        let busy = node("busy", &[("01", "busy")]);
-        a.observe(&view(&[("%1", busy.clone()), ("%2", busy.clone()), ("%3", busy)]), &set(&[]), &live);
-        let done = node("idle", &[("01", "busy"), ("02", "idle")]);
-        let ask = node("waiting", &[("01", "busy"), ("02", "waiting")]);
-        let nodes = view(&[("%1", done.clone()), ("%2", done), ("%3", ask)]);
+        let live = set(&["%1"]);
+        let nodes = view(&[("%1", node(FIRST, "completed", false))]);
         a.observe(&nodes, &set(&[]), &live);
-        let tab = ["%1", "%2", "%3"];
-        assert_eq!(a.marker(tab), json!({"state":"waiting","count":1}));
-        a.observe(&nodes, &set(&["%3"]), &live);
+        assert!(!a.observe(&json!({}), &live, &live));
+        assert_eq!(a.pane("%1"), Some(Marker::Completed));
+        assert_eq!(a.attention("%1"), event(FIRST, "completed", false));
+        assert_eq!(a.acknowledgements(), json!([]));
+        a.observe(&nodes, &set(&[]), &live);
+        assert_eq!(a.pane("%1"), Some(Marker::Completed));
+        assert_eq!(a.acknowledgements(), json!([]));
+    }
+
+    #[test]
+    fn stale_pending_never_reads_or_acknowledges_a_newer_event() {
+        let mut a = AgentAttention::default();
+        let live = set(&["%1"]);
+        a.observe(&view(&[("%1", node(FIRST, "completed", false))]), &live, &live);
+        a.observe(&json!({}), &set(&[]), &live);
+        let newer = view(&[("%1", node(SECOND, "completed", false))]);
+        assert!(a.observe(&newer, &set(&[]), &live));
+        assert_eq!(a.pane("%1"), Some(Marker::Completed));
+        assert_eq!(a.attention("%1"), event(SECOND, "completed", false));
+        assert_eq!(a.acknowledgements(), json!([]));
+        a.observe(&newer, &live, &live);
+        assert_eq!(a.acknowledgements(), json!([{"key":"%1","event":SECOND}]));
+    }
+
+    #[test]
+    fn waiting_priority_and_counts_require_reading_each_pane() {
+        let mut a = AgentAttention::default();
+        let live = set(&["%1", "%2", "%3", "%4"]);
+        let nodes = view(&[("%1", node(FIRST, "completed", false)),
+            ("%2", node(SECOND, "completed", false)), ("%3", node(THIRD, "waiting", false)),
+            ("%4", node(FOURTH, "waiting", false))]);
+        let tab = ["%1", "%2", "%3", "%4"];
+        a.observe(&nodes, &set(&[]), &live);
+        assert_eq!(a.marker(tab), json!({"state":"waiting","count":2}));
+        a.observe(&nodes, &set(&["%3", "%4"]), &live);
         assert_eq!(a.marker(tab), json!({"state":"completed","count":2}));
+        assert_eq!(a.acknowledgements(), json!([{"key":"%3","event":THIRD}, {"key":"%4","event":FOURTH}]));
         a.observe(&nodes, &set(&["%1"]), &live);
         assert_eq!(a.marker(tab), json!({"state":"completed","count":1}));
         a.observe(&nodes, &set(&["%2"]), &live);
         assert_eq!(a.marker(tab), json!({"state":"","count":0}));
+        assert_eq!(a.acknowledgements().as_array().unwrap().len(), 4);
     }
 
     #[test]
-    fn current_status_clears_stale_events() {
+    fn dropping_presentation_preserves_pending_until_same_event_returns_at_a_new_key() {
         let mut a = AgentAttention::default();
-        let live = set(&["%1"]);
-        let hidden = set(&[]);
-        a.observe(&view(&[("%1", node("busy", &[("01", "busy")]))]), &hidden, &live);
-        a.observe(&view(&[("%1", node("idle", &[("01", "busy"), ("02", "idle")]))]), &hidden, &live);
-        // Running again supersedes the unseen result; finishing re-arms it.
-        a.observe(&view(&[("%1", node("busy", &[("01", "busy"), ("02", "idle"), ("03", "busy")]))]), &hidden, &live);
-        assert_eq!(a.pane("%1"), None);
-        a.observe(&view(&[("%1", node("waiting", &[("03", "busy"), ("04", "waiting")]))]), &hidden, &live);
-        assert_eq!(a.pane("%1"), Some(Marker::Waiting));
-        // The agent exited while asking (scan reports offline): nothing to answer.
-        a.observe(&view(&[("%1", node("offline", &[("04", "waiting"), ("05", "offline")]))]), &hidden, &live);
-        assert_eq!(a.pane("%1"), None);
-        // Answered elsewhere and resumed: no stuck yellow.
-        a.observe(&view(&[("%1", node("waiting", &[("06", "waiting")]))]), &hidden, &live);
-        a.observe(&view(&[("%1", node("busy", &[("06", "waiting"), ("07", "busy")]))]), &hidden, &live);
-        assert_eq!(a.pane("%1"), None);
-        // An agent replaced by a shell is not awaiting input.
-        a.observe(&view(&[("%1", node("waiting", &[("08", "waiting")]))]), &hidden, &live);
-        a.observe(&view(&[("%1", json!({"provider":"shell","status":"waiting"}))]), &hidden, &live);
-        assert_eq!(a.pane("%1"), None);
+        let nodes = view(&[("%1", node(FIRST, "completed", false)), ("%2", node(SECOND, "waiting", false))]);
+        a.observe(&nodes, &set(&["%1"]), &set(&["%1", "%2"]));
+        assert!(a.observe(&nodes, &set(&[]), &set(&[])));
+        assert_eq!(a.acknowledgements(), json!([]));
+        assert_eq!(a.attention("%1"), Value::Null);
+        assert_eq!(a.attention("%2"), Value::Null);
+        assert_eq!(a.project_attention(&event(FIRST, "completed", false)), event(FIRST, "completed", true));
+        let remapped = view(&[("%9", node(FIRST, "completed", false))]);
+        // A visible pane without current node evidence cannot send anything.
+        a.observe(&json!({}), &set(&["%9"]), &set(&["%9"]));
+        assert_eq!(a.acknowledgements(), json!([]));
+        a.observe(&remapped, &set(&[]), &set(&["%9"]));
+        assert_eq!(a.pane("%9"), None);
+        assert_eq!(a.attention("%9"), event(FIRST, "completed", true));
+        assert_eq!(a.acknowledgements(), json!([{"key":"%9","event":FIRST}]));
+        let confirmed = view(&[("%9", node(FIRST, "completed", true))]);
+        a.observe(&confirmed, &set(&[]), &set(&["%9"]));
+        assert_eq!(a.acknowledgements(), json!([]));
+        assert!(a.pending.is_empty(), "the server receipt settles the independent token");
     }
 
     #[test]
-    fn completion_survives_exit_and_reconnect_but_not_closing_the_pane() {
+    fn simultaneous_remap_and_key_replacement_preserve_only_the_matching_read() {
         let mut a = AgentAttention::default();
-        let live = set(&["%1"]);
-        a.observe(&view(&[("%1", node("busy", &[("01", "busy")]))]), &set(&[]), &live);
-        a.observe(&view(&[("%1", node("offline", &[("01", "busy"), ("02", "idle"), ("03", "offline")]))]), &set(&[]), &live);
-        assert_eq!(a.pane("%1"), Some(Marker::Completed), "the result is still unseen after the agent exits");
-        a.observe(&view(&[]), &set(&[]), &live);
-        assert_eq!(a.pane("%1"), Some(Marker::Completed), "a reconnect gap is not evidence");
-        assert!(a.observe(&view(&[]), &set(&[]), &set(&[])));
-        assert_eq!(a.pane("%1"), None);
+        a.observe(&view(&[("%1", node(FIRST, "completed", false))]), &set(&["%1"]), &set(&["%1"]));
+        let nodes = view(&[("%1", node(SECOND, "completed", false)), ("%2", node(FIRST, "completed", false))]);
+        a.observe(&nodes, &set(&[]), &set(&["%1", "%2"]));
+        assert_eq!(a.pane("%1"), Some(Marker::Completed));
+        assert_eq!(a.attention("%1"), event(SECOND, "completed", false));
+        assert_eq!(a.pane("%2"), None);
+        assert_eq!(a.acknowledgements(), json!([{"key":"%2","event":FIRST}]));
+        // A true replacement at the current key settles the old token.
+        let replaced = view(&[("%1", node(SECOND, "completed", false)), ("%2", node(THIRD, "waiting", false))]);
+        a.observe(&replaced, &set(&[]), &set(&["%1", "%2"]));
+        assert_eq!(a.acknowledgements(), json!([]));
+        assert_eq!(a.project_attention(&event(FIRST, "completed", false)), event(FIRST, "completed", false));
+        assert_eq!(a.pane("%2"), Some(Marker::Waiting));
     }
 
     #[test]
-    fn malformed_history_is_ignored() {
+    fn detached_old_token_and_its_confirmation_cannot_read_a_new_event() {
         let mut a = AgentAttention::default();
+        a.observe(&view(&[("%1", node(FIRST, "completed", false))]), &set(&["%1"]), &set(&["%1"]));
+        a.observe(&json!({}), &set(&[]), &set(&[]));
+        let newer = view(&[("%9", node(SECOND, "completed", false))]);
+        a.observe(&newer, &set(&[]), &set(&["%9"]));
+        assert_eq!(a.pane("%9"), Some(Marker::Completed));
+        assert_eq!(a.acknowledgements(), json!([]));
+        a.project_attention(&event(FIRST, "completed", true));
+        assert_eq!(a.attention("%9"), event(SECOND, "completed", false));
+        assert_eq!(a.pane("%9"), Some(Marker::Completed));
+        assert_eq!(a.acknowledgements(), json!([]));
+    }
+
+    #[test]
+    fn away_projection_never_creates_receipts_and_confirms_matching_cached_presentations() {
+        let mut a = AgentAttention::default();
+        assert_eq!(a.project_attention(&event(FIRST, "waiting", false)), event(FIRST, "waiting", false));
+        assert!(a.pending.is_empty());
+        let nodes = view(&[("%1", node(FIRST, "waiting", false))]);
+        for _ in 0..10 {
+            a.observe(&nodes, &set(&["%1"]), &set(&["%1"]));
+        }
+        assert_eq!(a.pending.len(), 1, "one receipt per actual event, not per rendered frame");
+        assert_eq!(a.project_attention(&event(FIRST, "waiting", false)), event(FIRST, "waiting", true));
+        assert_eq!(a.project_attention(&event(SECOND, "completed", false)), event(SECOND, "completed", false));
+        assert_eq!(a.project_attention(&Value::Null), Value::Null);
+        assert_eq!(a.project_attention(&json!({"event":FIRST})), Value::Null);
+        assert_eq!(a.pending.len(), 1, "absent/malformed away rows cannot erase pending reads");
+        a.observe(&json!({}), &set(&[]), &set(&["%1"]));
+        assert_eq!(a.acknowledgements(), json!([]));
+        assert_eq!(a.project_attention(&event(FIRST, "waiting", true)), event(FIRST, "waiting", true));
+        assert!(a.pending.is_empty());
+        assert_eq!(a.attention("%1"), event(FIRST, "waiting", true));
+        assert_eq!(a.pane("%1"), None, "confirming an away row cannot revive a cached marker");
+    }
+
+    #[test]
+    fn explicit_no_event_discards_pending_and_history_never_creates_unread() {
+        for absent in [json!({}), json!({"attention":null})] {
+            let mut a = AgentAttention::default();
+            let live = set(&["%1"]);
+            let nodes = view(&[("%1", node(FIRST, "completed", false))]);
+            a.observe(&nodes, &live, &live);
+            a.observe(&view(&[("%1", absent)]), &set(&[]), &live);
+            assert_eq!(a.attention("%1"), Value::Null);
+            assert_eq!(a.acknowledgements(), json!([]));
+            // A later event cannot inherit the discarded local receipt.
+            a.observe(&nodes, &set(&[]), &live);
+            assert_eq!(a.pane("%1"), Some(Marker::Completed));
+        }
+        let mut a = AgentAttention::default();
+        for status in ["busy", "idle", "waiting", "idle"] {
+            let nodes = json!({"%1":{"provider":"claude", "status":status, "status_history":[
+                {"at":"2030-01-01T00:00:01Z","status":"busy"},
+                {"at":"2030-01-01T00:00:02Z","status":"idle"}]}});
+            a.observe(&nodes, &set(&[]), &set(&["%1"]));
+            assert_eq!(a.pane("%1"), None);
+            assert_eq!(a.attention("%1"), Value::Null);
+            assert_eq!(a.acknowledgements(), json!([]));
+        }
+    }
+
+    #[test]
+    fn already_read_events_do_not_mark_or_queue_receipts() {
+        let mut a = AgentAttention::default();
+        let live = set(&["%1", "%2"]);
+        let nodes = view(&[("%1", node(FIRST, "completed", true)), ("%2", node(SECOND, "waiting", true))]);
+        for visible in [set(&[]), live.clone()] {
+            assert!(!a.observe(&nodes, &visible, &live));
+            assert_eq!(a.marker(["%1", "%2"]), json!({"state":"","count":0}));
+            assert_eq!(a.acknowledgements(), json!([]));
+        }
+        assert_eq!(a.attention("%missing"), Value::Null);
+    }
+
+    #[test]
+    fn osc_only_agents_project_the_server_field_without_provider_or_status_inference() {
+        let mut a = AgentAttention::default();
+        let nodes = json!({"%1":{"provider":"shell", "status":"unknown", "program":{"app":"pi", "state":"done"},
+            "attention":event(FIRST, "completed", false)}});
+        a.observe(&nodes, &set(&[]), &set(&["%1"]));
+        assert_eq!(a.pane("%1"), Some(Marker::Completed));
+        a.observe(&nodes, &set(&["%1"]), &set(&["%1"]));
+        assert_eq!(a.acknowledgements(), json!([{"key":"%1","event":FIRST}]));
+    }
+
+    #[test]
+    fn malformed_nodes_cannot_authorize_a_read_or_retry() {
         let live = set(&["%1"]);
-        let bad = |status: &str| json!({"provider":"claude","status":status,"status_history":[{"at":"yesterday","status":"busy"},{"status":"idle"},7]});
-        a.observe(&view(&[("%1", bad("idle"))]), &set(&[]), &live);
-        a.observe(&view(&[("%1", bad("idle"))]), &set(&[]), &live);
-        assert_eq!(a.pane("%1"), None);
+        let valid = view(&[("%1", node(FIRST, "completed", false))]);
+        for bad in [Value::Null, json!(7), json!({"attention":{"event":FIRST, "kind":"completed"}}),
+            json!({"attention":{"event":FIRST, "kind":"idle", "seen":false}})] {
+            let mut a = AgentAttention::default();
+            a.observe(&valid, &set(&[]), &live);
+            a.observe(&view(&[("%1", bad.clone())]), &live, &live);
+            assert_eq!(a.pane("%1"), Some(Marker::Completed));
+            assert_eq!(a.acknowledgements(), json!([]));
+            a.observe(&valid, &live, &live);
+            a.observe(&view(&[("%1", bad)]), &set(&[]), &live);
+            assert_eq!(a.acknowledgements(), json!([]));
+            a.observe(&valid, &set(&[]), &live);
+            assert_eq!(a.acknowledgements(), json!([{"key":"%1","event":FIRST}]));
+        }
     }
 }

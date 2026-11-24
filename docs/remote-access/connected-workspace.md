@@ -3,6 +3,11 @@
 Once connected, programs keep running on the server. **Detach** leaves them
 running. **Kill Session** ends the selected session and its programs.
 
+Connecting to a server with no sessions automatically opens its first shell.
+Simultaneous connections share that session. If the shell cannot start, choose
+**Retry** after fixing the server's shell configuration, or **Cancel** to return
+to Servers. Closing the last session deliberately does not start another shell.
+
 ## Know where data lives
 
 - **On the server:** programs, terminal contents, Chromium profiles, files, and graph work.

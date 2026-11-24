@@ -18,6 +18,7 @@ unsafe extern "C" {
         height: i32,
         bitrate: i32,
         fps: i32,
+        probe: i32,
     ) -> *mut c_void;
     fn gl_video_free(encoder: *mut c_void);
     fn gl_video_set_bitrate(encoder: *mut c_void, bitrate: i32);
@@ -126,6 +127,17 @@ impl SurfaceEncoder {
         bitrate: u32,
         fps: u32,
     ) -> Result<Self, String> {
+        Self::open(source, codec, width, height, bitrate, fps, false)
+    }
+    fn open(
+        source: &Surface,
+        codec: super::Codec,
+        width: u32,
+        height: u32,
+        bitrate: u32,
+        fps: u32,
+        probe: bool,
+    ) -> Result<Self, String> {
         if width < 16
             || height < 16
             || width > 4096
@@ -144,6 +156,7 @@ impl SurfaceEncoder {
                 height as i32,
                 bitrate as i32,
                 fps as i32,
+                probe.into(),
             )
         };
         if handle.is_null() {
@@ -189,7 +202,7 @@ pub(crate) fn probe_encoders(requested: &[super::Codec]) -> Vec<super::Codec> {
     }
     let source = Surface { handle, width: 256, height: 256 };
     requested.iter().copied().filter(|&codec| {
-        let Ok(mut encoder) = SurfaceEncoder::configured(&source, codec, 256, 256, 0, 60) else {
+        let Ok(mut encoder) = SurfaceEncoder::open(&source, codec, 256, 256, 0, 60, true) else {
             return false;
         };
         // A static page may never send a second frame.

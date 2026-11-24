@@ -7,6 +7,7 @@ const TabStrip := preload("res://scenes/TabStrip.gd")
 class Graph extends RefCounted:
 	signal changed
 	var nodes: Dictionary = {}
+	var remote_owners: Dictionary = {}
 
 
 class API extends RefCounted:
@@ -24,6 +25,72 @@ class Host extends Node:
 	func is_terminal_pane(key: String) -> bool: return key.begins_with("%")
 
 
+class Peer extends Node:
+	var url := "test://receipts"
+	var epoch := "same-server"
+	var connected := false
+	var workspace := "$1"
+	var available_sessions: Array = []
+	func local_id(id: int) -> int: return id
+	func wire_id(id: int) -> int: return id
+
+
+class Backend extends RefCounted:
+	var is_remote := true
+	var connection: Node
+
+
+class RemoteHost extends Host:
+	var session_backend := Backend.new()
+
+
+class CapturedAttention extends "res://scenes/AgentAttention.gd":
+	var calls: Array = []
+	func _send_receipt(connection: Node, pane: int, event: String) -> void:
+		calls.append({"connection": connection, "pane": pane, "event": event})
+		_acknowledging.erase(event)
+
+
+func test_connected_catalog_retries_cached_read_without_reading_unshown_results() -> void:
+	for scenario in ["same", "newer", "missing"]:
+		var app := Application.new()
+		var cached := RemoteHost.new()
+		var other := RemoteHost.new()
+		var disconnected := Peer.new()
+		var connected := Peer.new()
+		connected.connected = true
+		connected.workspace = "$2"
+		cached.session_backend.connection = disconnected
+		other.session_backend.connection = connected
+		cached.workspace_layout.tabs = [_tab(1, ["%1"])]
+		cached.workspace_layout.active = 1
+		other.workspace_layout.tabs = [_tab(2, ["%2"])]
+		other.workspace_layout.active = 2
+		other.in_view = false
+		app.hosts = [cached, other]
+		var old_event := {"event":"first", "kind":"completed", "seen":false}
+		var catalog_event: Dictionary = old_event.duplicate()
+		if scenario == "newer": catalog_event.event = "second"
+		connected.available_sessions = [{"id":"$1", "agents":[{"pane":1, "status":"idle", "attention":catalog_event}]}, {"id":"$2", "agents":[]}]
+		if scenario != "missing": app.agent_api.graph.nodes = {"%1":{"status":"idle", "attention":old_event}}
+		app.agent_api.graph.remote_owners = {"%1":disconnected}
+		var attention := CapturedAttention.new()
+		attention.application = app
+		attention.in_view = func(host): return host.in_view
+		attention.refresh()
+		if scenario == "same":
+			expect(attention.calls == [{"connection":connected, "pane":1, "event":"first"}], "A connected view carries the cached pane's exact receipt")
+			expect(attention.marker(["%1"]).state == "", "Reading the cached event clears its local marker")
+		else:
+			expect(attention.calls.is_empty(), "Catalog-only evidence cannot acknowledge an unshown result: " + scenario)
+			expect(attention.marker(["%1"]).state == "completed", "The unseen catalog event stays unread: " + scenario)
+		attention.free()
+		cached.free()
+		other.free()
+		disconnected.free()
+		connected.free()
+
+
 func _tab(id: int, keys: Array, shown := []) -> Dictionary:
 	var children := []
 	for key in keys:
@@ -35,7 +102,10 @@ func _node(status: String, history: Array) -> Dictionary:
 	var entries := []
 	for entry in history:
 		entries.append({"at": "2030-01-01T00:00:%s.000+00:00" % entry[0], "status": entry[1]})
-	return {"provider": "claude", "status": status, "status_history": entries}
+	var attention: Variant = null
+	if status in ["idle", "waiting"]:
+		attention = {"event": status + str(history), "kind": "waiting" if status == "waiting" else "completed", "seen": false}
+	return {"provider": "claude", "status": status, "status_history": entries, "attention": attention}
 
 
 func _setup() -> Array:

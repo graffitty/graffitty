@@ -60,6 +60,17 @@ logout need a service or session policy that allows persistence.
 - A second `gft server` for the same descriptor is refused.
 - If the `[remote]` address in `server.toml` is taken, the server still runs for this computer with remote access off. Its log and the app name what holds the address: another Graffitty server, or the program and its process number.
 - An address given with `--listen` is the reason that server was started, so a taken one is fatal, with the same explanation.
+- If a reused server exposes only local IPC, `remote connect` reports that it
+  has no remote listener. Enable **Remote Access** in Graffitty on that computer
+  before retrying; this preserves its running terminals. For a new headless
+  server, start it with `gft server --listen 127.0.0.1:0`.
+
+Opening an empty remote workspace creates its first shell automatically. The
+frontend sends `session_new` with `if_empty: true`; the server attaches it to an
+existing session if another client created one first. The check and creation
+run together on the owner thread. Ordinary `session_new` still creates a new
+session. A failed automatic spawn exposes Retry/Cancel instead of retrying on
+every inventory update. Deliberately closing the last session does not respawn it.
 
 ## Keep a tunnel without opening a GUI
 

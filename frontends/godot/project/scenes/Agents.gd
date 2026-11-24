@@ -1,6 +1,6 @@
 extends Node
-## Client-local controller for the Herdr-derived Rust model. Sound playback never
-## runs on the session server. One application instance owns all windows' alerts.
+## Presentation and sounds for the Herdr-derived Rust model. Read receipts come
+## from the session server; one application instance owns all windows' alerts.
 signal changed
 const Layout := preload("res://scenes/WorkspaceLayout.gd")
 const Paths := preload("res://graffitty/paths.gd")
@@ -33,8 +33,8 @@ func _ready() -> void:
 		if not error.is_empty(): push_warning("Invalid agent list state: " + error)
 	_saved = _core.save()
 	_sounds = preload("res://config/UserConfig.gd").resolved(OS.get_cmdline_user_args()).settings.get("sounds", {})
-	# Observe every graph transition, not just the coalesced marker repair tick.
-	application.agent_api.graph.changed.connect(refresh)
+	# AgentAttention refreshes receipts before forwarding each graph transition
+	# here, so rows and sounds see the same event as the tab markers.
 
 ## Pane titles and foreground apps change without a graph transition (they
 ## arrive as `pane_update` deltas), so each host's UI change also refreshes the
@@ -88,6 +88,7 @@ func refresh_body() -> void:
 					"provider": node.get("provider", ""), "status": node.get("status", ""),
 					"program": node.get("program_status"),
 					"status_history": node.get("status_history", []),
+					"attention": application.agent_attention.attention(key),
 					"looking": shown, "focused": focused}
 		host_trees.append([host, ids_by_key])
 	_add_away(input, remotes, sessions)
@@ -134,7 +135,8 @@ func _add_away(input: Dictionary, remotes: Dictionary, sessions: Dictionary) -> 
 				if title.is_empty() and program is Dictionary: title = str(program.get("msg", ""))
 				input[id] = {"id": id, "key": "%%%d" % pane, "title": title,
 					"provider": str(agent.get("provider", "")), "status": str(agent.get("status", "")),
-					"program": program, "status_history": agent.get("status_history", []), "looking": false, "focused": false}
+					"program": program, "status_history": agent.get("status_history", []),
+					"attention": application.agent_attention.project_attention(agent.get("attention")), "looking": false, "focused": false}
 
 ## Server-owned session label (manual or automatic name), falling back to its ID.
 static func session_label(connection: Object) -> String:

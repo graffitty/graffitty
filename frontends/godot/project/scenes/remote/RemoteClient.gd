@@ -47,6 +47,12 @@ var clipboard_replies: Array[Dictionary] = []
 var clipboard_reply_bytes := 0
 var clipboard_reply_busy := false
 var dialog := AcceptDialog.new()
+var empty_session := ConfirmationDialog.new()
+var creating_session := false
+var _empty_session_attempted := false
+var _empty_session_failed := false
+var _empty_session_dismissed := false
+var _session_request_generation := 0
 var endpoint := LineEdit.new()
 var secret: LineEdit = preload("res://scenes/SecretInput.gd").new()
 var status := Label.new()
@@ -86,6 +92,13 @@ func _ready() -> void:
 	dialog.add_child(form)
 	add_child(dialog)
 	dialog.confirmed.connect(_connect)
+	empty_session.title = "Could not create session"
+	empty_session.dialog_text = "Could not create session."
+	empty_session.ok_button_text = "Retry"
+	empty_session.dialog_hide_on_ok = false
+	empty_session.confirmed.connect(_create_remote_session)
+	empty_session.canceled.connect(_cancel_empty_session)
+	add_child(empty_session)
 	if local_return != null:
 		dialog.add_button("Return to This Computer", true, "local_return")
 		dialog.custom_action.connect(func(action):
@@ -109,6 +122,8 @@ func _ready() -> void:
 	connection.session_switching.connect(func():
 		view_state.capture(host, connection.connections if federated else [connection]))
 	connection.session_switched.connect(func():
+		_empty_session_attempted = true
+		_reset_empty_session()
 		pending_resources.clear()
 		var transport: Node = connection.selected if federated else connection
 		switching_peer = transport
@@ -144,6 +159,7 @@ func _ready() -> void:
 	connection.clipboard_received.connect(_remote_clipboard)
 	if federated:
 		return
+	connection.sessions_changed.connect(_remote_sessions_changed, CONNECT_DEFERRED)
 	connection.connection_failed.connect(func(_message):
 		if is_instance_valid(host): host.layout_root.hide()
 		_show_connection_ui()
@@ -206,7 +222,7 @@ func _connect() -> void:
 		_show_connection_ui()
 		return
 	if connection.connected and connection.workspace.is_empty():
-		connection.send_action("session_new", -1, {})
+		_remote_sessions_changed(true)
 	elif connection.connected and connection.topology.tabs.is_empty():
 		connection.send_action("create", -1, { "kind": "tab" })
 	else:
@@ -276,7 +292,73 @@ func _local_fallback_session() -> String:
 
 func _remote_session_closed() -> void:
 	if transferring or closing_window: return
-	if connection.available_sessions.is_empty(): _show_connection_ui()
+	_remote_sessions_changed()
+
+
+func _hide_empty_session() -> void:
+	empty_session.hide()
+
+
+func _cancel_empty_session() -> void:
+	_empty_session_dismissed = true
+	_hide_empty_session()
+	_show_connection_ui()
+
+
+func _reset_empty_session() -> void:
+	_hide_empty_session()
+	_empty_session_dismissed = false
+	_empty_session_failed = false
+	_session_request_generation += 1
+	creating_session = false
+	empty_session.get_ok_button().disabled = false
+
+
+func _remote_sessions_changed(reopen := false) -> void:
+	if settings.get("shared_local", false) or transferring or closing_window: return
+	if reopen:
+		_empty_session_dismissed = false
+		if not creating_session:
+			_empty_session_attempted = false
+			_empty_session_failed = false
+	if get_node("/root/TerminalApplication").desktop_presentation(self).parked:
+		_hide_empty_session()
+		return
+	if connection.connected and connection.sessions_known and connection.workspace.is_empty() and connection.available_sessions.is_empty():
+		if is_instance_valid(host): host.layout_root.hide()
+		if _empty_session_dismissed or creating_session: return
+		if not _empty_session_attempted:
+			_create_remote_session()
+		elif _empty_session_failed:
+			if not empty_session.visible: empty_session.popup_centered()
+		else:
+			# Closing the last session is deliberate. Only a new connection or
+			# explicitly selecting this server starts another shell.
+			_show_connection_ui()
+	else:
+		if not connection.workspace.is_empty() or not connection.available_sessions.is_empty():
+			_empty_session_attempted = true
+		_reset_empty_session()
+
+
+func _create_remote_session() -> void:
+	if creating_session or not connection.connected or not connection.sessions_known or not connection.workspace.is_empty() or not connection.available_sessions.is_empty(): return
+	var transport := connection
+	var transport_generation: int = transport.transport_generation
+	_session_request_generation += 1
+	var request_generation := _session_request_generation
+	_empty_session_attempted = true
+	_empty_session_failed = false
+	creating_session = true
+	empty_session.get_ok_button().disabled = true
+	var response: Dictionary = await transport.request_action("session_new", {"if_empty": true})
+	if connection != transport or transport.transport_generation != transport_generation or _session_request_generation != request_generation: return
+	creating_session = false
+	empty_session.get_ok_button().disabled = false
+	if response.get("type") == "error":
+		_empty_session_failed = true
+		if not _empty_session_dismissed and not get_node("/root/TerminalApplication").desktop_presentation(self).parked:
+			empty_session.popup_centered()
 
 func _show_remote_unavailable() -> void:
 	if settings.get("shared_local", false) or connection.connected: return
@@ -288,6 +370,9 @@ func _show_remote_unavailable() -> void:
 	_show_connection_ui()
 
 func _status(message: String) -> void:
+	if not connection.connected:
+		_empty_session_attempted = false
+		_reset_empty_session()
 	if not connection.connected: pending_resources.clear()
 	if not federated and not connection.connected and is_instance_valid(host):
 		clipboard_generations.clear()
@@ -438,6 +523,8 @@ func _refresh_body() -> void:
 		status.text = "Workspace is empty — connect to open a terminal"
 		if federated:
 			host_empty.emit()
+		elif connection.connected and connection.sessions_known and connection.available_sessions.is_empty():
+			_remote_sessions_changed()
 		else:
 			_show_connection_ui()
 		applying = false
@@ -449,7 +536,7 @@ func _refresh_body() -> void:
 		_release_host()
 	# A parked view (for example the source of a Sessions-panel drop preview)
 	# can still apply topology, but must not draw over the view replacing it.
-	if not managed and connection.connected and is_instance_valid(host) and not host.application.desktop_presentation(self).parked:
+	if not federated and connection.connected and is_instance_valid(host) and not host.application.desktop_presentation(self).parked:
 		host.layout_root.show()
 	var layout_state := state.duplicate()
 	layout_state.erase("graph")
@@ -1169,7 +1256,7 @@ func _exit_tree() -> void:
 	connection.set_block_signals(true)
 	connection.disconnect_remote()
 	# Startup validation can exit before _ready attaches these owned nodes.
-	for node in [connection, dialog, endpoint, secret, status, remember]:
+	for node in [connection, dialog, empty_session, endpoint, secret, status, remember]:
 		if is_instance_valid(node) and node.get_parent() == null: node.free()
 
 

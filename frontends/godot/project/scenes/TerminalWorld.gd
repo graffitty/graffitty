@@ -204,6 +204,8 @@ var pointer_active_until := 0
 ## In one fullscreen measurement, a scale of 0.8 after the cap halved
 ## the frame time and lost 2% of the gradient.
 var render_scale := 0.8
+var _render_pixel_count := -1
+var _next_display_check_msec := 0
 ## Scenery scale while the camera moves: typing, gestures and flights. The
 ## frame left on screen returns to render_scale; at or above it, this is off.
 var motion_render_scale := 1.0
@@ -1473,21 +1475,25 @@ func _notification_body(what: int) -> void:
 			_set_world_awake(true)
 
 
+func _display_pixel_count() -> int:
+	return preload("res://scenes/WindowScale.gd").render_pixel_count(get_window())
+
+
+func _refresh_display_budget() -> void:
+	# Output enter/leave and same-DPI display moves need not resize the window.
+	if _display_pixel_count() != _render_pixel_count: _apply_render_scale()
+
+
 func _apply_render_scale() -> void:
-	## Cap the 3D pass to the display's pixel count before applying `render_scale`.
-	##
-	## Godot's macOS backing store can exceed the physical panel resolution.
-	## One measurement was 8100×5088 backing pixels on a 7200×4676 panel.
-	## The cap avoids rendering those extra pixels.
+	## Cap the 3D pass to output pixels without applying logical UI scale again.
 	var vp: Viewport = scenery_vp if scenery_vp != null else get_viewport()
 	var target := vp.get_texture().get_size()
 	if target.x < 1.0 or target.y < 1.0:
 		return
-	var screen := Vector2(DisplayServer.screen_get_size()) \
-			* DisplayServer.screen_get_scale()
+	_render_pixel_count = _display_pixel_count()
 	var cap := 1.0
-	if screen.x > 1.0 and screen.y > 1.0:
-		cap = minf(1.0, sqrt((screen.x * screen.y) / (target.x * target.y)))
+	if _render_pixel_count > 0:
+		cap = minf(1.0, sqrt(float(_render_pixel_count) / (target.x * target.y)))
 	var scale := clampf(cap * render_scale, 0.25, 1.0)
 	_scenery_scales = Vector2(scale, clampf(cap * motion_render_scale, 0.25, scale))
 	# Bilinear, not FSR2: at 0.8 the upscaler cost as much as the resolution
@@ -1495,13 +1501,13 @@ func _apply_render_scale() -> void:
 	vp.scaling_3d_mode = Viewport.SCALING_3D_MODE_BILINEAR
 	# Each assignment reallocates the render buffers, so set the scale once.
 	if scenery_vp != null:
-		_update_scenery_scale(false)
+		if _update_scenery_scale(false): _scenery_dirty = true
 	else:
 		vp.scaling_3d_scale = scale
 	if debug_render:
 		print(
-			"[render] target %s, screen %s, cap %.3f, scale %.3f, moving %.3f"
-			% [str(target), str(screen), cap, scale, _scenery_scales.y]
+			"[render] target %s, output pixels %d, cap %.3f, scale %.3f, moving %.3f"
+			% [str(target), _render_pixel_count, cap, scale, _scenery_scales.y]
 		)
 
 
@@ -2444,6 +2450,10 @@ func _process_body(dt: float) -> void:
 		return
 	if probe_freeze:
 		return
+	var now := Time.get_ticks_msec()
+	if now >= _next_display_check_msec:
+		_next_display_check_msec = now + 250
+		_refresh_display_budget()
 	if film_dt > 0.0:
 		dt = film_dt
 	# Navigation and scatter are analytic animations: retain elapsed wall time

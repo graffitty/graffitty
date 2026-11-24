@@ -1,4 +1,4 @@
-//! Recovery preserves wiring and ports, never process identities or queued work.
+//! Recovery preserves wiring, ports and attention, never process identities or queued work.
 use super::*;
 
 impl Graph {
@@ -22,7 +22,7 @@ impl Graph {
                         else if edge["send"] == true { "send" } else { "read" }}));
                     }
                 }
-                json!({"node":key,"manifest":{"inputs":inputs,"outputs":outputs}})
+                json!({"node":key,"manifest":{"inputs":inputs,"outputs":outputs},"attention":node["attention"]})
             })
             .collect();
         let edges: Vec<_> = self
@@ -63,6 +63,7 @@ impl Graph {
             }
             staged.add(id, String::new());
             staged.nodes.get_mut(key).unwrap()["manifest"] = manifest(&node["manifest"])?;
+            staged.nodes.get_mut(key).unwrap()["attention"] = json!(attention::validate(&node["attention"])?);
         }
         for edge in edges {
             let mut edge = edge.clone();
@@ -93,6 +94,10 @@ impl Graph {
             // Preserve active provider registration if the resumed agent beat us.
             if live["provider"] == "shell" {
                 live["manifest"] = node["manifest"].clone();
+            }
+            // A fresh lifecycle event that arrived during restoration wins.
+            if live["status"] == "unintegrated" && live["attention"].is_null() {
+                live["attention"] = node["attention"].clone();
             }
         }
         for (_, mut edge) in staged.edges {

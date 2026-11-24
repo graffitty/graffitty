@@ -4,6 +4,9 @@ use serde_json::{Value, json};
 use std::collections::{BTreeMap, HashMap, HashSet};
 #[path = "graph_checkpoint.rs"]
 mod checkpoint;
+#[path = "graph_attention.rs"]
+mod attention;
+pub use attention::AttentionState;
 type Result<T> = std::result::Result<T, String>;
 const QUEUE_LIMIT: usize = 10_000;
 const RUN_MESSAGE_LIMIT: usize = 10_000;
@@ -311,6 +314,8 @@ impl Graph {
         let key = format!("%{id}");
         let Some(node) = self.nodes.get(&key) else { return; };
         if is_custom_node(node) { return; }
+        let previous = node.clone();
+        let replaced = attention::identity_replaced(node, state);
         let was_waiting = node["status"] == "waiting";
         let had_turn_baseline = node.get("observed_turn").is_some();
         let previous_turn = node["observed_turn"].clone();
@@ -334,7 +339,7 @@ impl Graph {
         }
         let Some(found) = state.as_object() else { return; };
         let mut found = found.clone();
-        if found.get("pid").is_some_and(|pid| !pid.is_null() && *pid != node["pid"]) {
+        if replaced {
             node.as_object_mut().unwrap().remove("integrated");
         }
         if node["integrated"] == true && found.get("status") != Some(&json!("offline")) {
@@ -346,7 +351,7 @@ impl Graph {
         //
         // Replace it when discovery sees a new process or a known status.
         if found.contains_key("status") {
-            let same_process = node["pid"].is_null() || found.get("pid").is_none_or(|pid| pid.is_null() || *pid == node["pid"]);
+            let same_process = !replaced;
             let informed = !matches!(node["status"].as_str(), None | Some("unintegrated" | "unknown" | "offline"));
             if found["status"] == "unknown" && same_process && informed {
                 found.remove("status");
@@ -359,9 +364,11 @@ impl Graph {
         let observed_at = found.get("status").and_then(|_| found.get("status_at")).and_then(Value::as_str).map(str::to_owned);
         found.remove("status_at");
         node.as_object_mut().unwrap().extend(found);
+        attention::update(node, string(&previous, "status"), replaced);
         if ["codex", "claude", "opencode", "pi"].contains(&string(node, "provider")) { record_status_at(node, self.settings.status_history, observed_at.as_deref()); }
         let waiting = node["status"] == "waiting";
         let turn = node["observed_turn"].clone();
+        if *node != previous { self.notification_revision = self.notification_revision.wrapping_add(1); }
         if !was_waiting && waiting {
             let _ = self.enqueue_lifecycle(&key, "waiting", &json!({}));
         }
@@ -380,11 +387,13 @@ impl Graph {
     /// or discovery also takes its status from it; hook status stays authoritative.
     pub fn observe_program_status(&mut self, id: u64, status: Option<&Value>) {
         let Some(node) = self.nodes.get_mut(&format!("%{id}")) else { return; };
+        let previous = node.clone();
         match status {
             Some(status) => node["program_status"] = status.clone(),
             None => { node.as_object_mut().unwrap().remove("program_status"); }
         }
         if !matches!(node["status"].as_str(), Some("unintegrated" | "unknown")) && node["status_source"] != "program" {
+            if *node != previous { self.notification_revision = self.notification_revision.wrapping_add(1); }
             return;
         }
         let word = status.and_then(|status| status["state"].as_str());
@@ -401,6 +410,11 @@ impl Graph {
             node.as_object_mut().unwrap().remove("status_source");
         }
         record_status(node, self.settings.status_history);
+        let previous_app = string(&previous["program_status"], "app");
+        let app = string(&node["program_status"], "app");
+        let replaced = !previous_app.is_empty() && !app.is_empty() && previous_app != app;
+        attention::update(node, string(&previous, "status"), replaced);
+        if *node != previous { self.notification_revision = self.notification_revision.wrapping_add(1); }
     }
     pub fn remove(&mut self, id: u64) {
         let key = format!("%{id}");
@@ -580,6 +594,8 @@ impl Graph {
                 && node["heartbeat_at"].as_f64().is_some_and(|at| now - at > 15.0) {
                 self.timed_out_status.insert(key.clone(), node["status"].clone());
                 node["status"] = json!("offline");
+                // A heartbeat gap is reversible: keep the current receipt so
+                // readers can settle it while the waiting marker is hidden.
                 self.notification_revision = self.notification_revision.wrapping_add(1);
                 record_status(node, self.settings.status_history);
             }
@@ -712,7 +728,7 @@ impl Graph {
     }
     pub fn dispatch(&mut self, id: u64, method: &str, p: &Value) -> Result<Value> {
         let result = self.dispatch_inner(id, method, p);
-        if result.is_ok() && !matches!(method, "agent.heartbeat" | "graph.adjacent" | "graph.list" | "graph.read" | "graph.inbox" | "graph.take") {
+        if result.is_ok() && !matches!(method, "agent.seen" | "agent.heartbeat" | "graph.adjacent" | "graph.list" | "graph.read" | "graph.inbox" | "graph.take") {
             self.notification_revision = self.notification_revision.wrapping_add(1);
         }
         result
@@ -727,6 +743,19 @@ impl Graph {
         }
         self.expire();
         match method {
+            "agent.seen" => {
+                #[derive(serde::Deserialize)]
+                #[serde(deny_unknown_fields)]
+                struct Seen { event: String }
+                let receipt: Seen = serde_json::from_value(p.clone()).map_err(|e| e.to_string())?;
+                uuid::Uuid::parse_str(&receipt.event).map_err(|_| "Attention event must be a UUID")?;
+                let node = self.nodes.get_mut(&key).unwrap();
+                if node["attention"]["event"] == receipt.event && node["attention"]["seen"] == false {
+                    node["attention"]["seen"] = json!(true);
+                    self.notification_revision = self.notification_revision.wrapping_add(1);
+                }
+                Ok(json!({"attention":node["attention"]}))
+            }
             "graph.list" => Ok(self.snapshot()),
             "graph.queue" => Ok(self.journal.snapshot(string(p, "edge"))),
             "graph.run.default" | "graph.run.limit" | "graph.run.reset" => {
@@ -826,6 +855,11 @@ impl Graph {
                     self.clear_queue(&key);
                 }
                 let node = self.nodes.get_mut(&key).unwrap();
+                let previous = node.clone();
+                let replaced = attention::identity_replaced(node, p);
+                let starting = p["event"] == "SessionStart";
+                let reconnect = starting && !replaced && ["pid", "session_id"].iter()
+                    .any(|field| !p[*field].is_null() && p[*field] == node[*field]);
                 let was_waiting = node["status"] == "waiting";
                 if p["event"] == "SessionStart" {
                     node["transport"] = json!(p["transport"].as_str().unwrap_or("native"));
@@ -847,7 +881,7 @@ impl Graph {
                 if kind != "custom" {
                     node.as_object_mut().unwrap().remove("manifest");
                 }
-                self.timed_out_status.remove(&key);
+                let timed_out = self.timed_out_status.remove(&key);
                 node["kind"] = json!(kind);
                 node.as_object_mut().unwrap().remove("status_source");
                 if let Some(provider) = provider { node["provider"] = json!(provider); }
@@ -858,7 +892,6 @@ impl Graph {
                     "PermissionRequest" | "AwaitingInput" => "waiting",
                     _ => "busy",
                 });
-                record_status(node, self.settings.status_history);
                 // Another process: the start time kept for the previous one
                 // would make this one look like an impostor of it.
                 if p.get("pid").is_some_and(|pid| !pid.is_null() && *pid != node["pid"]) {
@@ -877,6 +910,15 @@ impl Graph {
                         node[field] = value.clone();
                     }
                 }
+                // The next hook may arrive before the heartbeat. Its status
+                // transition still starts at the last live status.
+                let previous_status = if !replaced { timed_out.as_ref().unwrap_or(&previous["status"]) }
+                    else { &previous["status"] };
+                if reconnect && matches!(previous_status.as_str(), Some("busy" | "idle" | "waiting")) {
+                    node["status"] = previous_status.clone();
+                }
+                attention::update(node, previous_status.as_str().unwrap_or(""), replaced || (starting && !reconnect));
+                record_status(node, self.settings.status_history);
                 if p["event"] == "UserPromptSubmit" || p["event"] == "SessionStart" {
                     node.as_object_mut().unwrap().remove("last_lifecycle_error");
                 }

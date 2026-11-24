@@ -337,6 +337,12 @@ its unlabelled bottom-right resize area; assert width **and** height change, not
 merely that the size differs. There is no triangle or Test sound control.
 Selecting an agent focuses its pane without dismissing Agents;
 tapping another pane must allow normal terminal input while the list stays open.
+Reading a completed agent on another connected device clears its completed row
+and blue tab dot here. The server owns the receipt: a fresh client must retain
+the read state, while a later completion becomes unread again. A remote read
+must not change this device's pane focus. Reuse `android-agent-receipts` for the
+automated Android/desktop check; human touch and orientation coverage remain
+separate requirements.
 Re-running `:Agents` raises the existing window. The title × closes it. Open and
 close the keyboard repeatedly: do not dismiss it merely because a read-only,
 non-modal window exists, keep the list reachable, and restore unobstructed geometry

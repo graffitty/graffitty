@@ -27,6 +27,9 @@ pub struct OwnerState {
     pub tab_titles: HashMap<u64, String>,
     pub sessions: Vec<SavedSession>,
     pub workspaces: crate::session_registry::Registry,
+    /// Optional agent metadata, bound to the live panes adopted from holders.
+    #[serde(default)]
+    pub agent_attention: HashMap<u64, graffitty_workspace_core::graph::AttentionState>,
     /// Optional application metadata; terminals can exist without any filetrees.
     #[serde(default)]
     pub filetrees: crate::filetree::SavedFiletrees,
@@ -147,8 +150,51 @@ impl OwnerState {
             tab_titles: tab_titles.clone(),
             sessions: Vec::new(),
             workspaces: Default::default(),
+            agent_attention: HashMap::new(),
             filetrees: Default::default(),
             last_viewed: None,
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use graffitty_workspace_core::graph::Graph;
+    use serde_json::json;
+
+    #[test]
+    fn owner_state_round_trip_keeps_the_current_agent_receipt() {
+        let directory = std::env::temp_dir().join(format!("gft-attention-test-{}", uuid::Uuid::new_v4()));
+        std::fs::create_dir(&directory).unwrap();
+        let descriptor = directory.join("server.json");
+        let mut graph = Graph::default();
+        graph.add(1, "Task".into());
+        for event in ["SessionStart", "UserPromptSubmit", "Stop"] {
+            graph.dispatch(1, "agent.event", &json!({"provider":"pi","event":event,"pid":10})).unwrap();
+        }
+        let event = graph.nodes["%1"]["attention"]["event"].clone();
+        for seen in [false, true] {
+            if seen { graph.dispatch(1, "agent.seen", &json!({"event":event})).unwrap(); }
+            let mut state = OwnerState::new("test-owner", &directory, 2, &HashMap::new());
+            state.agent_attention.insert(1, graph.attention_state(1).unwrap());
+            save(&descriptor, &state).unwrap();
+            let loaded = load(&descriptor).unwrap();
+            assert_eq!(loaded.version, 1);
+            let mut adopted = Graph::default();
+            adopted.add(1, "Adopted task".into());
+            adopted.restore_attention_state(1, &loaded.agent_attention[&1]).unwrap();
+            assert_eq!(adopted.nodes["%1"]["attention"], graph.nodes["%1"]["attention"]);
+            adopted.observe_agent(1, &json!({"provider":"pi","pid":10,"status":"unknown"}));
+            assert_eq!(adopted.nodes["%1"]["attention"]["seen"], seen);
+            assert_eq!(adopted.nodes["%1"]["attention"]["event"], event);
+        }
+        // Optional app data is absent for panes with no agent; it is not a
+        // separate schema generation or a reason to reject their owner state.
+        let mut empty = serde_json::to_value(OwnerState::new("test-owner", &directory, 1, &HashMap::new())).unwrap();
+        empty.as_object_mut().unwrap().remove("agent_attention");
+        let empty: OwnerState = serde_json::from_value(empty).unwrap();
+        assert!(empty.agent_attention.is_empty());
+        std::fs::remove_dir_all(directory).unwrap();
     }
 }

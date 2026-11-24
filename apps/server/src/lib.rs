@@ -435,7 +435,8 @@ impl Server {
         }
         Ok(id)
     }
-    fn agents(&mut self) {
+    fn agents(&mut self) -> bool {
+        let before: HashMap<_, _> = self.graphs.iter().map(|(key, graph)| (key.clone(), graph.notification_revision())).collect();
         for graph in self.graphs.values_mut() {
             graph.expire();
         }
@@ -648,6 +649,7 @@ impl Server {
                 self.workers.start(&self.cli,format!("deliver:{id}"),json!({"op":if provider=="codex"{"codex_queue"}else{"claude_send"},"target":node,"text":text,"event_id":event["event_id"]}),json!({"id":id,"workspace":workspace,"target":node,"event":event,"text":text}));
             }
         }
+        self.graphs.iter().any(|(key, graph)| before.get(key) != Some(&graph.notification_revision()))
     }
     #[cfg(target_os = "macos")]
     fn sync_chromium_windows(&mut self) {
@@ -1265,6 +1267,7 @@ impl Server {
             let result = if c.rpc_pending.len() >= 32 {
                 Err(api::error("busy", "Too many pending terminal requests"))
             } else { controller::dispatch(self, &value["call"]) };
+            let result = result.and_then(|reply| { self.save_owner_state()?; Ok(reply) });
             return match result {
                 Ok(api::Reply::Pending(receiver)) => { c.rpc_pending.push((value["request"].clone(), receiver)); Ok(()) },
                 Ok(api::Reply::Ready(reply)) => send(c, api::rpc_response(value["request"].clone(), reply)),
@@ -1543,6 +1546,20 @@ impl Server {
                     "params":{"name":value["name"]}}));
             }
             if kind == "session_new" {
+                if value.get("if_empty").is_some_and(|v| !v.is_boolean()) {
+                    return Err("if_empty must be boolean".into());
+                }
+                // Empty-inventory attachments race across clients. Check and
+                // create on the owner thread so they share the first session.
+                if value["if_empty"] == true {
+                    let existing = self.workspaces.iter()
+                        .min_by_key(|key| self.workspaces.info(key).id).cloned();
+                    if let Some(key) = existing {
+                        let session = session_management::description(self, &key);
+                        session_switch::apply(self, c, session["id"].as_str().unwrap())?;
+                        return Ok(session);
+                    }
+                }
                 // Authenticated local and remote clients create a named session
                 // through the same validation as `gft session new`.
                 let created = session_management::dispatch(self, &json!({
@@ -2555,7 +2572,7 @@ pub fn run(options: Options, foreground_apps: fn(&Value) -> Value) -> Result<(),
             chromium.poll();
         }
         server.retired_chromiums.retain(|b| !b.finished());
-        server.agents();
+        if server.agents() { server.save_owner_state()?; }
         server.frontend.expire(|id, workspace| server.sessions.get(&id).is_some_and(|s|s.workspace == workspace));
         agent_watch::flush(&server, &mut agent_watches);
         server.datagrams.sync(server.remote_listener.as_ref());
@@ -2781,6 +2798,12 @@ mod saved_identity_tests {
 }
 
 impl Server {
+    fn saved_agent_attention(&self) -> HashMap<u64, graph::AttentionState> {
+        self.sessions.values().filter(|session| session.is_held() && !session.exited)
+            .filter_map(|session| self.graphs.get(&session.workspace)?.attention_state(session.id)
+                .map(|state| (session.id, state))).collect()
+    }
+
     /// Commit recovery metadata before acknowledging a request or event.
     /// Skip the write when state is unchanged. Return any commit failure
     /// so success always means the pane can be recovered.
@@ -2790,6 +2813,7 @@ impl Server {
         state.workspaces = self.workspaces.clone();
         state.filetrees = self.filetrees.saved();
         state.last_viewed = self.last_viewed.clone();
+        state.agent_attention = self.saved_agent_attention();
         state.sessions = self.sessions.values().filter(|s| s.is_held() && !s.exited).map(Session::saved).collect();
         if self.saved_owner.as_ref() == Some(&state) { return Ok(()); }
         // Persist even an empty registry: deletion errors must not silently
@@ -2821,8 +2845,15 @@ fn hand_over(server: &mut Server, runtime: &std::path::Path) {
             Err(error) => eprintln!("[holder] cannot capture screen %{}: {error}", session.id),
         }
         state.sessions.push(session.saved());
+        if std::mem::take(&mut session.program_status_changed) {
+            let status = session.program_status.status.as_ref().map(|status| json!(status));
+            if let Some(graph) = server.graphs.get_mut(&session.workspace) {
+                graph.observe_program_status(session.id, status.as_ref());
+            }
+        }
         session.detached = true;
     }
+    state.agent_attention = server.saved_agent_attention();
     if let Err(error) = owner_state::save(&server.descriptor, &state) {
         eprintln!("[holder] cannot save owner state: {error}");
     }
@@ -2897,10 +2928,17 @@ fn owner_state_adopt(server: &mut Server, adopted: Vec<holder_link::Adopted>, pr
                 continue;
             }
         };
-        server.graphs
+        let graph = server.graphs
             .entry(session.workspace.clone())
-            .or_insert_with(|| graph::Graph::with_settings(server.settings.nodes.clone()))
-            .add(id, session.title());
+            .or_insert_with(|| graph::Graph::with_settings(server.settings.nodes.clone()));
+        graph.add(id, session.title());
+        if let Some(state) = previous.agent_attention.get(&id) {
+            if let Err(error) = graph.restore_attention_state(id, state) {
+                eprintln!("[holder] cannot restore attention for %{id}: {error}");
+            }
+        }
+        let status = session.program_status.status.as_ref().map(|status| json!(status));
+        graph.observe_program_status(id, status.as_ref());
         if let Some(pid) = session.pid() {
             server.resources.register(id, pid, Duration::from_secs(1), true);
         }

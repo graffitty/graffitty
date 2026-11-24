@@ -8,6 +8,23 @@ Build nodes that exchange messages and session context through explicit connecti
 
 Use the SDK types and CLI help for individual fields and options.
 
+## Shared read receipts
+
+Agent unread state belongs to the session server. Graph nodes and session agent
+summaries expose optional `attention`: `{event, kind, seen}`, where `event` is a
+unique opaque token and `kind` is `completed` or `waiting`.
+
+A frontend that displays the pane sends `agent.seen` with `{target, event}` through
+authenticated server control. The target is the server's pane ID, so the receipt
+can finish after the frontend switches sessions. The server marks only the matching current event as seen and publishes
+the receipt to every client. Duplicate or superseded receipts have no effect.
+Read receipts do not change the agent's working, waiting or idle status.
+
+The client projects a pending receipt immediately and retries until the server
+confirms it. The agent panel and tab badges use this same projection; focus and
+sound playback remain local. A new attention event replaces the old receipt, so
+delayed packets and client clock differences cannot hide a newer result.
+
 ## Connections are permissions
 
 A connection from A's output to B's input determines what B receives or can read:

@@ -41,6 +41,7 @@ fn main() {
         if std::env::var("CARGO_CFG_TARGET_OS").as_deref() == Ok("ios") { return; }
     }
     println!("cargo:rerun-if-changed=src/codec.c");
+    println!("cargo:rerun-if-changed=src/codec_probe.h");
     println!("cargo:rerun-if-changed=src/android.c");
     println!("cargo:rerun-if-changed=src/yuv420.h");
     if std::env::var("CARGO_CFG_TARGET_OS").as_deref() == Ok("android") {
@@ -130,6 +131,9 @@ fn main() {
             let linux = std::env::var("CARGO_CFG_TARGET_OS").as_deref() == Ok("linux");
             if linux {
                 build.define("GRAFFITTY_VA_LOADER", None);
+                println!("cargo:rerun-if-changed=src/cuda_probe.c");
+                println!("cargo:rerun-if-changed=src/cuda_probe.h");
+                build.file("src/cuda_probe.c");
             }
             build.compile("graffitty-chromium-video");
             if linux {

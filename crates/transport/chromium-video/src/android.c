@@ -106,9 +106,9 @@ static void on_error(AMediaCodec *codec, void *data, media_status_t error, int32
     if (!v->failed) v->failed = error ? error : AMEDIA_ERROR_UNKNOWN;
     pthread_mutex_unlock(&v->lock);
 }
-Video *gv_encoder(int codec, int width, int height, int bitrate, int fps) { (void)codec; (void)width; (void)height; (void)bitrate; (void)fps; return NULL; }
+Video *gv_encoder(int codec, int width, int height, int bitrate, int fps, int probe) { (void)codec; (void)width; (void)height; (void)bitrate; (void)fps; (void)probe; return NULL; }
 int gv_encode(Video *v, const uint8_t *rgba, int force_key, const uint8_t **bytes, int *key) { (void)v; (void)rgba; (void)force_key; (void)bytes; (void)key; return -1; }
-Video *gv_decoder(int codec) { (void)codec; return NULL; }
+Video *gv_decoder(int codec, int probe) { (void)codec; (void)probe; return NULL; }
 Video *gv_decoder_named(int codec, const char *name, int width, int height) {
     if (!name || !*name || width < 16 || height < 16 || width > 4096 || height > 4096) return NULL;
     pthread_once(&async_api, load_async_api);

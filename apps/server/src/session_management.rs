@@ -88,24 +88,30 @@ fn agents(server: &Server, key: &str) -> Vec<Value> {
     let mut result: Vec<Value> = graph.nodes.iter().filter_map(|(node, value)| {
         let pane: u64 = node.strip_prefix('%')?.parse().ok()?;
         let session = server.sessions.get(&pane).filter(|s| s.workspace == key && !s.exited)?;
-        let provider = value["provider"].as_str().unwrap_or("");
-        let program = value.get("program_status").filter(|p| p.is_object()).map(|p| json!({
-            "state": p["state"], "app": p.get("app").cloned().unwrap_or(json!("")),
-            "title": p.get("title").cloned().unwrap_or(json!("")), "msg": p.get("msg").cloned().unwrap_or(json!("")),
-        }));
-        let app = program.as_ref().and_then(|p| p["app"].as_str()).unwrap_or("");
-        if !AGENT_APPS.contains(&provider) && !AGENT_APPS.contains(&app) { return None; }
         let status = value["status"].as_str().unwrap_or("");
         let entry = titles.entry(pane).or_default();
         if entry.0 != status || entry.1.is_empty() || !session.pinned_title.is_empty() {
             *entry = (status.to_owned(), turn_title(&session.title(), pane));
         }
-        Some(json!({"pane": pane, "provider": provider, "status": value["status"],
-            "status_history": value["status_history"].as_array().and_then(|h| h.last()).into_iter().collect::<Vec<_>>(),
-            "title": entry.1, "program": program}))
+        agent_summary(pane, value, &entry.1)
     }).collect();
     result.sort_by_key(|agent| agent["pane"].as_u64());
     result
+}
+
+fn agent_summary(pane: u64, value: &Value, title: &str) -> Option<Value> {
+    if graffitty_workspace_core::graph::is_custom_node(value) { return None; }
+    let provider = value["provider"].as_str().unwrap_or("");
+    let program = value.get("program_status").filter(|p| p.is_object()).map(|p| json!({
+        "state": p["state"], "app": p.get("app").cloned().unwrap_or(json!("")),
+        "title": p.get("title").cloned().unwrap_or(json!("")), "msg": p.get("msg").cloned().unwrap_or(json!("")),
+    }));
+    let app = program.as_ref().and_then(|p| p["app"].as_str()).unwrap_or("");
+    if !AGENT_APPS.contains(&provider) && !AGENT_APPS.contains(&app) { return None; }
+    Some(json!({"pane": pane, "provider": provider, "status": value["status"],
+        "attention": value["attention"],
+        "status_history": value["status_history"].as_array().and_then(|h| h.last()).into_iter().collect::<Vec<_>>(),
+        "title": title, "program": program}))
 }
 
 /// A title without animated leading glyphs (spinners, stars); its `%N`
@@ -274,6 +280,35 @@ fn close_workspace(server: &mut Server, key: &str) -> Result<(), Error> {
 
 #[cfg(test)]
 mod tests {
+    use serde_json::json;
+
+    #[test]
+    fn agent_summary_matches_graph_receipts_for_hooks_and_osc_only_agents() {
+        for osc in [false, true] {
+            let mut graph = graffitty_workspace_core::graph::Graph::default();
+            graph.add(7, "Task".into());
+            if osc {
+                for state in ["working", "idle"] {
+                    graph.observe_program_status(7, Some(&json!({"app":"pi","state":state})));
+                }
+            } else {
+                for event in ["SessionStart", "UserPromptSubmit", "Stop"] {
+                    graph.dispatch(7, "agent.event", &json!({"provider":"pi","event":event})).unwrap();
+                }
+            }
+            let first = super::agent_summary(7, &graph.nodes["%7"], "Task").unwrap();
+            assert_eq!(first["attention"], graph.snapshot()["nodes"][0]["attention"]);
+            assert_eq!(first["attention"]["kind"], "completed");
+            graph.dispatch(7, "agent.seen", &json!({"event":first["attention"]["event"]})).unwrap();
+            let seen = super::agent_summary(7, &graph.nodes["%7"], "Task").unwrap();
+            assert_eq!(seen["attention"]["seen"], true);
+            assert_eq!(seen["attention"]["event"], first["attention"]["event"]);
+            assert_eq!(seen["attention"], graph.snapshot()["nodes"][0]["attention"]);
+        }
+        assert!(super::agent_summary(1, &json!({"provider":"shell","status":"idle"}), "Shell").is_none());
+        assert!(super::agent_summary(1, &json!({"kind":"custom","provider":"custom","status":"waiting"}), "Node").is_none());
+    }
+
     #[test]
     fn turn_titles_drop_spinners_and_fallbacks() {
         assert_eq!(super::turn_title("⠐ Fix the build", 3), "Fix the build");

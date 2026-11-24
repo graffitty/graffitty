@@ -14,6 +14,7 @@ class GodotCheck(unittest.TestCase):
             "SCRIPT ERROR: Parse Error: bad type",
             "ERROR: Failed to load script",
             "\x1b[31mERROR: invalid property\x1b[0m",
+            "ERROR: All attachments unused.\nERROR: Parameter \"src_tex\" is null.\nREPLAY_PASS",
         ]:
             with self.subTest(text=text):
                 self.assertTrue(failed(0, text))

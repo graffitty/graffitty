@@ -139,7 +139,11 @@ def export_smoke(output):
         needle = 'run/main_scene.android="res://scenes/remote_manager.tscn"'
         assert needle in previous_project, "Android entry scene missing from staging project"
         project.write_text(previous_project.replace(needle, 'run/main_scene.android="res://tests/android_runtime_smoke.tscn"'))
-        preset.write_text(previous_preset.replace("com.graffitty.client", PACKAGE).replace("tests/*,", ""))
+        identity = 'package/unique_name="com.graffitty.client"'
+        label = 'package/name="Graffitty"'
+        assert identity in previous_preset and label in previous_preset, "Production APK identity changed; review test isolation before installing"
+        preset.write_text(previous_preset.replace(identity, f'package/unique_name="{PACKAGE}"')
+                          .replace(label, 'package/name="Graffitty E2E"').replace("tests/*,", ""))
         (output / "runtime-test.apk").unlink(missing_ok=True)
         # Godot names intermediate APKs with second-resolution timestamps.
         # Another export must not overwrite the ZIP while apksigner reads it.
@@ -339,8 +343,84 @@ print('\\r\\n' + tag + '_BYTES=' + data.hex(), flush=True)
     (output / "assertions.json").write_text(json.dumps(assertions, indent=2))
 
 
+def agent_receipts(adb, output, config, state_until, write_private):
+    """Keep the phone's actual visibility and input path; observe from another process."""
+    from types import SimpleNamespace
+    sys.path.insert(0, str(ROOT / "tests/godot"))
+    from test_agent_receipts import Client
+    from check_godot import failed
+
+    descriptor = output / "desktop-connection.json"
+    descriptor.write_text(json.dumps(local_fixture_connection(config["connection"])))
+    owner = SimpleNamespace(path=output, descriptor=descriptor)
+    clients = []
+    evidence = {}
+
+    def phase(name):
+        state = state_until(lambda s: s.get("published", {}).get("phase") == name)
+        evidence[name] = {"android": state}
+        return state["published"]
+
+    def proceed(name):
+        write_private("agent-receipts-" + name + ".json", {"verified": True})
+        (output / "receipts.json").write_text(json.dumps(evidence, indent=2))
+
+    def unread(client, expected):
+        return client.until(lambda s: s.get("attention") == expected and s.get("status") == "done" and s.get("marker") == "completed")
+
+    def read(client, expected):
+        return client.until(lambda s: s.get("attention") == {**expected, "seen": True} and s.get("status") == "idle" and s.get("marker") == "")
+
+    try:
+        ready = phase("ready")
+        desktop = Client(owner, "desktop")
+        clients.append(desktop)
+        desktop.command(wire_pane=ready["wire_pane"])
+        desktop.until(lambda s: s.get("connected") and s.get("provider") == "pi")
+        proceed("ready")
+        phone = phase("unread-phone")
+        evidence["unread-phone"]["desktop"] = unread(desktop, phone["attention"])
+        capture_screen(adb, output / "phone-unread.png")
+        run(adb + ["shell", "input", "tap", *map(str, phone["tap"])], capture_output=True)
+        proceed("unread-phone")
+        phase("read-phone")
+        evidence["read-phone"]["desktop"] = read(desktop, phone["attention"])
+        capture_screen(adb, output / "phone-read.png")
+        proceed("read-phone")
+        next_turn = phase("unread-desktop")
+        assert next_turn["attention"]["event"] != phone["attention"]["event"], "New completion reused an event"
+        evidence["unread-desktop"]["desktop"] = unread(desktop, next_turn["attention"])
+        desktop.command(viewed=True)
+        evidence["unread-desktop"]["desktop_read"] = read(desktop, next_turn["attention"])
+        proceed("unread-desktop")
+        phase("read-desktop")
+        capture_screen(adb, output / "phone-read-from-desktop.png")
+        newcomer = Client(owner, "fresh-desktop")
+        clients.append(newcomer)
+        newcomer.command(wire_pane=ready["wire_pane"])
+        evidence["read-desktop"]["fresh_desktop"] = read(newcomer, next_turn["attention"])
+        proceed("read-desktop")
+    finally:
+        for client in clients:
+            client.close()
+        (output / "receipts.json").write_text(json.dumps(evidence, indent=2))
+    for client in clients:
+        assert not failed(client.process.returncode, client.output()), client.output()
+
+
 def smoke(adb, output, native_input=False, config=None, native_remote=False, lifecycle=False, ime_resume=False, shortcuts=False, record=True, stop_chromium=None, install_apk=None):
     export_smoke(output)
+    # Check the built manifest before any package operation, including cached
+    # APKs. A stale/changed export preset must never replace the user's app.
+    sdk = Path(os.environ.get("ANDROID_HOME", Path.home() / "Library/Android/sdk"))
+    inspectors = sorted((sdk / "build-tools").glob("*/aapt2"))
+    assert inspectors, "aapt2 is required to verify the disposable APK identity"
+    manifest = run([str(inspectors[-1]), "dump", "badging", str(output / "runtime-test.apk")], capture_output=True, text=True).stdout
+    identity = re.search(r"^package: name='([^']+)'", manifest, re.MULTILINE)
+    assert identity and identity[1] == PACKAGE, "Refusing to install an APK outside the disposable test package"
+    labels = re.findall(r"^application-label(?:-[^:]+)?:'([^']*)'", manifest, re.MULTILINE)
+    assert labels and set(labels) == {"Graffitty E2E"}, "Test APK must have a distinct launcher name in every locale"
+    (output / "package-identity.json").write_text(json.dumps({"package": identity[1], "label": "Graffitty E2E"}, indent=2))
     # These package names belong exclusively to this runner.
     subprocess.run(adb + ["uninstall", PACKAGE], capture_output=True, timeout=30)
     if install_apk is None:
@@ -398,6 +478,8 @@ def smoke(adb, output, native_input=False, config=None, native_remote=False, lif
         launch()
         first = state_until(lambda s: s.get("launches", 1) == 1)
         capture_screen(adb, output / "entry.png")
+        if config and config.get("case") == "agent-receipts":
+            agent_receipts(adb, output, config, state_until, write_private)
         if config and config.get("case") == "messages-copy":
             import uiautomator2 as u2
             device = u2.connect(adb[adb.index("-s") + 1])
@@ -864,6 +946,8 @@ WORKSPACE_CASES["android-dock-camera"] = "dock-camera"
 SHARED_SCENARIOS["android-dock-camera"] = "workspace"
 WORKSPACE_CASES["android-agent-attention"] = "agent-attention"
 SHARED_SCENARIOS["android-agent-attention"] = "workspace"
+WORKSPACE_CASES["android-agent-receipts"] = "agent-receipts"
+SHARED_SCENARIOS["android-agent-receipts"] = "agent_receipts"
 WORKSPACE_CASES["android-main-area-keyboard"] = "main-area-keyboard"
 WORKSPACE_CASES["android-text-size"] = "text-size"
 SHARED_SCENARIOS["android-text-size"] = "workspace"
@@ -924,7 +1008,7 @@ def main():
     cases = [tomllib.loads(path.read_text()) for path in sorted(SUITE.glob("*.toml"))]
     unknown = set(args.names) - {case["name"] for case in cases}
     if unknown: parser.error("Unknown cases: " + ", ".join(sorted(unknown)))
-    simulated_cases = set(WORKSPACE_CASES) | {"android-multiserver", "android-remote-state", "android-touch-ui"}
+    simulated_cases = (set(WORKSPACE_CASES) - {"android-agent-receipts"}) | {"android-multiserver", "android-remote-state", "android-touch-ui"}
     if args.simulated and set(args.names) - simulated_cases:
         parser.error("Selected cases do not support --simulated")
     cases = [case for case in cases if (not args.names or case["name"] in args.names) and (not args.simulated or case["name"] in simulated_cases)]

@@ -6,6 +6,15 @@ use std::sync::atomic::{AtomicU64, Ordering};
 
 static NEXT: AtomicU64 = AtomicU64::new(0);
 
+const DELEGATION_HELP: &str = concat!(
+    "Launch a new server inside a delegated systemd user scope ",
+    "(systemd-run --user --scope -p Delegate=yes), move its launcher into a child cgroup, ",
+    "and enable +cpu +memory in the empty parent's cgroup.subtree_control. ",
+    "Set GODOT_RESOURCE_CGROUP_PARENT to that parent. ",
+    "See docs/everyday-use/resource-monitor.md#linux-setup for the complete command; ",
+    "existing terminals can keep running without monitoring."
+);
+
 fn membership(pid: &str) -> Result<PathBuf, String> {
     let value = fs::read_to_string(format!("/proc/{pid}/cgroup")).map_err(|e| e.to_string())?;
     let relative = value
@@ -30,20 +39,27 @@ impl Boundary {
             None => membership("self")?,
         };
         if !parent.join("cgroup.controllers").is_file() {
-            return Err("A delegated cgroup-v2 parent is required".into());
+            return Err(format!(
+                "A delegated cgroup-v2 parent is required. {DELEGATION_HELP}"
+            ));
         }
         let path = parent.join(format!(
             "godot-terminal-{}-{}",
             std::process::id(),
             NEXT.fetch_add(1, Ordering::Relaxed)
         ));
-        fs::create_dir(&path)
-            .map_err(|e| format!("Cannot create terminal cgroup (delegation required): {e}"))?;
+        fs::create_dir(&path).map_err(|e| {
+            format!(
+                "Cannot create terminal cgroup under {}: {e}. {DELEGATION_HELP}",
+                parent.display()
+            )
+        })?;
         let boundary = Self { path };
-        for file in ["cpu.stat", "memory.current", "memory.peak"] {
+        for file in ["cpu.stat", "memory.current"] {
             if !boundary.path.join(file).is_file() {
                 return Err(format!(
-                    "Delegated cgroup lacks {file}; enable CPU/memory controllers in its parent"
+                    "Terminal cgroup lacks {file}; CPU/memory controllers are not enabled under {}. {DELEGATION_HELP}",
+                    parent.display()
                 ));
             }
         }
@@ -127,13 +143,11 @@ impl Backend {
             memory,
             ..Reading::default()
         };
-        result.kernel_peak = Some(
-            fs::read_to_string(self.path.join("memory.peak"))
-                .map_err(|e| e.to_string())?
-                .trim()
-                .parse::<u64>()
-                .map_err(|e| e.to_string())?,
-        );
+        result.kernel_peak = match fs::read_to_string(self.path.join("memory.peak")) {
+            Ok(value) => Some(value.trim().parse::<u64>().map_err(|e| e.to_string())?),
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => None,
+            Err(error) => return Err(error.to_string()),
+        };
         inventory(&self.path, &mut result.processes, 0)?;
         result.processes.sort_by_key(|p| p.pid);
         result.processes.dedup_by_key(|p| p.pid);
@@ -194,6 +208,31 @@ fn inventory(path: &Path, out: &mut Vec<ProcessSnapshot>, depth: usize) -> Resul
 mod tests {
     use super::*;
     #[test]
+    fn current_accounting_does_not_require_kernel_peak() {
+        let path = std::env::temp_dir().join(format!(
+            "gft-cgroup-test-{}-{}",
+            std::process::id(),
+            NEXT.fetch_add(1, Ordering::Relaxed)
+        ));
+        fs::create_dir(&path).unwrap();
+        fs::write(path.join("cpu.stat"), "user_usec 5\nsystem_usec 2\n").unwrap();
+        fs::write(path.join("memory.current"), "1024\n").unwrap();
+        fs::write(path.join("cgroup.procs"), "").unwrap();
+        let mut backend = Backend { path: path.clone() };
+        let reading = backend.sample().unwrap();
+        assert_eq!(
+            (reading.user, reading.system, reading.memory),
+            (5000, 2000, 1024)
+        );
+        assert_eq!(reading.kernel_peak, None);
+        fs::write(path.join("memory.peak"), "2048\n").unwrap();
+        assert_eq!(backend.sample().unwrap().kernel_peak, Some(2048));
+        fs::write(path.join("memory.peak"), "invalid\n").unwrap();
+        assert!(backend.sample().is_err());
+        fs::remove_dir_all(path).unwrap();
+    }
+
+    #[test]
     #[ignore = "requires a writable delegated cgroup-v2 parent with CPU/memory controllers"]
     fn command_boundary_accounts_for_descendants_and_is_removed_after_exit() {
         use std::process::Command;
@@ -211,7 +250,9 @@ mod tests {
         loop {
             let reading = backend.sample().unwrap();
             if reading.processes.len() >= 2 && reading.memory > 0 {
-                assert!(reading.kernel_peak.unwrap() >= reading.memory);
+                if let Some(peak) = reading.kernel_peak {
+                    assert!(peak >= reading.memory);
+                }
                 break;
             }
             assert!(

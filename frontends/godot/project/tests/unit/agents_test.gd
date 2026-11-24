@@ -1,6 +1,7 @@
 extends "res://tests/unit/test_case.gd"
 
 class Connection extends Node:
+	var connected := false
 	var url := "test://server"
 	var epoch := "test-epoch"
 	var server_hostname := "fixture-server"
@@ -55,6 +56,7 @@ func test_recorded_view_clears_tab_and_agent_completion_together() -> void:
 		controller.refresh()
 	refresh.call()
 	app.agent_api.graph.nodes["%1"].status = "idle"
+	app.agent_api.graph.nodes["%1"].attention = {"event":"finish-1", "kind":"completed", "seen":false}
 	refresh.call()
 	expect(app.agent_attention.marker(["%1"]).state == "completed" and controller.rows[0].status == "done",
 		"Without native focus, both surfaces mark the completion unseen")
@@ -63,15 +65,19 @@ func test_recorded_view_clears_tab_and_agent_completion_together() -> void:
 	expect(app.agent_attention.marker(["%1"]).state == "" and controller.rows[0].status == "idle",
 		"The recorded view clears both markers without native window focus")
 	app.agent_api.graph.nodes["%1"].status = "busy"
+	app.agent_api.graph.nodes["%1"].attention = null
 	refresh.call()
 	app.agent_api.graph.nodes["%1"].status = "idle"
+	app.agent_api.graph.nodes["%1"].attention = {"event":"finish-2", "kind":"completed", "seen":false}
 	refresh.call()
 	expect(app.agent_attention.marker(["%1"]).state == "" and controller.rows[0].status == "idle",
 		"A completion displayed in the recording never becomes unread")
 	host.workspace_layout.active = 2
 	app.agent_api.graph.nodes["%1"].status = "busy"
+	app.agent_api.graph.nodes["%1"].attention = null
 	refresh.call()
 	app.agent_api.graph.nodes["%1"].status = "idle"
+	app.agent_api.graph.nodes["%1"].attention = {"event":"finish-3", "kind":"completed", "seen":false}
 	refresh.call()
 	expect(app.agent_attention.marker(["%1"]).state == "completed" and controller.rows[0].status == "done",
 		"A background tab still marks an unseen completion")
@@ -138,6 +144,7 @@ class Peer extends Node:
 		{"id": "$2", "automatic_name": "graffitty", "agents": [
 			{"pane": 7, "provider": "pi", "status": "busy", "title": "", "program": null}]}]
 	func wire_id(id: int) -> int: return 7 if id == 1 else id
+	func local_id(id: int) -> int: return 1 if id == 7 else id
 
 class Backend extends RefCounted:
 	var is_remote := true
@@ -189,14 +196,17 @@ func test_agents_command_and_bridge_states() -> void:
 	var first: Dictionary = core.observe(input, 100)
 	expect(first.rows[0].section == "Working" and first.sounds.is_empty(), "Working begins silently")
 	input[0].status = "waiting"
+	input[0].attention = {"event":"wait-1", "kind":"waiting", "seen":false}
 	var wait: Dictionary = core.observe(input, 110)
 	expect(wait.rows[0].section == "Needs you" and wait.sounds == ["blocked"], "Awaiting input raises attention")
 	expect(core.observe(input, 111).sounds.is_empty(), "Repeated snapshots do not play a sound")
 	input[0].status = "idle"
+	input[0].attention = {"event":"finish-1", "kind":"completed", "seen":false}
 	var done: Dictionary = core.observe(input, 120)
 	expect(done.rows[0].section == "Done" and done.sounds == ["done"], "An unseen completion is Done")
 	input[0].looking = true
 	input[0].focused = true
+	input[0].attention.seen = true
 	var seen: Dictionary = core.observe(input, 130)
 	expect(seen.rows[0].section == "Done" and seen.rows[0].status == "idle" and seen.rows[0].at == 120, "Focused completed row holds its group and duration")
 	core.pin("test/epoch/1", true)

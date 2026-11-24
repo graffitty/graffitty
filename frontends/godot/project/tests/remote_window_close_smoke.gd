@@ -90,8 +90,48 @@ func check_detached(f: Dictionary, label: String) -> void:
 func buttons(prompt: ConfirmationDialog) -> Array:
 	return prompt.get_ok_button().get_parent().get_children().filter(func(button): return button is Button and button.visible).map(func(button): return button.text)
 
+func check_discovery_transport_replacement() -> void:
+	var connection := TestConnection.new()
+	root.add_child(connection)
+	var original := Peer.new()
+	original.connection = connection
+	connection.socket = original
+	connection.url = "ws://fixture.invalid"
+	connection.connected = true
+	connection.workspace = ""
+	connection.sessions_known = false
+	var completion := {}
+	var request := func():
+		completion.response = await connection.request_action("create", {"kind": "tab"}, 1000)
+	request.call()
+	await process_frame
+	check(completion.is_empty() and original.requests.is_empty(), "Session-dependent action waits for discovery before sending")
+	var generation := connection.transport_generation
+	connection.disconnect_remote()
+	var replacement := Peer.new()
+	replacement.connection = connection
+	# Complete replacement discovery before the suspended request can resume.
+	# A connected flag alone would let the old action reach this new peer.
+	connection.socket = replacement
+	connection.connected = true
+	connection.workspace = "replacement"
+	connection.sessions_known = true
+	check(connection.transport_generation != generation, "Replacing transport invalidates the discovery generation")
+	var deadline := Time.get_ticks_msec() + 2000
+	while completion.is_empty() and Time.get_ticks_msec() < deadline:
+		await process_frame
+	var response: Dictionary = completion.get("response", {})
+	check(response.get("type") == "error" and response.get("code") == "owner_unavailable", "Discovery waiter rejects its replaced owner")
+	check(original.requests.is_empty() and replacement.requests.is_empty(), "Discovery waiter sends nothing to the replacement transport")
+	check(connection.acknowledged.get_connections().is_empty(), "Rejected discovery waiter leaves no reply subscription")
+	response = await connection.request_action("create", {"kind": "tab"}, 1000)
+	check(response.get("type") == "ack" and replacement.requests.size() == 1, "A new session-dependent action uses the replacement transport")
+	connection.disconnect_remote()
+	connection.free()
+
 func run() -> void:
 	auto_accept_quit = false
+	await check_discovery_transport_replacement()
 	var f := fixture()
 	f.client.connection._network_failed("Server killed")
 	root.close_requested.emit()

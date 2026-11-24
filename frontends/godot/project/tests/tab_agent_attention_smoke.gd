@@ -3,7 +3,7 @@ extends "res://tests/tab_close_selection_smoke.gd"
 ## in for agent hooks.
 ##
 ## Headless windows never hold focus, so "in view" here means the host is
-## presenting; focus itself is covered in agent_attention_test.gd.
+## presenting; focus itself is covered in unit/agent_attention_test.gd.
 ##
 ##     godot --headless --path . --script tests/tab_agent_attention_smoke.gd -- --shell=/bin/sh
 
@@ -14,7 +14,10 @@ func _at(second: int) -> String:
 func _snapshot(key: String, status: String, history: Array) -> Dictionary:
 	var entries := []
 	for entry in history: entries.append({"at": _at(entry[0]), "status": entry[1]})
-	return {"nodes": [{"node": key, "provider": "claude", "status": status, "status_history": entries}]}
+	var attention: Variant = null
+	if status in ["idle", "waiting"]:
+		attention = {"event": status + str(history), "kind": "waiting" if status == "waiting" else "completed", "seen": false}
+	return {"nodes": [{"node": key, "provider": "claude", "status": status, "status_history": entries, "attention": attention}]}
 
 
 func _dot(tab: int) -> Control:
@@ -48,7 +51,7 @@ func run() -> void:
 	var first: int = host.workspace_layout.active
 	var key: String = host.pane_focus
 	var graph: Node = host.agent_api.graph
-	var agent := Node.new()
+	var agent := preload("res://scenes/remote/RemoteConnection.gd").new()
 	host.add_child(agent)
 	graph.import_remote(agent, _snapshot(key, "busy", [[1, "busy"]]))
 	await _sync()

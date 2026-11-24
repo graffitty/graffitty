@@ -33,6 +33,20 @@ static func auto_scale(backend: String, native_scale: float, dpi: int) -> float:
 	return native_scale if is_finite(native_scale) and native_scale > 0.0 else 1.0
 
 
+## Rendering budgets use output pixels, separately from logical UI density.
+## Zero means the output is unknown: keep the viewport's own pixel budget.
+static func render_pixel_count(target: Window) -> int:
+	if target.is_embedded(): target = native_owner(target)
+	if DisplayServer.get_name() == "Wayland":
+		# Godot's current_screen is always zero on Wayland. The native adapter
+		# reads the outputs entered by this particular surface instead.
+		if target.get_window_id() >= 0 and ClassDB.class_exists(&"GraffittyWaylandFrame"):
+			return ClassDB.class_call_static(&"GraffittyWaylandFrame", &"get_output_pixel_count", target.get_window_id())
+		return 0
+	var size := DisplayServer.screen_get_size(target.current_screen)
+	return size.x * size.y if size.x > 0 and size.y > 0 else 0
+
+
 func _mapped() -> void:
 	if window.is_embedded(): return
 	if _use_wayland_rects:

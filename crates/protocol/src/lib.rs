@@ -4,6 +4,7 @@ use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use std::{error::Error, fmt};
 pub mod clipboard;
+pub mod agent_attention;
 pub mod file_transfer;
 pub mod controller;
 pub mod osc;

@@ -1,5 +1,6 @@
 #include "../include/frame_protocol_linux.h"
 #include "vulkan_readback.h"
+#include "cuda_probe.h"
 #include <sys/mman.h>
 #include <sys/stat.h>
 #define VK_NO_PROTOTYPES
@@ -11,13 +12,14 @@
 #pragma GCC diagnostic pop
 extern "C" {
 struct Video;
-Video *gv_encoder(int, int, int, int, int);
+Video *gv_encoder(int, int, int, int, int, int);
 void gv_free(Video *);
 void gv_set_bitrate(Video *, int);
 int gl_encode_pixels(Video *, const uint8_t *, int, int, int, int, const uint8_t **, int *);
 #include <libavcodec/avcodec.h>
 #include <libavutil/hwcontext.h>
 #include <libavutil/hwcontext_cuda.h>
+#include "codec_probe.h"
 }
 #include <dlfcn.h>
 #include <atomic>
@@ -102,6 +104,7 @@ bool vulkan_identity(const CUuuid &uuid, chromium_linux::Hello &hello) {
 }
 
 Device *create_device(const char *ptx) {
+    if (!gv_cuda_available()) return nullptr;
     auto device = std::make_unique<Device>();
     if (cuda_load_functions(&device->cu, nullptr) < 0) return nullptr;
     auto &cu = *device->cu;
@@ -406,14 +409,14 @@ extern "C" int gl_video_minimum(void *p, int codec, uint32_t *width, uint32_t *h
     return 1;
 }
 
-extern "C" void *gl_video_new(void *p, int codec, int width, int height, int bitrate, int fps) {
+extern "C" void *gl_video_new(void *p, int codec, int width, int height, int bitrate, int fps, int probe) {
     if (!p || codec < 0 || codec > 2 || width < 16 || height < 16 || width > 4096 || height > 4096 ||
         ((width | height) & 1) || bitrate < 0 || bitrate > 200000000 || fps < 1 || fps > 120)
         return nullptr;
     auto &source = *static_cast<Surface *>(p);
     if (!source.owner) {
         auto encoder = std::make_unique<Encoder>();
-        encoder->upload = gv_encoder(codec, width, height, bitrate, fps);
+        encoder->upload = gv_encoder(codec, width, height, bitrate, fps, probe);
         if (!encoder->upload) return nullptr;
         encoder->width = width;
         encoder->height = height;
@@ -456,7 +459,7 @@ extern "C" void *gl_video_new(void *p, int codec, int width, int height, int bit
     for (auto option : {std::pair{"preset", "p1"}, {"tune", "ull"}, {"zerolatency", "1"}, {"delay", "0"},
                         {"rc-lookahead", "0"}, {"forced-idr", "1"}, {"rgb_mode", "yuv420"}, {"surfaces", "4"}})
         av_dict_set(&options, option.first, option.second, 0);
-    const int result = avcodec_open2(context, implementation, &options);
+    const int result = gv_open_codec(context, implementation, &options, probe);
     const bool unrecognized = av_dict_count(options) != 0;
     av_dict_free(&options);
     if (result < 0 || unrecognized) return nullptr;

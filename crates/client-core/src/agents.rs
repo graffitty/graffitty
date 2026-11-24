@@ -2,6 +2,7 @@
 //! defaults/mods/agents/main.js at e77f112 (Apache-2.0).
 //! Changes: Graffitty status/provider adapter, no spaces, client-local pins,
 //! stable server/epoch/terminal identities and a frontend-neutral snapshot.
+use graffitty_protocol::agent_attention::{AgentAttention, AttentionKind};
 use serde::{Deserialize, Serialize};
 use std::collections::{BTreeMap, HashMap, HashSet};
 
@@ -14,7 +15,9 @@ pub struct Input {
     pub status: String,
     /// Optional OSC 7501 root report. Presentation only; never grants a graph identity.
     pub program: Option<graffitty_terminal_core::program_status::Status>,
-    /// Server-recorded transitions, including when this client was disconnected.
+    /// Server attention, with any pending local receipt already projected by the caller.
+    pub attention: Option<AgentAttention>,
+    /// Server-recorded transitions for durations only, never unread inference.
     #[serde(default)]
     pub status_history: Vec<StatusChange>,
     pub looking: bool,
@@ -42,7 +45,7 @@ pub struct Row {
     pub focused: bool, pub pinned: bool,
 }
 #[derive(Default)]
-struct Agent { word: String, seen: bool, seq: u64 }
+struct Agent { word: String, status: String, event: Option<String>, seq: u64 }
 #[derive(Default)]
 pub struct Agents {
     saved: Saved,
@@ -62,11 +65,11 @@ fn section(r: u8) -> &'static str {
 fn app_name(provider: &str) -> &str {
     match provider { "pi" => "Pi", "claude" => "Claude Code", "codex" => "Codex", "opencode" => "OpenCode", other => other }
 }
-/// Herdr: blocked always alerts; finishing only while not looking.
-pub fn alert(previous: Option<&str>, next: &str, looking: bool) -> Option<&'static str> {
-    let busy = |s| matches!(s, "working" | "blocked");
-    if next == "blocked" && previous != Some("blocked") { Some("blocked") }
-    else if previous.is_some_and(busy) && !busy(next) && !looking { Some("done") }
+/// Sounds stay local. A new completion token can alert across a missed busy
+/// snapshot, but startup and repeated snapshots of that event stay quiet.
+fn alert(previous: Option<&Agent>, next: &str, event: Option<&str>, looking: bool) -> Option<&'static str> {
+    if next == "blocked" && previous.is_none_or(|a| a.status != "blocked") { Some("blocked") }
+    else if next == "done" && !looking && previous.is_some_and(|a| a.event.as_deref() != event) { Some("done") }
     else { None }
 }
 impl Agents {
@@ -80,8 +83,8 @@ impl Agents {
     pub fn pin(&mut self, id: String, pinned: bool) {
         if pinned { self.saved.pins.insert(id); } else { self.saved.pins.remove(&id); }
     }
-    /// Missing agents (including reconnect gaps) keep their seen state. Only
-    /// current live pane-backed providers are returned or allowed to alert.
+    /// Missing agents retain only local sound/group ordering history. Unread
+    /// state always comes from the current input, including after reconnect.
     pub fn observe(&mut self, input: Vec<Input>, now: u64) -> (Vec<Row>, Vec<String>) {
         let mut rows = Vec::new();
         let mut alerts = Vec::new();
@@ -103,31 +106,29 @@ impl Agents {
             // Herdr: a row is never blank; without a title it reads as its program.
             if item.title.trim().is_empty() { item.title = app_name(&item.provider).into(); }
             let next = word(&item.status);
+            let status = if next == "idle" && item.attention.as_ref()
+                .is_some_and(|attention| attention.kind == AttentionKind::Completed && !attention.seen)
+                { "done" } else { next };
             let old = self.agents.get(&item.id);
             let observed_change = old.is_some_and(|a| a.word != next);
-            if old.is_none_or(|a| a.word != next) {
-                if let Some(sound) = alert(old.map(|a| a.word.as_str()), next, item.looking) {
-                    alerts.push(sound.to_owned());
-                }
-                let was_busy = old.is_some_and(|a| matches!(a.word.as_str(), "working" | "blocked"));
-                let seen = if matches!(next, "working" | "blocked") { true }
-                    else if was_busy { item.looking } else { old.is_none_or(|a| a.seen) };
-                self.seq += 1;
-                self.agents.insert(item.id.clone(), Agent { word: next.into(), seen, seq: self.seq });
+            let event = item.attention.as_ref().map(|attention| attention.event.as_str());
+            if let Some(sound) = alert(old, status, event, item.looking) {
+                alerts.push(sound.to_owned());
             }
-            let a = self.agents.get_mut(&item.id).unwrap();
-            let before_seen = if next == "idle" && !a.seen { "done" } else { next };
-            // Preserve Done's group while focused, even after marking it seen.
-            if item.focused && (self.held.as_ref().is_none_or(|h| h.0 != item.id) || before_seen != "idle") {
-                self.held = Some((item.id.clone(), rank(before_seen)));
+            // The caller may project the receipt before the focus update.
+            // Retain the previous group for focus hold only, never unread state.
+            let hold_status = if status == "idle" && old.is_some_and(|a| a.status == "done") { "done" } else { status };
+            if item.focused && (self.held.as_ref().is_none_or(|h| h.0 != item.id) || hold_status != "idle") {
+                self.held = Some((item.id.clone(), rank(hold_status)));
             }
-            if item.looking { a.seen = true; }
-            let status = if next == "idle" && !a.seen { "done" } else { next };
+            let seq = if let Some(a) = old.filter(|a| a.word == next) { a.seq }
+                else { self.seq += 1; self.seq };
+            self.agents.insert(item.id.clone(), Agent { word: next.into(), status: status.into(), event: event.map(str::to_owned), seq });
             let shown_rank = if status == "idle" && item.focused && self.held.as_ref().is_some_and(|h| h.0 == item.id && h.1 == 3) { 3 } else { rank(status) };
             // Looking isn't work: Done and Idle share one duration.
             let stamp = self.saved.changed.entry(item.id.clone()).or_default();
             // The server observed the transition even if the phone was asleep.
-            // Discovering an already idle agent is not a fresh completion.
+            // Discovery time is not the time the server changed status.
             let recorded = item.status_history.last()
                 .filter(|change| change.status == item.status)
                 .and_then(|change| chrono::DateTime::parse_from_rfc3339(&change.at).ok())
@@ -157,25 +158,142 @@ impl Agents {
 #[cfg(test)]
 mod tests {
     use super::*;
+    const FIRST: &str = "00000000-0000-4000-8000-000000000001";
+    const SECOND: &str = "00000000-0000-4000-8000-000000000002";
     fn input(status: &str, looking: bool, focused: bool) -> Vec<Input> {
-        vec![Input { id: "server/epoch/1".into(), key: "%1".into(), title: "task".into(), provider: "pi".into(), status: status.into(), program: None, status_history: vec![], looking, focused }]
+        vec![Input { id: "server/epoch/1".into(), key: "%1".into(), title: "task".into(), provider: "pi".into(), status: status.into(), program: None, attention: None, status_history: vec![], looking, focused }]
     }
-    #[test] fn attention_rules() {
-        assert_eq!(alert(Some("working"), "blocked", true), Some("blocked"));
-        assert_eq!(alert(Some("blocked"), "blocked", false), None);
-        assert_eq!(alert(Some("working"), "idle", false), Some("done"));
-        assert_eq!(alert(Some("working"), "idle", true), None);
-        assert_eq!(alert(None, "idle", false), None);
+    fn completed(event: &str, seen: bool, looking: bool, focused: bool) -> Vec<Input> {
+        let mut items = input("idle", looking, focused);
+        items[0].attention = Some(AgentAttention { event: event.into(), kind: AttentionKind::Completed, seen });
+        items
     }
     #[test] fn done_holds_until_leaving_without_resetting_duration() {
         let mut a = Agents::default();
         a.observe(input("busy", false, false), 1);
-        let (rows, alerts) = a.observe(input("idle", false, false), 2);
+        let (rows, alerts) = a.observe(completed(FIRST, false, false, false), 2);
         assert_eq!(rows[0].section, "Done"); assert_eq!(alerts, ["done"]);
-        let (rows, alerts) = a.observe(input("idle", true, true), 3);
+        let (rows, alerts) = a.observe(completed(FIRST, true, true, true), 3);
         assert!(alerts.is_empty()); assert_eq!(rows[0].section, "Done"); assert_eq!(rows[0].status, "idle"); assert_eq!(rows[0].at, 2);
-        let (rows, _) = a.observe(input("idle", false, false), 4);
+        assert_eq!(a.observe(completed(FIRST, true, true, true), 4).0[0].section, "Done");
+        let (rows, _) = a.observe(completed(FIRST, true, false, false), 5);
         assert_eq!(rows[0].section, "Idle");
+    }
+    #[test] fn fresh_and_reconnecting_clients_agree_on_unseen_completion_and_shared_receipt() {
+        let (mut existing, mut fresh) = (Agents::default(), Agents::default());
+        existing.observe(input("busy", false, false), 1);
+        existing.observe(vec![], 2);
+        let unseen = completed(FIRST, false, false, false);
+        let (existing_rows, existing_sounds) = existing.observe(unseen.clone(), 3);
+        let (fresh_rows, fresh_sounds) = fresh.observe(unseen.clone(), 3);
+        for rows in [&existing_rows, &fresh_rows] {
+            assert_eq!(rows[0].status, "done");
+            assert_eq!(rows[0].section, "Done");
+        }
+        assert_eq!(existing_sounds, ["done"]);
+        assert!(fresh_sounds.is_empty(), "joining a server must not sound its old completions");
+        for client in [&mut existing, &mut fresh] {
+            client.observe(vec![], 4);
+            assert!(client.observe(unseen.clone(), 5).1.is_empty());
+            let (rows, sounds) = client.observe(completed(FIRST, true, false, false), 6);
+            assert_eq!(rows[0].status, "idle");
+            assert_eq!(rows[0].section, "Idle");
+            assert!(sounds.is_empty());
+        }
+    }
+    #[test] fn new_completion_tokens_alert_without_a_busy_snapshot_but_never_repeat() {
+        let mut a = Agents::default();
+        a.observe(input("idle", false, false), 1);
+        let first = completed(FIRST, false, false, false);
+        assert_eq!(a.observe(first.clone(), 2).1, ["done"]);
+        assert!(a.observe(first.clone(), 3).1.is_empty());
+        a.observe(vec![], 4);
+        assert!(a.observe(first, 5).1.is_empty());
+        let second = completed(SECOND, false, false, false);
+        assert_eq!(a.observe(second.clone(), 6).1, ["done"], "idle-to-idle replacement is a new completion");
+        assert!(a.observe(second, 7).1.is_empty());
+    }
+    #[test] fn read_completions_and_absent_attention_never_alert_or_infer_done() {
+        for result in [completed(FIRST, true, false, false), input("idle", false, false)] {
+            let mut a = Agents::default();
+            a.observe(input("busy", false, false), 1);
+            let (rows, sounds) = a.observe(result.clone(), 2);
+            assert_eq!(rows[0].status, "idle");
+            assert_eq!(rows[0].section, "Idle");
+            assert!(sounds.is_empty());
+            let (rows, sounds) = Agents::default().observe(result, 3);
+            assert_eq!(rows[0].status, "idle");
+            assert!(sounds.is_empty());
+        }
+        let mut history_only = input("idle", false, false);
+        history_only[0].status_history = vec![
+            StatusChange { status: "busy".into(), at: "2030-01-01T00:00:01Z".into() },
+            StatusChange { status: "idle".into(), at: "2030-01-01T00:00:02Z".into() },
+        ];
+        let mut a = Agents::default();
+        a.observe(input("busy", false, false), 1);
+        let (rows, sounds) = a.observe(history_only, 2);
+        assert_eq!(rows[0].status, "idle");
+        assert!(sounds.is_empty());
+    }
+    #[test] fn looking_does_not_replace_server_receipts_and_active_status_wins() {
+        let mut a = Agents::default();
+        a.observe(input("busy", false, false), 1);
+        let (rows, sounds) = a.observe(completed(FIRST, false, true, false), 2);
+        assert_eq!(rows[0].status, "done", "the caller owns optimistic read projection");
+        assert!(sounds.is_empty());
+        assert!(a.observe(completed(FIRST, false, false, false), 3).1.is_empty(), "looking away does not replay sound");
+        for (status, expected) in [("busy", "working"), ("waiting", "blocked"), ("error", "blocked")] {
+            let mut items = completed(FIRST, false, false, false);
+            items[0].status = status.into();
+            assert_eq!(a.observe(items, 4).0[0].status, expected);
+        }
+        let mut waiting = input("idle", false, false);
+        waiting[0].attention = Some(AgentAttention { event: SECOND.into(), kind: AttentionKind::Waiting, seen: false });
+        let (rows, sounds) = a.observe(waiting, 5);
+        assert_eq!(rows[0].status, "idle");
+        assert!(sounds.is_empty(), "waiting attention is not completion");
+    }
+    #[test] fn typed_attention_is_optional_but_rejects_obsolete_or_malformed_forms() {
+        let mut value = serde_json::json!({"id":"agent", "key":"%1", "title":"task", "provider":"pi", "status":"idle",
+            "program":null, "looking":false, "focused":false});
+        assert!(serde_json::from_value::<Input>(value.clone()).unwrap().attention.is_none());
+        value["attention"] = serde_json::Value::Null;
+        assert!(serde_json::from_value::<Input>(value.clone()).unwrap().attention.is_none());
+        value["attention"] = serde_json::json!({"event":FIRST, "kind":"completed", "seen":false});
+        assert_eq!(serde_json::from_value::<Input>(value.clone()).unwrap().attention.unwrap().event, FIRST);
+        value["attention"] = serde_json::json!({"event":FIRST, "kind":"completed"});
+        assert!(serde_json::from_value::<Input>(value.clone()).is_err());
+        value["attention"] = serde_json::json!({"event":FIRST, "kind":"done", "seen":false});
+        assert!(serde_json::from_value::<Input>(value).is_err());
+    }
+    #[test] fn tab_projection_and_list_share_optimistic_receipts_without_a_second_seen_flag() {
+        let mut tabs = crate::agent_attention::AgentAttention::default();
+        let mut list = Agents::default();
+        let live: HashSet<String> = ["%1".into()].into();
+        let mut nodes = serde_json::json!({"%1":{"attention":{"event":FIRST, "kind":"completed", "seen":false}}});
+        let mut rows = completed(FIRST, false, false, false);
+        tabs.observe(&nodes, &HashSet::new(), &live);
+        rows[0].attention = serde_json::from_value(tabs.attention("%1")).unwrap();
+        assert_eq!(list.observe(rows.clone(), 1).0[0].status, "done");
+        tabs.observe(&nodes, &live, &live);
+        rows[0].attention = serde_json::from_value(tabs.attention("%1")).unwrap();
+        rows[0].focused = true;
+        rows[0].looking = true;
+        let (shown, sounds) = list.observe(rows.clone(), 2);
+        assert_eq!(shown[0].status, "idle");
+        assert_eq!(shown[0].section, "Done", "focusing the result holds its group");
+        assert!(sounds.is_empty());
+        assert_eq!(tabs.acknowledgements(), serde_json::json!([{"key":"%1", "event":FIRST}]));
+        nodes["%1"]["attention"]["event"] = SECOND.into();
+        tabs.observe(&nodes, &HashSet::new(), &live);
+        rows[0].attention = serde_json::from_value(tabs.attention("%1")).unwrap();
+        rows[0].focused = false;
+        rows[0].looking = false;
+        let (shown, sounds) = list.observe(rows, 3);
+        assert_eq!(shown[0].status, "done");
+        assert_eq!(sounds, ["done"]);
+        assert_eq!(tabs.acknowledgements(), serde_json::json!([]));
     }
     #[test] fn osc_only_agent_is_listed_and_alerts_without_inventing_graph_identity() {
         let mut model = Agents::default();
@@ -194,8 +312,17 @@ mod tests {
         assert_eq!(rows[0].section, "Needs you");
         assert_eq!(sounds, ["blocked"]);
         assert_eq!(snapshot[0].provider, "shell");
+        snapshot[0].program.as_mut().unwrap().state = "done".into();
+        snapshot[0].attention = completed(FIRST, false, false, false).remove(0).attention;
+        let (rows, sounds) = model.observe(snapshot.clone(), 12);
+        assert_eq!(rows[0].status, "done");
+        assert_eq!(sounds, ["done"]);
+        snapshot[0].attention.as_mut().unwrap().seen = true;
+        let (rows, sounds) = model.observe(snapshot.clone(), 13);
+        assert_eq!(rows[0].status, "idle");
+        assert!(sounds.is_empty());
         snapshot[0].program = None;
-        assert!(model.observe(snapshot, 12).0.is_empty());
+        assert!(model.observe(snapshot, 14).0.is_empty());
     }
 
     #[test] fn sorting_pins_recent_changes_and_provider_filtering() {
@@ -218,7 +345,7 @@ mod tests {
         assert_eq!(a.observe(input("waiting", true, true), 1).1, ["blocked"]);
         a.observe(Vec::new(), 2);
         assert!(a.observe(input("waiting", true, true), 3).1.is_empty());
-        let (rows, sounds) = a.observe(input("idle", true, true), 4);
+        let (rows, sounds) = a.observe(completed(FIRST, true, true, true), 4);
         assert_eq!(rows[0].section, "Idle"); assert!(sounds.is_empty());
     }
     #[test] fn pin_and_clock_survive_restart_and_schemas_are_strict() {

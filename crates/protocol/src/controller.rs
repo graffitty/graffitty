@@ -4,6 +4,7 @@ use serde::{Deserialize, Serialize};
 use serde_json::Value;
 
 pub const METHODS: &[&str] = &[
+    "agent.seen",
     "terminal.type",
     "terminal.press",
     "terminal.put",
@@ -58,6 +59,20 @@ impl Request {
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[test]
+    fn agent_receipts_use_the_current_controller_envelope() {
+        let value = serde_json::json!({"version":1,"method":"agent.seen",
+            "params":{"target":"%2","event":"23b9956a-0448-4c23-89ac-d7238491b608"}});
+        let request: Request = serde_json::from_value(value.clone()).unwrap();
+        request.validate().unwrap();
+        for (field, invalid) in [("version", serde_json::json!(2)),
+            ("method", serde_json::json!("agent.mark_seen")), ("params", serde_json::json!([]))] {
+            let mut bad = value.clone();
+            bad[field] = invalid;
+            let request: Request = serde_json::from_value(bad).unwrap();
+            assert!(request.validate().is_err());
+        }
+    }
     #[test]
     fn remote_prefix_is_explicit_and_exact() {
         assert_eq!(split_target("%12"), Ok(None));

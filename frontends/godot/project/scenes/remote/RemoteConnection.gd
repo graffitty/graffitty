@@ -51,6 +51,8 @@ var shared_options: Dictionary = {}
 var authentication: RefCounted
 var password_verified := false
 var socket: RefCounted
+## A request belongs to one transport, even if reconnect finishes before it resumes.
+var transport_generation := 0
 var workspace := ""
 ## Device-local view preference, never part of server authentication.
 var preferred_session := ""
@@ -146,6 +148,7 @@ func connect_shared(options: Dictionary) -> void:
 
 
 func _open() -> void:
+	transport_generation += 1
 	_subscribed.clear()
 	_core.controller_stop()
 	_stop_video_datagrams()
@@ -186,6 +189,7 @@ func _open() -> void:
 
 
 func disconnect_remote() -> void:
+	transport_generation += 1
 	_subscribed.clear()
 	_core.controller_stop()
 	server_fonts.cancel_download()
@@ -218,6 +222,7 @@ func _set_state(message: String, args: Array = []) -> void:
 
 
 func _network_failed(reason: String) -> void:
+	transport_generation += 1
 	_core.controller_stop()
 	connected = false
 	_stop_video_datagrams()
@@ -948,23 +953,29 @@ func _restore_session() -> void:
 
 
 func request_action(kind: String, values: Dictionary = {}, timeout_msec: int = 10000) -> Dictionary:
+	var generation := transport_generation
+	var unavailable := {"type": "error", "code": "owner_unavailable", "message": "Session owner disconnected or timed out"}
 	# Carried controls can be displayed before the destination session attaches.
 	# Keep their explicit UI actions pending until discovery/selection completes.
-	if url.begins_with("ws") and workspace.is_empty() and kind not in ["session_new", "session_switch", "session_rename", "session_kill", "resource_subscription", "font_asset"]:
+	if url.begins_with("ws") and workspace.is_empty() and kind not in ["session_new", "session_switch", "session_rename", "session_kill", "resource_subscription", "font_asset", "controller_rpc"]:
 		var selection_deadline := Time.get_ticks_msec() + timeout_msec
-		while connected and workspace.is_empty() and (not sessions_known or _selecting_session >= 0) and Time.get_ticks_msec() < selection_deadline:
+		while generation == transport_generation and connected and workspace.is_empty() and (not sessions_known or _selecting_session >= 0) and Time.get_ticks_msec() < selection_deadline:
 			await get_tree().process_frame
+		if generation != transport_generation or not connected: return unavailable
 		if connected and workspace.is_empty(): return {"type": "error", "code": "no_session", "message": "No session is selected"}
+	if generation != transport_generation or not connected: return unavailable
 	var replies := {}
 	var receive := func(message):
-		replies[int(message.get("request", -1))] = message
+		if generation == transport_generation:
+			replies[int(message.get("request", -1))] = message
 	acknowledged.connect(receive)
 	var request := send_action(kind, int(values.get("session", -1)), values)
 	var deadline := Time.get_ticks_msec() + timeout_msec
-	while request >= 0 and connected and not replies.has(request) and Time.get_ticks_msec() < deadline:
+	while request >= 0 and generation == transport_generation and connected and not replies.has(request) and Time.get_ticks_msec() < deadline:
 		await get_tree().process_frame
 	acknowledged.disconnect(receive)
-	return replies.get(request, {"type": "error", "code": "owner_unavailable", "message": "Session owner disconnected or timed out"})
+	# Closing a session can disconnect after its acknowledgement was received.
+	return replies.get(request, unavailable)
 
 
 func _handle_frontend_request(message: Dictionary) -> void:
@@ -988,6 +999,12 @@ func _handle_frontend_request(message: Dictionary) -> void:
 		frontend_inflight -= 1
 	if connected and generation == frontend_generation:
 		socket.send_text(JSON.stringify({"type": "frontend_reply", "ticket": int(message.ticket), "response": map_graph(response, false)}))
+
+
+## A read belongs to the server pane even after this view switches sessions.
+func acknowledge_agent(id: int, event: String) -> Dictionary:
+	return await request_action("controller_rpc", {"call": {"version": Protocol.VERSION,
+		"method": "agent.seen", "params": {"target": "%%%d" % wire_id(id), "event": event}}})
 
 
 func remote_call(id: int, method: String, params: Dictionary, canceled: Callable = Callable()) -> Dictionary:

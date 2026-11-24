@@ -1192,16 +1192,23 @@ func _fit_world_viewport() -> void:
 	var density := get_viewport().get_final_transform().get_scale().abs()
 	density = density.max(Vector2.ONE)
 	world_container.scale = Vector2.ONE / density
-	world_container.size = (layout_root.size * density).round()
 	world_viewport.size_2d_override = Vector2i(layout_root.size.round())
 	world_viewport.size_2d_override_stretch = true
 	var device := RenderingServer.get_rendering_device()
 	var limit := 8192.0
 	if device != null:
 		limit = minf(float(device.limit_get(RenderingDevice.LIMIT_MAX_TEXTURE_SIZE_2D)), 16384.0)
-	var size := world_container.size
-	world_container.stretch_shrink = maxi(1, ceili(maxf(size.x, size.y) / maxf(limit, 1.0)))
+	_resize_world_container(world_container, (layout_root.size * density).round(), limit)
 	_sync_world_chrome_clip()
+
+
+static func _resize_world_container(container: SubViewportContainer, size: Vector2, limit: float) -> void:
+	var shrink := maxi(1, ceili(maxf(size.x, size.y) / maxf(limit, 1.0)))
+	# Both setters immediately resize the child's render targets. Increase
+	# shrink before growing; decrease it only after the old size is gone.
+	if shrink > container.stretch_shrink: container.stretch_shrink = shrink
+	container.size = size
+	container.stretch_shrink = shrink
 
 
 func _sync_world_chrome_clip() -> void:

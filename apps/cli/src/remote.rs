@@ -78,6 +78,26 @@ fn prepare(host: &str, binary: Option<&Path>) -> Result<Value, Error> {
     Ok(descriptor)
 }
 
+fn remote_port(descriptor: &Value) -> Result<u16, Error> {
+    let url = descriptor["url"].as_str().ok_or("Missing server URL")?;
+    if url.starts_with("ipc://") {
+        return Err(concat!(
+            "The running server has no remote listener. Enable Remote Access on the remote computer, ",
+            "or start a new server with `gft server --listen 127.0.0.1:0`. ",
+            "Existing sessions are still running; do not kill the server to reconnect."
+        ).into());
+    }
+    let address: std::net::SocketAddr = url
+        .strip_prefix("ws://")
+        .ok_or("Expected a ws:// server listener URL")?
+        .parse()
+        .map_err(|_| "Invalid server listener address")?;
+    if address.port() == 0 {
+        return Err("Server descriptor has no assigned listener port".into());
+    }
+    Ok(address.port())
+}
+
 // Versioned chromium bundles preserve any host already serving a live session.
 fn install_chromium(host: &str, archive: &Path) -> Result<(), Error> {
     let nonce = uuid::Uuid::new_v4().simple().to_string();
@@ -371,13 +391,7 @@ pub fn run(command: RemoteCommand) -> Result<(), Error> {
     let mut controllers = Vec::new();
     for host in hosts {
         let descriptor = prepare(&host, server_binary.as_deref().map(Path::new))?;
-        let remote: u16 = descriptor["url"]
-            .as_str()
-            .ok_or("Missing URL")?
-            .rsplit(':')
-            .next()
-            .ok_or("Missing port")?
-            .parse()?;
+        let remote = remote_port(&descriptor)?;
         let tunnel = Tunnel::new(&host, remote)?;
         let url = format!("ws://127.0.0.1:{}", tunnel.port);
         let identity = format!("ssh:{host}");
@@ -441,6 +455,33 @@ pub fn run(command: RemoteCommand) -> Result<(), Error> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[test]
+    fn local_only_server_explains_how_to_enable_remote_access() {
+        let error = remote_port(&json!({"url":"ipc:///tmp/session.sock"}))
+            .unwrap_err()
+            .to_string();
+        assert!(error.contains("no remote listener"));
+        assert!(error.contains("Existing sessions are still running"));
+    }
+
+    #[test]
+    fn listener_port_requires_a_valid_network_descriptor() {
+        assert_eq!(
+            remote_port(&json!({"url":"ws://127.0.0.1:7183"})).unwrap(),
+            7183
+        );
+        assert_eq!(
+            remote_port(&json!({"url":"ws://[::1]:7183"})).unwrap(),
+            7183
+        );
+        for url in [
+            "ws://127.0.0.1:0", "ws://127.0.0.1:65536", "ws://invalid:12", "ipc:12",
+            "ws://127.0.0.1:12/path",
+        ] {
+            assert!(remote_port(&json!({"url":url})).is_err(), "{url}");
+        }
+        assert!(remote_port(&json!({})).is_err());
+    }
     #[test]
     fn destinations_cannot_inject_ssh_options() {
         for s in ["-oProxyCommand=evil", "bad\nname", ""] {

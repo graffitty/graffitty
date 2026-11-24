@@ -58,8 +58,8 @@ mod apple;
 mod native {
     use std::ffi::c_void;
     unsafe extern "C" {
-        pub fn gv_encoder(codec: i32, width: i32, height: i32, bitrate: i32, fps: i32) -> *mut c_void;
-        pub fn gv_decoder(codec: i32) -> *mut c_void;
+        pub fn gv_encoder(codec: i32, width: i32, height: i32, bitrate: i32, fps: i32, probe: i32) -> *mut c_void;
+        pub fn gv_decoder(codec: i32, probe: i32) -> *mut c_void;
         pub fn gv_decoder_named(
             codec: i32,
             name: *const std::ffi::c_char,
@@ -105,10 +105,13 @@ impl Encoder {
         Self::configured(codec, width, height, 0, 60)
     }
     pub fn configured(codec: Codec, width: u32, height: u32, bitrate: u32, fps: u32) -> Result<Self, String> {
+        Self::open(codec, width, height, bitrate, fps, false)
+    }
+    fn open(codec: Codec, width: u32, height: u32, bitrate: u32, fps: u32, probe: bool) -> Result<Self, String> {
         if bitrate > 200_000_000 || !(1..=120).contains(&fps) { return Err("Invalid video encoding settings".into()); }
         #[cfg(chromium_video)]
         {
-            let ptr = unsafe { native::gv_encoder(codec as i32, width as i32, height as i32, bitrate as i32, fps as i32) };
+            let ptr = unsafe { native::gv_encoder(codec as i32, width as i32, height as i32, bitrate as i32, fps as i32, probe.into()) };
             if !ptr.is_null() {
                 return Ok(Self {
                     handle: native::Handle(ptr),
@@ -117,7 +120,7 @@ impl Encoder {
                 });
             }
         }
-        let _ = (codec, width, height);
+        let _ = (codec, width, height, probe);
         Err("Hardware video encoder unavailable for this codec/size".into())
     }
     /// Bits per second for the next frames, without a keyframe where the
@@ -185,11 +188,17 @@ pub struct Decoder {
 }
 impl Decoder {
     pub fn new(codec: Codec) -> Result<Self, String> {
+        Self::open(codec, false)
+    }
+    fn open(codec: Codec, probe: bool) -> Result<Self, String> {
         #[cfg(target_os = "ios")]
-        return apple::Decoder::new(codec, "", 0, 0).map(|apple| Self { apple });
+        {
+            let _ = probe;
+            return apple::Decoder::new(codec, "", 0, 0).map(|apple| Self { apple });
+        }
         #[cfg(chromium_video)]
         {
-            let ptr = unsafe { native::gv_decoder(codec as i32) };
+            let ptr = unsafe { native::gv_decoder(codec as i32, probe.into()) };
             if !ptr.is_null() {
                 return Ok(Self {
                     handle: native::Handle(ptr),
@@ -197,7 +206,7 @@ impl Decoder {
             }
         }
         #[cfg(not(target_os = "ios"))]
-        { let _ = codec; Err("Hardware video decoder unavailable".into()) }
+        { let _ = (codec, probe); Err("Hardware video decoder unavailable".into()) }
     }
     pub fn named(codec: Codec, name: &str, width: u32, height: u32) -> Result<Self, String> {
         #[cfg(target_os = "ios")]
@@ -334,7 +343,7 @@ fn probe_encoders(requested: &[Codec]) -> Vec<Codec> {
     requested.iter().copied().filter(|&codec| {
         // Hardware encoders have minimum dimensions (NVENC rejects 64x64).
         // Submit real pixels rather than advertising compiled-in codec names.
-        let Ok(mut encoder) = Encoder::new(codec, 256, 256) else { return false; };
+        let Ok(mut encoder) = Encoder::open(codec, 256, 256, 0, 60, true) else { return false; };
         let pixels = vec![96; 256 * 256 * 4];
         (0..8).any(|_| matches!(encoder.encode(&pixels, true), Ok(Some(_))))
     }).collect()
@@ -350,7 +359,7 @@ pub fn decoders() -> &'static [Codec] {
     CAPS.get_or_init(|| {
         Codec::PREFERENCE
             .into_iter()
-            .filter(|&codec| Decoder::new(codec).is_ok())
+            .filter(|&codec| Decoder::open(codec, true).is_ok())
             .collect()
     })
 }

@@ -1,0 +1,10 @@
+required_frontends = ["godot"]
+name = "android-agent-receipts"
+goal = "Share agent completion read receipts between a physical Android client and independent desktop clients."
+instructions = "android-agent-receipts.md"
+runtime = "android"
+automation = "tests/android/test_android_runtime.py"
+
+[adapters.godot]
+kind = "android-runtime"
+case = "android-agent-receipts"
