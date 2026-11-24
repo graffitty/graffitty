@@ -117,6 +117,8 @@ func refresh_body() -> void:
 			if sub.kind == "agent" and by_id.has(child):
 				sub.merge(by_id[child], true)
 				hidden[child] = true
+			elif sub.kind == "agent" and input.has(child):
+				sub.focused = input[child].focused
 	next = next.filter(func(row): return not hidden.has(row.id))
 	if next != rows or next_trees != trees:
 		rows = next

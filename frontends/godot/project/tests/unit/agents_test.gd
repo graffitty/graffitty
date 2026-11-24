@@ -393,6 +393,11 @@ func test_unknown_leader_keeps_each_branch_and_keyboard_order() -> void:
 		expect(host.revealed == "t17", "PreviousAgent returns from the nested child to its parent")
 		controller.step(1)
 		expect(host.revealed == "t22", "NextAgent reaches the other branch from the nested child")
+		app.agent_api.graph.nodes.t18.status = "offline"
+		host.revealed = ""
+		controller.refresh()
+		controller.step(1)
+		expect(host.revealed == "t22", "A focused offline child still advances to the next displayed agent")
 		for key in app.agent_api.graph.nodes: app.agent_api.graph.nodes[key].status = "offline"
 		controller.refresh()
 		expect(controller.rows.is_empty() and controller.trees.is_empty(), "An entirely unavailable component leaves no empty group")
