@@ -62,7 +62,7 @@ func play() -> void:
 		var status: Dictionary = view.pane_status[key]
 		caption.render_now()
 		var texts: PackedStringArray = caption.texts()
-		check(str(status.label).begins_with(".%d (%%%s)" % [keys.find(key) + 1, key.substr(1)]) and status.label in texts and str(status.cpu).ends_with("%") and status.cpu in texts and str(status.memory).ends_with("M") and status.memory in texts, "%s shows its pane UID, live CPU and RAM" % key)
+		check(str(status.label).begins_with(".%d (%s)" % [keys.find(key) + 1, key]) and status.label in texts and str(status.cpu).ends_with("%") and status.cpu in texts and str(status.memory).ends_with("M") and status.memory in texts, "%s shows its pane UID, live CPU and RAM" % key)
 		# A narrow card sized to its content: label, CPU row, RAM row.
 		check(caption.size.x <= 140 and caption.size.y >= 56 and caption.size.y <= 76, "%s uses a narrow multiline stats panel (size %s)" % [key, caption.size])
 		var rect := func(id: String) -> Rect2: return caption.hit_rect(id)
@@ -109,7 +109,7 @@ func play() -> void:
 	var running: Array = host.resource_monitor_for(first_id).snapshot().get("processes", []).map(func(process): return process.get("name"))
 	check(busy, "The unfocused pane reports real CPU activity (processes %s, screen %s)" % [running, terminal_text(first_id).strip_edges().right(300)])
 	await hold(.3)
-	check(str(view.pane_status[first].cpu).to_float() > 5 and str(view.pane_status[first].label).begins_with(".1 (%%%s)" % first.substr(1)), "The visible caption updates CPU for the correct unfocused pane (cpu %s, label %s)" % [view.pane_status[first].cpu, view.pane_status[first].label])
+	check(str(view.pane_status[first].cpu).to_float() > 5 and str(view.pane_status[first].label).begins_with(".1 (%s)" % first), "The visible caption updates CPU for the correct unfocused pane (cpu %s, label %s)" % [view.pane_status[first].cpu, view.pane_status[first].label])
 	DirAccess.make_dir_recursive_absolute(ProjectSettings.globalize_path("res://.cache/bistro-overview"))
 	(await screen_image()).save_png("res://.cache/bistro-overview/overview.png")
 	await say("Zoom back in: restore pane controls")

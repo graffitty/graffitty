@@ -90,16 +90,16 @@ func run() -> void:
 	check(overlay.compact_nodes.is_empty(), "A 200-pixel pane spreads five usable ports even at quarter zoom")
 	var previous_bottom := -INF
 	for i in 5:
-		var port: Button = overlay.sockets(true)["%%1/out%d" % i]
+		var port: Button = overlay.sockets(true)["t1/out%d" % i]
 		var center := port.position + port.size * .5
 		check(port.visible and center.y >= 4 and center.y <= 196, "Expanded port dots fit the projected pane")
 		check(port.position.y >= previous_bottom - .01, "Expanded hit targets do not overlap")
-		check(overlay.nearest_socket(center).get("key") == "%%1/out%d" % i, "Each expanded target selects its own named output")
+		check(overlay.nearest_socket(center).get("key") == "t1/out%d" % i, "Each expanded target selects its own named output")
 		previous_bottom = port.position.y + port.size.y
 		if i > 0:
-			var previous: Button = overlay.sockets(true)["%%1/out%d" % (i - 1)]
+			var previous: Button = overlay.sockets(true)["t1/out%d" % (i - 1)]
 			check(center.y - (previous.position.y + previous.size.y * .5) >= min_pitch - .01, "Zoomed-out ports retain comfortable screen spacing")
-		var link: Dictionary = overlay.sheet_links.filter(func(row): return row.from_socket == "%%1/out%d" % i)[0]
+		var link: Dictionary = overlay.sheet_links.filter(func(row): return row.from_socket == "t1/out%d" % i)[0]
 		check(center.distance_to(link.a * .25) < .01, "Wire endpoint follows the displayed port")
 	builds = overlay.tools.route_builds
 	overlay.sync(large, graph.edges.values(), func(p): return p * .3 + Vector2(25, 15), true)

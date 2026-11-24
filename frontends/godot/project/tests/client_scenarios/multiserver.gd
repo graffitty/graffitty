@@ -401,8 +401,8 @@ func run() -> void:
 			)
 		select(a)
 		terminal(ids[0]).send_text(
-			"\"$GRAFFITTY_BIN\" chromium eval --target %%%d --expression 'window.remoteState=43; 43' && printf 'CHROMIUM_%%s_OK\\n' CLI\r"
-			% a.wire_id(chromium_id)
+			"\"$GRAFFITTY_BIN\" chromium eval --target %s --expression 'window.remoteState=43; 43' && printf 'CHROMIUM_%%s_OK\\n' CLI\r"
+			% PaneAddress.key(a.wire_id(chromium_id))
 		)
 		expect(
 			await until(

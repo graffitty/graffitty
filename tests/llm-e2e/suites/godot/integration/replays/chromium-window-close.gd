@@ -15,8 +15,8 @@ func play() -> void:
 	if not await until(func():return host.get_tabs().size()==2 and host.active_terminal().get_shell_pid()>0,"Unrelated shell starts"):return
 	var unrelated: int=host.active_session_id
 	var unrelated_pid: int=host.active_terminal().get_shell_pid()
-	var browser_tab: int=host.workspace_layout.containing("%%%d"%browser_id)
-	check(host.workspace_layout.containing("%%%d"%first)==browser_tab,"Browser opens beside its owner terminal")
+	var browser_tab: int=host.workspace_layout.containing(PaneAddress.key(browser_id))
+	check(host.workspace_layout.containing(PaneAddress.key(first))==browser_tab,"Browser opens beside its owner terminal")
 	# A browser moves with its owner; there is no browser-only move.
 	var browser_host: Node=await app.detach_workspace(host,browser_tab)
 	if not check(browser_host!=null and browser_host!=host,"Browser tab detaches into another native window"):return

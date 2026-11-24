@@ -31,7 +31,7 @@ func run() -> void:
 	var point: Vector2 = overlay.queue_indicator_position(queue)
 	check(overlay.queue_hit(point) == queue.key, "Queue dot hit-testing uses its painted position")
 	overlay.update_edge_hover(point)
-	check(overlay.hover_edge == queue.key and overlay.edge_tooltip(queue.key).contains("1 pending"), "Hover queue dot describes only its connection")
+	check(overlay.hover_edge == queue.key and overlay.edge_tooltip(queue.key).contains(overlay.tr("%d pending · %d recorded deliveries") % [1, 1]), "Hover queue dot describes only its connection")
 	var click := InputEventMouseButton.new()
 	click.button_index = MOUSE_BUTTON_LEFT
 	click.pressed = true

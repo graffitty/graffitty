@@ -111,7 +111,7 @@ func open_browser(claude: String, codex: String) -> String:
 	var chromium_id := 0
 	for id in host.chromiums:
 		if id not in chromiums: chromium_id = id
-	var chromium_key := "%%%d" % chromium_id
+	var chromium_key := PaneAddress.key(chromium_id)
 	check(host.chromiums[chromium_id].tab_id == int(codex.substr(1)), "The Chromium belongs to Codex")
 	if not await chromium_ready(host.chromiums[chromium_id], "document.body.textContent.includes('Waiting for the first build')", "Chromium shows the app placeholder"): return ""
 	if not await until(func(): return "Ready." in shell_text(codex) and status(codex) == "idle", "Codex is ready before the first build", 30): return ""

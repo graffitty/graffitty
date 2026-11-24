@@ -7,7 +7,7 @@ func create_beside(key: String, down := false) -> String:
 	host.workspace_view.split_window("v" if down else "h", key)
 	if not await until(func(): return host.sessions.size() == previous.size() + 1, "Prepare adjacent node pane"): return ""
 	for id in host.sessions:
-		if id not in previous: return "%%%d" % id
+		if id not in previous: return PaneAddress.key(id)
 	return ""
 
 var watcher_prepared := {}
@@ -30,7 +30,7 @@ func prepare_extra_sessions() -> void:
 	if not await until(func(): return host.sessions.size() == previous.size() + 1, "Create agent pane"): return
 	var agent := ""
 	for id in host.sessions:
-		if id not in previous: agent = "%%%d" % id
+		if id not in previous: agent = PaneAddress.key(id)
 	if agent.is_empty(): return
 	await move_to(code, Vector2(0, 2400))
 	await resize_pane(code, Vector2(1700, 1300), 26)

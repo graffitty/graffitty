@@ -106,7 +106,7 @@ func create_beside(key: String, down := false) -> String:
 	await click(await on_header(key,"split_down" if down else "split_right"))
 	if not await until(func(): return host.sessions.size()==before.size()+1,"Create one new pane"): return ""
 	for id in host.sessions:
-		if id not in before: return "%%%d" % id
+		if id not in before: return PaneAddress.key(id)
 	return ""
 
 func move_to(key: String, dest: Vector2) -> void:
