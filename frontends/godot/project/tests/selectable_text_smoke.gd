@@ -197,7 +197,7 @@ func check_text_selection() -> void:
 	check(text.menu != null and not text.menu.is_item_disabled(0), "Lifting the finger offers Copy")
 	if text.menu != null:
 		var touch_menu := preload("res://scenes/PopupChrome.gd").presentation(text.menu)
-		if touch_menu != null: touch_menu.dismiss()
+		if touch_menu != null and touch_menu.has_method("dismiss"): touch_menu.dismiss()
 		else: text.menu.hide()
 	await frames()
 	text.deselect()
@@ -296,7 +296,7 @@ func check_list_text_selection() -> void:
 	touch(at + Vector2(32, 40), false)
 	if message.menu != null:
 		var popup := preload("res://scenes/PopupChrome.gd").presentation(message.menu)
-		if popup != null: popup.dismiss()
+		if popup != null and popup.has_method("dismiss"): popup.dismiss()
 		else: message.menu.hide()
 	message.deselect()
 	await frames()

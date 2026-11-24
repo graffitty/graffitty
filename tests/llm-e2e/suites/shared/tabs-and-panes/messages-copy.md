@@ -3,3 +3,5 @@ Open Graffitty messages containing Unicode text. Click the message body and pres
 On iPad, open enough text to scroll in Messages, Open log, and About. With a finger, pull the text past the top and bottom. The text should move under the pull while the scrollbar track stays against the viewport edge and the thumb shortens against the pulled end. Release and verify the text springs back and the normal scrollbar returns.
 
 Hold a word in each iPad viewer, extend to an adjacent word, lift and tap Copy. Paste into a separate field and verify the selected Unicode text. Drag immediately on the same text and verify it scrolls.
+
+Repeat on a message body embedded in a scrolling history. Extend the held selection across lines and check that the list stays in place. A drag begun before the hold should move the list and leave the text unselected.
