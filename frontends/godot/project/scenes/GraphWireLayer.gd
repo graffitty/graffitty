@@ -111,6 +111,15 @@ func local_width(at: Vector2, width: float) -> float:
 func sheet_style_box(style: StyleBox, rect: Rect2) -> void:
 	_paint("draw_style_box", [style.duplicate() if frozen else style, rect])
 
+## Both the marker center and the optional removed wire are already on the sheet.
+func sheet_failure(center: Vector2, unit: float, alpha: float, removed_wire: PackedVector2Array) -> void:
+	if removed_wire.size() >= 2:
+		_paint("draw_polyline", [removed_wire, Color(1.0, 0.45, 0.45, 0.15 * alpha), unit, true])
+	for diagonal: Vector2 in [Vector2(4, 4) * unit, Vector2(4, -4) * unit]:
+		_paint("draw_line", [center - diagonal, center + diagonal, Color("14212a"), 4.5 * unit, true])
+		_paint("draw_line", [center - diagonal, center + diagonal, Color("ff8585", alpha), 2.0 * unit, true])
+
+
 func polyline(values: PackedVector2Array, color: Color, width := 1.0, antialiased := true) -> void:
 	if values.size() < 2: return
 	_paint("draw_polyline", [points(values), color, local_width(values[values.size() / 2], width), antialiased])

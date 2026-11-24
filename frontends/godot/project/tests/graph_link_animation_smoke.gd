@@ -116,6 +116,45 @@ func run() -> void:
 	var resized_link: Dictionary = overlay._route("t0", "t1", "t0/out>t1/in").link
 	check(resized_link.points[0].is_equal_approx(overlay.port_center("t0/out", true)),
 		"Resized socket keeps its wire endpoint on the visible center")
+	test_failed_marker_during_zoom()
 	canvas.free()
 	graph.free()
 	quit(1 if failures else 0)
+
+func test_failed_marker_during_zoom() -> void:
+	var graph := Graph.new()
+	graph.nodes = {"t1": {"provider": "codex"}, "t2": {"provider": "codex"}}
+	graph.connect_nodes({"from": "t1", "to": "t2", "send": true})
+	var parent := Control.new()
+	root.add_child(parent)
+	var overlay := Overlay.new()
+	parent.add_child(overlay)
+	overlay.graph = graph
+	overlay.sync({"t1": Rect2(0, 0, 200, 200), "t2": Rect2(400, 0, 200, 200)}, graph.edges.values(), func(point): return point, true)
+	var route: Dictionary = overlay.sheet_links[0]
+	var event: Dictionary = graph.enqueue("t1", "t2", "reject during zoom", "message")
+	graph.ack("t2", event.result.event_id, "failed: test")
+	var pulse: Dictionary = overlay.pulses.back()
+	pulse.age = pulse.duration * 0.45
+	var painter := preload("res://scenes/GraphWireLayer.gd").new()
+	painter.frozen = true
+	var rects := {"t1": Rect2(0, 30, 200, 200), "t2": Rect2(400, 180, 200, 200)}
+	for step in 4:
+		var zoom := [0.4, 2.5, 0.65, 1.8][step] as float
+		var offset := Vector2(250, -120) * step
+		var project := func(point): return point * zoom + offset
+		painter.unproject = func(point): return (point - offset) / zoom
+		if step == 2: graph.disconnect_nodes("t1", "t2")
+		overlay.sync(rects, graph.edges.values(), project, true)
+		if step < 2: route = overlay.sheet_links[0]
+		painter.commands.clear()
+		overlay.draw_markers(painter)
+		var line: Array = painter.commands.back()[1]
+		var center: Vector2 = (line[0] + line[1]) * 0.5
+		var expected := Overlay.Geometry.at_distance(route.points, route.lengths, route.lengths[-1] * 0.45)
+		check(center.is_equal_approx(expected), "The red cross is centered on the live or last painted wire through zoom and pan")
+		if step >= 2:
+			check(painter.commands[0][1][0] == route.points, "Cancellation draws its faint wire from the same sheet geometry")
+	painter.free()
+	parent.free()
+	graph.free()
