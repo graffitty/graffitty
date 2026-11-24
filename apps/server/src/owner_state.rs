@@ -35,6 +35,9 @@ pub struct OwnerState {
     /// Optional agent metadata, bound to the live panes adopted from holders.
     #[serde(default)]
     pub agent_attention: HashMap<u64, graffitty_workspace_core::graph::AttentionState>,
+    /// Connections and advertised ports for graphs with live wiring.
+    #[serde(default, skip_serializing_if = "HashMap::is_empty")]
+    pub wiring: HashMap<String, serde_json::Value>,
     /// Optional application metadata; terminals can exist without any filetrees.
     #[serde(default)]
     pub filetrees: crate::filetree::SavedFiletrees,
@@ -160,6 +163,7 @@ impl OwnerState {
             sessions: Vec::new(),
             workspaces: Default::default(),
             agent_attention: HashMap::new(),
+            wiring: HashMap::new(),
             filetrees: Default::default(),
             last_viewed: None,
         }

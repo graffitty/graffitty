@@ -2823,6 +2823,11 @@ impl Server {
                 .map(|state| (session.id, state))).collect()
     }
 
+    fn saved_wiring(&self) -> HashMap<String, Value> {
+        self.graphs.iter().filter(|(_, graph)| !graph.edges.is_empty())
+            .map(|(workspace, graph)| (workspace.clone(), graph.checkpoint())).collect()
+    }
+
     /// Commit recovery metadata before acknowledging a request or event.
     /// Skip the write when state is unchanged. Return any commit failure
     /// so success always means the pane can be recovered.
@@ -2833,6 +2838,7 @@ impl Server {
         state.filetrees = self.filetrees.saved();
         state.last_viewed = self.last_viewed.clone();
         state.agent_attention = self.saved_agent_attention();
+        state.wiring = self.saved_wiring();
         state.sessions = self.sessions.values().filter(|s| s.is_held() && !s.exited).map(Session::saved).collect();
         if self.saved_owner.as_ref() == Some(&state) { return Ok(()); }
         // Persist even an empty registry: deletion errors must not silently
@@ -2873,6 +2879,7 @@ fn hand_over(server: &mut Server, runtime: &std::path::Path) {
         session.detached = true;
     }
     state.agent_attention = server.saved_agent_attention();
+    state.wiring = server.saved_wiring();
     if let Err(error) = owner_state::save(&server.descriptor, &state) {
         eprintln!("[holder] cannot save owner state: {error}");
     }
@@ -2967,6 +2974,21 @@ fn owner_state_adopt(server: &mut Server, adopted: Vec<holder_link::Adopted>, pr
         workspaces.insert(session.workspace.clone());
         server.sessions.insert(id, session);
         server.started_session = true;
+    }
+    for (workspace, mut saved) in previous.wiring {
+        let Some(graph) = server.graphs.get_mut(&workspace) else { continue };
+        // A holder can disappear before adoption. Restore only links whose
+        // endpoints the new owner actually adopted in this workspace.
+        let ids: HashMap<_, _> = graph.nodes.keys().map(|key| (key.clone(), key.clone())).collect();
+        if let Some(nodes) = saved["nodes"].as_array_mut() {
+            nodes.retain(|n| n["node"].as_str().is_some_and(|key| ids.contains_key(key)));
+        }
+        if let Some(edges) = saved["edges"].as_array_mut() {
+            edges.retain(|e| ["from", "to"].iter().all(|k| e[*k].as_str().is_some_and(|key| ids.contains_key(key))));
+        }
+        if let Err(error) = graph.restore_checkpoint(&saved, &ids) {
+            eprintln!("[holder] cannot restore connections in {workspace}: {error}");
+        }
     }
     filetree::adopt(server, previous.filetrees);
     for workspace in workspaces {

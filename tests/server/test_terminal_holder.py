@@ -208,6 +208,35 @@ class TerminalHolderTests(unittest.TestCase):
         self.assertEqual(len(sessions), 1)
         self.assertNotEqual(sessions[0].get("name"), "one")
 
+    def test_restart_preserves_read_wiring(self):
+        sys.path.insert(0, str(ROOT / "tests/support"))
+        from private_session_e2e import PrivateClient
+
+        self.start_server()
+        self.new_pane("one")
+        peer = PrivateClient(json.loads(self.descriptor.read_text())["local"], "one")
+        try:
+            first = peer.topology["panes"][0]["id"]
+            second = peer.action("create", first, kind="pane")["created"]
+            for pane in (first, second):
+                reply = peer.action("rpc", pane, method="agent.event",
+                                    params={"provider": "codex", "event": "SessionStart"})
+                self.assertEqual(reply["type"], "ack", reply)
+            edge = {"from": f"t{first}", "to": f"t{second}", "read": True}
+            reply = peer.action("rpc", first, method="graph.connect", params=edge)
+            self.assertEqual(reply["type"], "ack", reply)
+        finally:
+            peer.socket.close()
+
+        for _ in range(2):
+            self.gft("server", "restart")
+            peer = PrivateClient(json.loads(self.descriptor.read_text())["local"], "one")
+            try:
+                wires = peer.topology["graph"]["edges"]
+                self.assertEqual([{key: wire[key] for key in edge} for wire in wires], [edge])
+            finally:
+                peer.socket.close()
+
     def test_planned_restart_keeps_programs_and_screens(self):
         pane, holder = self.started()
         first = self.server_pid()
