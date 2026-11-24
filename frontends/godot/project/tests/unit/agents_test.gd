@@ -721,6 +721,53 @@ func test_panel_groups_busy_grandchild_without_changing_individual_status() -> v
 	app.free()
 
 
+func test_newer_blocked_child_orders_its_group_before_an_older_request() -> void:
+	var app := Application.new()
+	var host := TreeHost.new()
+	var peer := TreeConnection.new()
+	app.hosts = [host]
+	app.agent_attention.in_view = func(h): return h == host
+	var windows := []
+	for id in [1, 2, 3]:
+		var key := PaneAddress.key(id)
+		var state: String = ["unknown", "busy", "waiting"][id - 1]
+		host.terminal(id)
+		windows.append({"pane":key, "shown":true, "rect":Rect2(150 * id, 0, 100, 90)})
+		app.agent_api.graph.nodes[key] = {"provider":"claude", "status":state,
+			"status_history":[{"status":state, "at":"2026-11-24T00:00:10Z"}]}
+		app.agent_api.graph.remote_owners[key] = peer
+	host.workspace_layout.tabs = [{"id":1, "tree":{"type":"windows","windows":windows}}]
+	host.workspace_layout.active = 1
+	host.pane_focus = ""
+	app.agent_api.graph.edges = {"a":{"from":"t1","to":"t2"}}
+	var panel := preload("res://scenes/Agents.gd").new()
+	panel.application = app
+	panel._sounds = {"enabled":false}
+	panel.refresh()
+	expect(panel.rows.map(func(row): return row.key) == ["t3","t1"], "The older standalone blocker precedes the still-working group")
+	var leader: Dictionary = panel.rows.filter(func(row): return row.key == "t1")[0]
+	app.agent_api.graph.nodes.t2.status = "waiting"
+	app.agent_api.graph.nodes.t2.status_history = [{"status":"waiting", "at":"2026-11-24T00:00:50Z"}]
+	panel.refresh()
+	expect(panel.rows.map(func(row): return [row.key, row.section]) == [["t1","Needs you"],["t3","Needs you"]],
+		"The newest blocked request moves its whole group to the first visible position")
+	var current: Dictionary = panel.rows.filter(func(row): return row.key == "t1")[0]
+	var child: Dictionary = panel.trees[current.id][0]
+	expect(current.status == "unknown" and current.at == 0 and current.at == leader.at,
+		"The unknown leader retains its own glyph and empty age after its child blocks")
+	expect(child.status == "blocked" and child.icon == "claude" and child.at == int(Time.get_unix_time_from_datetime_string("2026-11-24T00:00:50")),
+		"The child's blocked glyph and timestamp stay on its own row")
+	for key in ["t1","t2","t3"]:
+		panel.step(1)
+		expect(host.revealed == key, "NextAgent follows the visible group, child and older request in order: " + key)
+		host.pane_focus = host.revealed
+		panel.refresh()
+	panel.free()
+	peer.free()
+	host.free()
+	app.free()
+
+
 func test_unknown_leader_keeps_each_branch_and_keyboard_order() -> void:
 	var app := Application.new()
 	var host := TreeHost.new()

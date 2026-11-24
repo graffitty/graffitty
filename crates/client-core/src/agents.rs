@@ -93,6 +93,7 @@ impl Agents {
         let mut alerts = Vec::new();
         let mut leaders = HashMap::new();
         let mut groups = HashMap::new();
+        let mut order = HashMap::new();
         for mut item in input {
             let supported = |app: &str| ["pi", "claude", "codex", "opencode"].contains(&app);
             // A shell/SSH/tmux pane can report an agent through OSC without
@@ -148,6 +149,7 @@ impl Agents {
                 *stamp = Stamp { state: next.into(), at: if observed_change { now } else { 0 } };
             }
             let pinned = self.saved.pins.contains(&item.id);
+            order.insert(item.id.clone(), (if pinned { rank(status) } else { shown_rank }, stamp.at, seq));
             rows.push(Row { id: item.id, key: item.key, title: item.title, provider: item.provider,
                 status: status.into(), section: if pinned { "Pinned" } else { section(shown_rank) }.into(),
                 at: stamp.at, focused: item.focused, pinned });
@@ -159,8 +161,9 @@ impl Agents {
         for row in &rows {
             if let Some(root) = groups.get(&row.id) {
                 let urgency = match row.status.as_str() { "blocked" => 4, "working" => 2, _ => 1 };
-                let highest = child_ranks.entry(root.clone()).or_insert(1);
-                *highest = urgency.max(*highest);
+                let priority = (urgency, row.at, self.agents[&row.id].seq);
+                let highest = child_ranks.entry(root.clone()).or_default();
+                *highest = priority.max(*highest);
             }
         }
         for root in child_ranks.keys() {
@@ -173,23 +176,21 @@ impl Agents {
                 });
             }
         }
-        let group_rank = |r: &Row| match r.section.as_str() { "Pinned" => 5, "Needs you" => 4, "Done" => 3, "Working" => 2, _ => 1 };
         for row in &mut rows {
-            if let Some(&urgency) = child_ranks.get(&row.id) {
-                if urgency > group_rank(row) { row.section = section(urgency).into(); }
+            let own = order.entry(row.id.clone()).or_insert((0, 0, 0));
+            if let Some(&child) = child_ranks.get(&row.id) {
+                if child.0 > own.0 {
+                    *own = child;
+                    if !row.pinned { row.section = section(child.0).into(); }
+                }
             }
         }
-        let urgency = |row: &Row| {
-            if row.pinned { rank(&row.status).max(*child_ranks.get(&row.id).unwrap_or(&1)) }
-            else { group_rank(row) }
-        };
+        // The tree sorts with the activity which promoted it. The leader's
+        // displayed age and state still come from its own transition.
         rows.sort_by(|a,b| b.pinned.cmp(&a.pinned)
-            .then_with(|| urgency(b).cmp(&urgency(a)))
-            .then(b.at.cmp(&a.at))
-            .then_with(|| match (self.agents.get(&a.id), self.agents.get(&b.id)) {
-                (Some(a), Some(b)) => b.seq.cmp(&a.seq),
-                (a,b) => a.is_some().cmp(&b.is_some()),
-            }));
+            .then_with(|| order[&b.id].cmp(&order[&a.id]))
+            .then_with(|| child_ranks.contains_key(&b.id).cmp(&child_ranks.contains_key(&a.id)))
+            .then_with(|| a.id.cmp(&b.id)));
         let listed: HashSet<_> = rows.iter().map(|r| r.id.clone()).collect();
         self.saved.changed.retain(|id, stamp| listed.contains(id) || now.saturating_sub(stamp.at) <= 30 * 86400);
         (rows, alerts)
@@ -422,6 +423,72 @@ mod tests {
         let (rows,sounds) = model.observe(vec![root.clone(),worker],21);
         assert_eq!(sounds,["blocked"]);
         assert_eq!(rows.iter().find(|r|r.id==root.id).unwrap().section,"Pinned");
+    }
+
+    #[test]
+    fn promoted_trees_sort_by_the_newest_child_contributing_their_section() {
+        for (root_status, child_status) in [("unknown", "waiting"), ("idle", "busy"), ("offline", "idle")] {
+            let mut model = Agents::default();
+            let mut root = input(root_status, false, false).remove(0);
+            root.id = "root".into();
+            let mut older = input(child_status, false, false).remove(0);
+            older.id = "older".into();
+            older.group = Some(root.id.clone());
+            let mut newest = older.clone();
+            newest.id = "newest".into();
+            let mut standalone = older.clone();
+            standalone.id = "standalone".into();
+            standalone.group = None;
+            let mut unrelated = older.clone();
+            unrelated.id = "idle-child".into();
+            unrelated.status = "idle".into();
+            for (item,second) in [(&mut older,5),(&mut newest,50),(&mut standalone,10),(&mut unrelated,59)] {
+                item.status_history.push(StatusChange { status:item.status.clone(), at:format!("2030-01-01T00:00:{second:02}Z") });
+            }
+            let mut items = vec![root,older,newest,standalone,unrelated];
+            let visible = |rows: Vec<Row>| rows.into_iter().filter(|r| r.id == "root" || r.id == "standalone").collect::<Vec<_>>();
+            let rows = visible(model.observe(items.clone(),100).0);
+            assert_eq!((rows[0].id.as_str(),rows[0].at),("root",0));
+            items.reverse();
+            assert_eq!(visible(model.observe(items.clone(),101).0)[0].id,"root");
+            for item in &mut items {
+                if item.id == "newest" || (child_status == "idle" && item.id == "idle-child") { item.status_history[0].at = "2030-01-01T00:00:08Z".into(); }
+            }
+            assert_eq!(visible(model.observe(items,102).0)[0].id,"standalone");
+        }
+    }
+
+    #[test]
+    fn pinned_focus_hold_sorts_by_current_status() {
+        let mut model = Agents::default();
+        let mut held = completed(FIRST,false,true,true).remove(0);
+        let mut worker = input("busy",false,false).remove(0);
+        worker.id = "worker".into();
+        model.pin(held.id.clone(),true);
+        model.pin(worker.id.clone(),true);
+        assert_eq!(model.observe(vec![held.clone(),worker.clone()],10).0[0].id,held.id);
+        held.attention.as_mut().unwrap().seen = true;
+        let rows = model.observe(vec![held,worker.clone()],11).0;
+        assert_eq!((rows[0].id.as_str(),rows[1].status.as_str()),(worker.id.as_str(),"idle"));
+    }
+
+    #[test]
+    fn equal_timestamp_promotions_keep_the_contributing_childs_sequence() {
+        let mut model = Agents::default();
+        let root = input("idle",false,false).remove(0);
+        let mut child = input("idle",false,false).remove(0);
+        child.id = "child".into();
+        child.group = Some(root.id.clone());
+        let mut other = input("idle",false,false).remove(0);
+        other.id = "other".into();
+        model.observe(vec![root.clone(),child.clone(),other.clone()],0);
+        other.status = "waiting".into();
+        model.observe(vec![root.clone(),child.clone(),other.clone()],10);
+        child.status = "waiting".into();
+        for items in [vec![root.clone(),other.clone(),child.clone()],vec![child,other,root.clone()]] {
+            let rows = model.observe(items,10).0;
+            assert_eq!((rows[0].id.as_str(),rows[0].at),(root.id.as_str(),0));
+        }
     }
 
     #[test] fn sorting_pins_recent_changes_and_provider_filtering() {
