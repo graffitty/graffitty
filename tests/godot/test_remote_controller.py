@@ -4,6 +4,8 @@ import json
 import os
 from pathlib import Path
 import shutil
+import shlex
+import signal
 import subprocess
 import tempfile
 import textwrap
@@ -81,9 +83,15 @@ class RemoteControllerTests(unittest.TestCase):
                         sys.exit(0)
                     host, port, remote_host, remote_port = sys.argv[sys.argv.index("-L") + 1].split(":")
                     listener = socket.create_server((host, int(port)))
-                    def forward(a, b):
+                    controls = pathlib.Path(os.environ["CONTROLLER_TEST_LINK"])
+                    controls.joinpath("forwarder").write_text(str(os.getpid()))
+                    def forward(a, b, replies=False):
                         try:
-                            while data := a.recv(65536): b.sendall(data)
+                            while data := a.recv(65536):
+                                if replies and controls.joinpath("blackhole").exists(): continue
+                                if replies and controls.joinpath("hold-replies").exists():
+                                    threading.Event().wait()
+                                b.sendall(data)
                         except OSError: pass
                         finally:
                             try: b.shutdown(socket.SHUT_WR)
@@ -92,14 +100,15 @@ class RemoteControllerTests(unittest.TestCase):
                         with client, socket.create_connection((remote_host, int(remote_port))) as remote:
                             worker = threading.Thread(target=forward, args=(client,remote), daemon=True)
                             worker.start()
-                            forward(remote,client)
+                            forward(remote,client,True)
                             worker.join()
                     while True:
                         client, _ = listener.accept()
-                        threading.Thread(target=connect, args=(client,), daemon=True).start()
+                        if controls.joinpath("offline").exists(): client.close()
+                        else: threading.Thread(target=connect, args=(client,), daemon=True).start()
                 '''))
                 ssh.chmod(0o700)
-                env.update(PATH=str(directory) + os.pathsep + env["PATH"], CONTROLLER_TEST_DESCRIPTOR=str(owner.descriptor))
+                env.update(PATH=str(directory) + os.pathsep + env["PATH"], CONTROLLER_TEST_DESCRIPTOR=str(owner.descriptor), CONTROLLER_TEST_LINK=str(directory))
                 with (directory / "attachment.log").open("w+") as log:
                     attachment = subprocess.Popen([str(owner.binary), "remote", "connect", "fixture", "--alias", "build", "--no-gui"],
                                                   env=env, stdin=subprocess.DEVNULL, stdout=log, stderr=log)
@@ -121,10 +130,60 @@ class RemoteControllerTests(unittest.TestCase):
                         read = command("terminal", "get-text", "-t", target, "--json")
                         self.assertEqual(read.returncode, 0, read.stdout + read.stderr)
                         self.assertIn("HEADLESS_MARKER", json.loads(read.stdout)["result"]["text"])
+                        # Deliver a mutation, withhold its reply, then lose the SSH
+                        # process. A fresh login must never replay that mutation.
+                        applied = directory / "applied"
+                        (directory / "hold-replies").touch()
+                        mutation = subprocess.Popen([str(owner.binary), "terminal", "type", "-t", target,
+                            "--text", "echo applied >> " + shlex.quote(str(applied)) + "\n", "--interval-ms", "0"],
+                            env=env, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
+                        try:
+                            deadline = time.monotonic() + 10
+                            while not applied.exists() and time.monotonic() < deadline: time.sleep(.02)
+                            self.assertTrue(applied.exists(), "Remote shell never received the mutation")
+                            (directory / "offline").touch()
+                            os.kill(int((directory / "forwarder").read_text()), signal.SIGTERM)
+                            mutation.communicate(timeout=10)
+                            self.assertNotEqual(mutation.returncode, 0, "Lost acknowledgment cannot report success")
+                        finally:
+                            if mutation.poll() is None: mutation.kill()
+                            mutation.wait(timeout=5)
+                        self.assertNotEqual(command("pane", "list", "-t", "build/").returncode, 0)
+                        # Allow at least one redial to hit the interrupted connection.
+                        deadline = time.monotonic() + 10
+                        while "Retrying in" not in (directory / "attachment.log").read_text() and time.monotonic() < deadline:
+                            time.sleep(.02)
+                        self.assertIn("Retrying in", (directory / "attachment.log").read_text())
+                        (directory / "hold-replies").unlink()
+                        (directory / "offline").unlink()
+                        deadline = time.monotonic() + 15
+                        while command("pane", "list", "-t", "build/").returncode != 0:
+                            self.assertIsNone(attachment.poll(), (directory / "attachment.log").read_text())
+                            self.assertLess(time.monotonic(), deadline, (directory / "attachment.log").read_text())
+                            time.sleep(.05)
+                        self.assertEqual(applied.read_text().splitlines(), ["applied"])
+                        # Keep TCP and the SSH process alive, silently losing only
+                        # downstream bytes. No command is needed to detect the outage.
+                        (directory / "blackhole").touch()
+                        deadline = time.monotonic() + 25
+                        while "heartbeat timed out" not in (directory / "attachment.log").read_text():
+                            self.assertLess(time.monotonic(), deadline, (directory / "attachment.log").read_text())
+                            time.sleep(.05)
+                        # Keep dropping the reply to the first WebSocket upgrade
+                        # as well. A timed-out redial must not terminate the CLI.
+                        deadline = time.monotonic() + 20
+                        while "WebSocket upgrade timed out" not in (directory / "attachment.log").read_text():
+                            self.assertLess(time.monotonic(), deadline, (directory / "attachment.log").read_text())
+                            time.sleep(.05)
+                        (directory / "blackhole").unlink()
+                        deadline = time.monotonic() + 35
+                        while command("pane", "list", "-t", "build/").returncode != 0:
+                            self.assertIsNone(attachment.poll(), (directory / "attachment.log").read_text())
+                            self.assertLess(time.monotonic(), deadline, (directory / "attachment.log").read_text())
+                            time.sleep(.05)
                         # The real encrypted controller carries files larger than a
                         # command packet. The remote process receives only the final
                         # quoted path in one bracketed paste, with no Enter.
-                        import shlex
                         data = bytes(range(256)) * 12289
                         source = directory / "image fixture.png"
                         source.write_bytes(data)

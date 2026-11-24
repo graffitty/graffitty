@@ -8,7 +8,7 @@
 //! Passwords stay in OPAQUE's zeroizing client state and are never persisted.
 use crate::auth;
 use crate::ipc::{self, Packet};
-use anyhow::{Context, Result, anyhow, bail, ensure};
+use anyhow::{Context, Result, bail, ensure};
 use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
 use std::{
@@ -23,6 +23,25 @@ use tungstenite::{
     protocol::{CloseFrame, WebSocketConfig},
     stream::MaybeTlsStream,
 };
+
+/// Delay after an unsuccessful redial. Losing an established link gets an immediate attempt.
+pub fn reconnect_delay(failures: u32) -> Duration {
+    Duration::from_millis((250_u64 << failures.min(7)).min(30_000))
+}
+
+/// Only transport loss is automatically retried. Authentication and protocol failures
+/// need attention, including a rejected credential or a new second-factor requirement.
+pub fn interrupted_login(error: &anyhow::Error) -> bool {
+    if let Some(error) = error.chain().find_map(|cause| cause.downcast_ref::<io::Error>()) {
+        return matches!(error.kind(), io::ErrorKind::ConnectionRefused | io::ErrorKind::ConnectionReset
+            | io::ErrorKind::ConnectionAborted | io::ErrorKind::TimedOut | io::ErrorKind::WouldBlock
+            | io::ErrorKind::UnexpectedEof | io::ErrorKind::BrokenPipe | io::ErrorKind::NotConnected
+            | io::ErrorKind::NetworkUnreachable | io::ErrorKind::HostUnreachable);
+    }
+    matches!(error.downcast_ref::<tungstenite::Error>(), Some(tungstenite::Error::ConnectionClosed
+        | tungstenite::Error::AlreadyClosed
+        | tungstenite::Error::Protocol(tungstenite::error::ProtocolError::ResetWithoutClosingHandshake | tungstenite::error::ProtocolError::HandshakeIncomplete)))
+}
 
 const CONNECT_TIMEOUT: Duration = Duration::from_secs(10);
 const AUTH_TIMEOUT: Duration = Duration::from_secs(30);
@@ -98,11 +117,31 @@ pub struct NetworkPeer {
     channel: auth::Channel,
     failed: bool,
     hostname: String,
+    last_probe: Instant,
+    awaiting_pong: bool,
 }
 
 impl NetworkPeer {
     pub fn new(socket: Socket, channel: auth::Channel) -> Self {
-        Self { socket, channel, failed: false, hostname: String::new() }
+        Self { socket, channel, failed: false, hostname: String::new(), last_probe: Instant::now(), awaiting_pong: false }
+    }
+
+    /// Called after draining received frames, including on the first poll after sleep.
+    pub(crate) fn check_liveness(&mut self) -> io::Result<()> {
+        if self.awaiting_pong {
+            if self.last_probe.elapsed() >= Duration::from_secs(10) {
+                return Err(io::Error::new(io::ErrorKind::TimedOut, "Remote controller heartbeat timed out"));
+            }
+        } else if self.last_probe.elapsed() >= Duration::from_secs(5) {
+            match self.socket.send(Message::Ping(b"gft-controller".as_slice().into())) {
+                Ok(()) => {}
+                Err(tungstenite::Error::Io(e)) if e.kind() == io::ErrorKind::WouldBlock => {}
+                Err(e) => return Err(socket_error(e)),
+            }
+            self.awaiting_pong = true;
+            self.last_probe = Instant::now();
+        }
+        Ok(())
     }
 
     fn send(&mut self, packet: Packet) -> io::Result<()> {
@@ -158,6 +197,9 @@ impl NetworkPeer {
                 }
                 // Ping is answered by Tungstenite, including when a flush
                 // has to wait until the next frame's nonblocking poll.
+                Message::Pong(data) if data.as_ref() == b"gft-controller" => {
+                    self.awaiting_pong = false;
+                }
                 Message::Ping(_) | Message::Pong(_) | Message::Frame(_) => {}
             }
         }
@@ -226,13 +268,8 @@ fn connect(url: &str) -> Result<Socket> {
             Err(error) => last_error = Some(error),
         }
     }
-    let stream = stream.ok_or_else(|| {
-        anyhow!(
-            last_error
-                .map(|e| e.to_string())
-                .unwrap_or_else(|| "Connection timed out".into())
-        )
-    })?;
+    let stream = stream.ok_or_else(|| last_error.unwrap_or_else(||
+        io::Error::new(io::ErrorKind::TimedOut, "Connection timed out")))?;
     stream.set_nodelay(true)?;
     stream.set_read_timeout(Some(CONNECT_TIMEOUT))?;
     stream.set_write_timeout(Some(CONNECT_TIMEOUT))?;
@@ -246,7 +283,13 @@ fn connect(url: &str) -> Result<Socket> {
     // insecure-certificate fallback and WSS is never downgraded to plaintext.
     // Plain ws:// is still encrypted end to end by the login's channel.
     let (socket, _) = tungstenite::client_tls_with_config(request, stream, Some(config), None)
-        .map_err(|error| anyhow!("WebSocket handshake failed: {error}"))?;
+        .map_err(|failure| match failure {
+            // The blocking socket's read/write deadline can expire mid-upgrade.
+            tungstenite::HandshakeError::Interrupted(_) => io::Error::new(
+                io::ErrorKind::TimedOut, "WebSocket upgrade timed out").into(),
+            tungstenite::HandshakeError::Failure(error) => error,
+        })
+        .context("WebSocket handshake failed")?;
     tcp(&socket)?.set_read_timeout(Some(AUTH_TIMEOUT))?;
     Ok(socket)
 }
@@ -330,7 +373,13 @@ impl Handshake {
                         _ => bail!("Unexpected binary data before authentication"),
                     }
                 }
-                (Message::Close(frame), _) => bail!("{}", closed(frame)),
+                (Message::Close(frame), _) => {
+                    use tungstenite::protocol::frame::coding::CloseCode;
+                    if frame.as_ref().is_none_or(|f| matches!(f.code, CloseCode::Away | CloseCode::Restart | CloseCode::Again)) {
+                        return Err(io::Error::new(io::ErrorKind::ConnectionAborted, closed(frame)).into());
+                    }
+                    bail!("{}", closed(frame));
+                }
                 (Message::Ping(_) | Message::Pong(_), _) => continue,
                 (Message::Text(_), Some(_)) => {
                     bail!("Unencrypted message after the password was verified")
@@ -662,6 +711,17 @@ mod tests {
     };
 
     type Server = WebSocket<TcpStream>;
+
+    #[test]
+    fn recovery_backs_off_and_keeps_authentication_failures_terminal() {
+        let delays: Vec<_> = (0..10).map(|n| reconnect_delay(n).as_millis()).collect();
+        assert_eq!(delays, [250, 500, 1000, 2000, 4000, 8000, 16000, 30000, 30000, 30000]);
+        let refused = anyhow::Error::new(io::Error::from(io::ErrorKind::ConnectionRefused));
+        assert!(interrupted_login(&refused.context("redial")));
+        let reset = tungstenite::Error::Protocol(tungstenite::error::ProtocolError::HandshakeIncomplete);
+        assert!(interrupted_login(&anyhow::Error::new(reset).context("WebSocket handshake failed")));
+        assert!(!interrupted_login(&anyhow::Error::msg("Authentication failed")));
+    }
 
     #[test]
     fn server_address_defaults_preserve_explicit_endpoints() {

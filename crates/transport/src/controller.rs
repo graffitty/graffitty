@@ -423,6 +423,9 @@ impl Attached {
                 Err(error) => return Err(error.into()),
             }
         }
+        if let crate::ClientTransport::Network(peer) = &mut self.transport {
+            peer.check_liveness()?;
+        }
         Ok(())
     }
 }

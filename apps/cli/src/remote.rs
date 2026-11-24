@@ -1,6 +1,7 @@
 //! OpenSSH owns authentication and encryption. The server owns PTYs independently
 //! of these tunnels and of the lifetime of the native frontend.
 mod deploy;
+mod recovery;
 mod release;
 
 use crate::options::{RemoteCommand, RemoteConnect};
@@ -388,7 +389,7 @@ pub fn run(command: RemoteCommand) -> Result<(), Error> {
     }
     let mut tunnels = Vec::new();
     let mut connections = vec![];
-    let mut controllers = Vec::new();
+    let mut controller = None;
     for host in hosts {
         let descriptor = prepare(&host, server_binary.as_deref().map(Path::new))?;
         let remote = remote_port(&descriptor)?;
@@ -406,9 +407,8 @@ pub fn run(command: RemoteCommand) -> Result<(), Error> {
             let graffitty_transport::Authentication::Connected(transport) = authenticated else {
                 return Err("This server requires Telegram verification; connect through the GUI".into());
             };
-            controllers.push(graffitty_transport::controller::Attached::new(transport,
-                &graffitty_transport::controller::state_directory().map_err(|e| e.to_string())?, alias, &identity)
-                .map_err(|e| e.to_string())?);
+            controller = Some(recovery::Controller::new(transport, url.clone(),
+                descriptor["token"].as_str().ok_or("Missing server password")?.to_owned(), alias, &identity)?);
         }
         connections.push(json!({"name":host,"alias":alias.as_deref().unwrap_or(""),"credential_id":identity,"transient":true,"url":url,"token":descriptor["token"],"initial_session":workspace}));
         tunnels.push(tunnel);
@@ -443,8 +443,8 @@ pub fn run(command: RemoteCommand) -> Result<(), Error> {
         for tunnel in &mut tunnels {
             tunnel.poll()?;
         }
-        for controller in &mut controllers { controller.poll().map_err(|e| e.to_string())?; }
-        thread::sleep(Duration::from_millis(if controllers.is_empty() { 100 } else { 5 }));
+        if let Some(controller) = &mut controller { controller.poll()?; }
+        thread::sleep(Duration::from_millis(if controller.is_none() { 100 } else { 5 }));
     }
     if let Some(gui) = gui.as_mut() {
         let _ = gui.kill();

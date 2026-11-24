@@ -164,7 +164,7 @@ func test_failed_input_and_actions_retry_without_replaying_or_discarding_workspa
 		else:
 			expect(connection.send_action("key", 7, {"unicode": 120}) == -1, "Failed key reports failure")
 		expect(connection.enabled and not connection.connected and connection.socket == null, "Write failure releases the socket but keeps automatic reconnection enabled")
-		expect(connection.retry_at > Time.get_ticks_msec() and connection.status_message.begins_with("Offline"), "Write failure reports offline and schedules a bounded retry")
+		expect(connection.retry_at <= Time.get_ticks_msec() and connection.status_message.begins_with("Offline"), "An established link gets an immediate redial after a write failure")
 		expect(connection.epoch == "same-server" and connection.topology.panes == [{"id": 7}] and connection.subscriptions == [7], "Reconnect retains the terminal identity and desired subscriptions")
 		connection.send_input(7, "later".to_utf8_buffer())
 		connection.send_action("key", 7, {"unicode": 121})

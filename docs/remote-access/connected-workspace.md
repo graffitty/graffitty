@@ -8,6 +8,10 @@ Simultaneous connections share that session. If the shell cannot start, choose
 **Retry** after fixing the server's shell configuration, or **Cancel** to return
 to Servers. Closing the last session deliberately does not start another shell.
 
+After a network interruption, the app redials immediately and returns to its session once the server is reachable. Failed dials back off from 250 ms to 30 seconds. Switching from Wi-Fi to cellular requires a working route to the same server, such as a VPN for a private address.
+
+A running `gft remote connect --no-gui --alias build` checks for silent connections with a heartbeat and restores its alias after a tunnel interruption. If a command loses its reply, check the remote pane before repeating it. The command may already have run.
+
 ## Know where data lives
 
 - **On the server:** programs, terminal contents, Chromium profiles, files, and graph work.

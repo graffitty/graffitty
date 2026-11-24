@@ -127,6 +127,10 @@ impl RemoteClientCore {
         )
     }
     #[func]
+    fn reconnect_delay_msec(&self, failures: u32) -> i64 {
+        graffitty_client_core::transport::reconnect_delay(failures).as_millis() as i64
+    }
+    #[func]
     fn poll_action(
         &self,
         enabled: bool,

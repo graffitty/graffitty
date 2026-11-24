@@ -108,14 +108,13 @@ var chromium_viewports: Dictionary = {}
 ## The demand the owner holds: wire IDs last sent, limited to subscribed panes.
 var sent_chromium_viewports: Dictionary = {}
 const CONNECT_TIMEOUT_MSEC := 10000
-const RETRY_DELAY_MSEC := 3000
+var _failed_dials := 0
 var connect_deadline := 0
 var status_message := "Disconnected"
 var status_source := "Disconnected"
 var status_args: Array = []
 var retry_at := 0
-## Returning to the app: the first reconnect is immediate, not RETRY_DELAY_MSEC
-## later. A link that fails again backs off as usual.
+## Returning to the app bypasses any pending redial delay once.
 const RESUME_GRACE_MSEC := 5000
 var _resumed_at := -RESUME_GRACE_MSEC
 var _resume_retry := false
@@ -191,6 +190,7 @@ func _open() -> void:
 
 
 func disconnect_remote() -> void:
+	_failed_dials = 0
 	transport_generation += 1
 	_subscribed.clear()
 	_core.controller_stop()
@@ -224,6 +224,7 @@ func _set_state(message: String, args: Array = []) -> void:
 
 
 func _network_failed(reason: String) -> void:
+	var was_connected := connected
 	transport_generation += 1
 	_core.controller_stop()
 	connected = false
@@ -239,7 +240,12 @@ func _network_failed(reason: String) -> void:
 	# return, when the server is reachable again straight away.
 	var resuming := _resume_retry and now - _resumed_at < RESUME_GRACE_MSEC
 	_resume_retry = false
-	retry_at = now if resuming else now + RETRY_DELAY_MSEC
+	if was_connected or resuming:
+		_failed_dials = 0
+		retry_at = now
+	else:
+		retry_at = now + _core.reconnect_delay_msec(_failed_dials)
+		_failed_dials = mini(_failed_dials + 1, 7)
 	_set_state("Offline — %s. Check the server and network/VPN. Retrying automatically…", [last_error])
 
 
@@ -248,7 +254,9 @@ func _notification(what: int) -> void:
 		_resumed_at = Time.get_ticks_msec()
 		_resume_retry = true
 		# Already waiting out a retry delay from before the pause: connect now.
-		if enabled and socket == null: retry_at = 0
+		if enabled and socket == null:
+			_failed_dials = 0
+			retry_at = 0
 
 
 func _process(_dt: float) -> void:
@@ -565,6 +573,7 @@ func _receive(message: Dictionary) -> void:
 			available_sessions.clear()
 			sessions_known = false
 			_selecting_session = -1
+			_failed_dials = 0
 			connected = true
 			if is_inside_tree():
 				get_node("/root/Localization").set_server_language(self, str(message.get("localization", {}).get("language", "auto")))

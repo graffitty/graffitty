@@ -24,3 +24,8 @@ Terminal file staging and clipboard paste routing are adapted from Herdr:
 Both are licensed under Apache-2.0 (see licenses/herdr-Apache-2.0.txt).
 Graffitty modifications use its authenticated RPC, bounded chunk transfers,
 atomic file publication and platform clipboard adapters.
+
+Remote redial timing and connection supervision are adapted from herdr-core,
+crates/herdr-core/src/remote.rs, revision 7cb4de47164f1d65db84dfab294166994f143a15,
+under Apache-2.0. Graffitty uses its own SSH tunnels, authenticated WebSocket
+sessions and controller capabilities.
