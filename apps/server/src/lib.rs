@@ -271,6 +271,32 @@ fn queue(client: &mut Client, message: Message) -> Result<(), Error> {
 fn send(client: &mut Client, value: Value) -> Result<(), Error> {
     queue(client, Message::Text(value.to_string().into()))
 }
+/// Discovery runs outside the server loop. A hook may register a different
+/// agent in the same pane before the worker returns its observation.
+fn scan_registration(node: &Value) -> Value {
+    json!([node["provider"], node["pid"], node["started"], node["session_id"], node["transport"]])
+}
+
+#[cfg(test)]
+mod scan_tests {
+    use super::*;
+
+    #[test]
+    fn scan_follows_registration_across_status_changes_only() {
+        let mut graph = graph::Graph::default();
+        graph.add(1, "review".into());
+        let start = json!({"provider":"codex","event":"SessionStart","pid":10,"session_id":"first"});
+        graph.dispatch(1, "agent.event", &start).unwrap();
+        let sampled = scan_registration(&graph.nodes["t1"]);
+        graph.dispatch(1, "agent.event", &json!({"provider":"codex","event":"UserPromptSubmit","pid":10,"session_id":"first"})).unwrap();
+        assert_eq!(sampled, scan_registration(&graph.nodes["t1"]));
+        let mut replacement = start;
+        replacement["session_id"] = json!("replacement");
+        graph.dispatch(1, "agent.event", &replacement).unwrap();
+        assert_ne!(sampled, scan_registration(&graph.nodes["t1"]));
+    }
+}
+
 impl Server {
     fn stops_when_empty(&self) -> bool {
         // A server meant to be reached remotely stays, also while its address is taken.
@@ -480,6 +506,7 @@ impl Server {
                         let Some(previous) = graph.nodes.get(key).cloned() else {
                             continue;
                         };
+                        if context.get(key) != Some(&scan_registration(&previous)) { continue; }
                         if previous["transport"] != "inbox"
                             && !graffitty_workspace_core::graph::is_custom_node(&previous) {
                             self.checkpoint_lifecycle.observe(id, state);
@@ -607,6 +634,7 @@ impl Server {
         }
         self.foreground_apps.retain(|id, _| self.sessions.get(id).is_some_and(|s| !s.exited));
         if self.scan_at.elapsed() > Duration::from_secs(2) && !self.workers.busy("scan") {
+            let mut registrations = serde_json::Map::new();
             let roots: Vec<_> = self.sessions.values().filter_map(|s| {
                 let key = pane_address(s.id);
                 let node = &self.graphs[&s.workspace].nodes[&key];
@@ -619,10 +647,11 @@ impl Server {
                     root["session_id"] = node["session_id"].clone();
                     root["observed_turn"] = turn.clone();
                 }
+                registrations.insert(key, scan_registration(node));
                 Some(root)
             }).collect();
             if !roots.is_empty() {
-                self.workers.start(&self.cli, "scan".into(), json!({"op":"scan","roots":roots}), json!({}));
+                self.workers.start(&self.cli, "scan".into(), json!({"op":"scan","roots":roots}), Value::Object(registrations));
             }
             let mut targets: HashMap<String, Vec<Value>> = HashMap::new();
             for record in self.native_pending.values() {
