@@ -18,7 +18,7 @@ Each tab keeps its own tiling and [spacing](../customize/configuration-workspace
 
 1. Zoom out to see the Main border.
 2. Drag a pane outside to stash it without closing.
-3. Drop it onto a tile to return; the preview shows placement.
+3. Drag its title inside the Main border and release where the tile preview appears. If the tab was floating, this pane becomes its first tile. Connected panes stay in the overview.
 
 Double-click a title to fit its pane. **View → Fit to Main Area** returns to Main.
 **View → Floating Pane Physics** lets floating panes push neighbors; disable it

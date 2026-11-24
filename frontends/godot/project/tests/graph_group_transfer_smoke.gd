@@ -153,6 +153,36 @@ func run() -> void:
 	offer = header_to_bar(host, sole)
 	check(offer.mode == Drag.BLOCKED and offer.hint < 0, "No new-tab slot for a tab's only pane")
 	await release_unchanged(host, offer, [sole], "Sole pane")
+	host.select_workspace(new_tab, true)
+	await settled(host)
+	var view: Control = host.workspace_view
+	var floating: Dictionary = host.workspace_layout.tab(new_tab).tree
+	floating.tiling = false
+	floating.physics = false
+	var area: Rect2 = view.content_rect()
+	for member in [key, peer]:
+		var item := Layout.find(floating, member)
+		item.graph_floating = true
+		item.rect = Rect2(area.end + Vector2(80 if member == key else 560, 80), Vector2(400, 300))
+	view.refresh()
+	host.session_backend.commit_workspace(host)
+	await settled(host)
+	var dragged: Control = view.panes[key]
+	var handle: Vector2 = view.pane_rects[key].position + Vector2(40, 22)
+	dragged.begin_header_drag(view.canvas_root.get_global_transform() * handle)
+	dragged._dragging = true
+	view.moving = key
+	var landing: Vector2 = area.get_center()
+	var screen: Vector2 = app.screen_point(host.get_window(), view.window_point(landing))
+	pointer_position = screen
+	dragged._drag_to(screen, landing - handle)
+	check(view.preview_plan.get("tree", {}).get("tiling", false), "Dragging a floating pane inside Main previews tiling")
+	view.finish_window_move(key)
+	dragged._cancel_drag()
+	await settled(host)
+	var returned: Dictionary = host.workspace_layout.tab(new_tab).tree
+	check(returned.tiling and Layout.main_keys(returned) == [key], "Only the manually returned pane joins Main")
+	check(Layout.find(returned, peer).graph_floating, "Its wired peer stays in the overview")
 	check(error_watch.errors.is_empty(), "No engine errors: " + str(error_watch.errors))
 	print("GRAPH_GROUP_TRANSFER failures=", JSON.stringify(failures))
 	wrapper.connection.disconnect_remote()

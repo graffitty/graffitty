@@ -2727,14 +2727,17 @@ func preview_window_move(
 	point: Vector2,
 	incoming: Dictionary = { },
 	placements: Dictionary = {},
+	drag_started_outside_main := false,
 ) -> Dictionary:
 	var group: Dictionary = host.workspace_layout.tab(host.workspace_layout.active)
-	if group.is_empty() or (not group.tree.get("tiling", false) and incoming.is_empty()):
+	var area := content_rect()
+	var manual_return := drag_started_outside_main and area.has_point(point)
+	if group.is_empty() or (not group.tree.get("tiling", false) and incoming.is_empty() and not manual_return):
 		clear_layout_preview()
 		return { }
 	if incoming.is_empty():
 		incoming = Layout.find(group.tree, key)
-	preview_plan = Layout.preview_placement(group.tree, incoming, rect, content_rect(), point, placements)
+	preview_plan = Layout.preview_placement(group.tree, incoming, rect, area, point, placements, manual_return)
 	# A local drag already carries its pane. A transfer needs a visible outline
 	# even when the destination is floating or outside the Main Area.
 	layout_preview.present(preview_plan, content_rect(), point, key.is_empty())

@@ -42,6 +42,7 @@ var _pressed := false
 var _press := Vector2.ZERO
 var _dragging := false
 var _start_rect := Rect2()
+var _drag_started_outside_main := false
 var drag_start_rectangles: Dictionary = {}
 var _resize_edges := Vector2.ZERO
 var _resizing := false
@@ -761,6 +762,11 @@ func set_compact_header(value: bool, title_height := 0.0) -> void:
 func begin_header_drag(sheet_point: Vector2, detach := false) -> void:
 	_pressed = true
 	_press = sheet_point
+	var view: Control = host.workspace_view
+	var origin: Vector2 = view.canvas_root.get_global_transform().affine_inverse() * sheet_point
+	var group: Dictionary = host.workspace_layout.tab(host.workspace_layout.containing(key))
+	var item: Dictionary = host.workspace_layout.find(group.get("tree", {}), key)
+	_drag_started_outside_main = item.get("stashed", false) or item.get("graph_floating", false) or not view.content_rect().has_point(origin)
 	_start_rect = layout_rect()
 	drag_start_rectangles = host.workspace_view.pane_rects.duplicate(true)
 	_detach = detach
@@ -901,7 +907,7 @@ func _drag_to(screen: Vector2, delta: Vector2) -> void:
 		host.workspace_view.preview_window_move(
 			key,
 			layout_rect(),
-			host.workspace_view.layout_point(screen),
+			host.workspace_view.layout_point(screen), {}, {}, _drag_started_outside_main,
 		)
 		return
 	_stop_edge_pan()
