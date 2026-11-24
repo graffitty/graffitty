@@ -214,10 +214,6 @@ func refresh() -> void:
 		if visible.has(key): batch.visible.append(key)
 		if nodes.has(key): batch.nodes[key] = nodes[key]
 	var updated := false
-	for domain in _remote_cores.keys():
-		if not retained_scopes.has(domain):
-			_remote_cores.erase(domain)
-			updated = true
 	for domain in retained_scopes:
 		if not _remote_cores.has(domain): _remote_cores[domain] = ClassDB.instantiate("AgentAttentionCore")
 	var domains: Array = _remote_cores.keys()
@@ -226,7 +222,12 @@ func refresh() -> void:
 		var core: RefCounted = _core if domain.is_empty() else _remote_cores[domain]
 		var batch: Dictionary = observations.get(domain, {})
 		if core.observe(batch.get("nodes", {}), batch.get("visible", PackedStringArray()), batch.get("live", PackedStringArray())): updated = true
-		_send_receipts(core, domain)
+		if not domain.is_empty() and not retained_scopes.has(domain):
+			# An empty observation cleared the panes. Keep only epochs with reads
+			# that can still be confirmed when a matching server view returns.
+			if not core.has_pending(): _remote_cores.erase(domain)
+		else:
+			_send_receipts(core, domain)
 	if updated: changed.emit()
 	if "agents" in application and is_instance_valid(application.agents):
 		application.agents.refresh()

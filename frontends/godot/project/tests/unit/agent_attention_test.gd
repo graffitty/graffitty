@@ -97,6 +97,61 @@ func test_connected_catalog_retries_cached_read_without_reading_unshown_results(
 		connected.free()
 
 
+func test_last_view_gap_retries_only_the_original_epochs_unconfirmed_read() -> void:
+	var app := Application.new()
+	var attention := CapturedAttention.new()
+	attention.application = app
+	attention.in_view = func(host): return host.in_view
+	var original := RemoteHost.new()
+	var restored := RemoteHost.new()
+	var first := Peer.new()
+	var reconnected := Peer.new()
+	first.connected = true
+	reconnected.connected = true
+	original.session_backend.connection = first
+	restored.session_backend.connection = reconnected
+	for host in [original, restored]:
+		host.workspace_layout.tabs.assign([_tab(1, ["t1"])])
+		host.workspace_layout.active = 1
+	var event := {"event":"pending", "kind":"completed", "seen":false}
+	var row := {"pane":1, "status":"idle", "attention":event, "activity_revision":1}
+	for peer in [first, reconnected]:
+		peer.available_sessions = [{"id":"$1", "agents":[row.duplicate(true)]}]
+	app.hosts = [original]
+	attention.refresh()
+	expect(attention.calls.size() == 1, "The first view queues its completion receipt")
+	app.hosts = []
+	attention.refresh()
+	expect(attention._remote_cores.size() == 1 and attention.attention(original, "t1") == null,
+		"The last view releases its presentation while its receipt remains pending")
+
+	restored.in_view = false
+	reconnected.epoch = "replacement"
+	app.hosts = [restored]
+	attention.refresh()
+	expect(attention.calls.size() == 1 and attention.marker(restored, ["t1"]).state == "completed",
+		"A replacement epoch showing the same UUID stays unread")
+	app.hosts = []
+	attention.refresh()
+	expect(attention._remote_cores.size() == 1, "The detached epoch with no pending receipts is released")
+
+	reconnected.epoch = first.epoch
+	app.hosts = [restored]
+	attention.refresh()
+	expect(attention.calls.size() == 2 and attention.calls[1] == {"connection":reconnected, "pane":1, "event":"pending"},
+		"An offscreen reconnect retries the matching original receipt")
+	expect(attention.marker(restored, ["t1"]).count == 0, "The already-viewed result stays read")
+	reconnected.available_sessions[0].agents[0].attention.seen = true
+	reconnected.available_sessions[0].agents[0].activity_revision += 1
+	reconnected.catalog_revision += 1
+	attention.refresh()
+	app.hosts = []
+	attention.refresh()
+	expect(attention._remote_cores.is_empty() and attention.calls.size() == 2,
+		"After server confirmation the detached epoch is released")
+	for item in [attention, original, restored, first, reconnected]: item.free()
+
+
 class PannedView extends "res://scenes/WorkspaceView.gd":
 	func viewport_content_rect() -> Rect2: return Rect2(0, 36, 1280, 684)
 

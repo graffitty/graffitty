@@ -29,6 +29,11 @@ pub struct AgentAttention {
 }
 
 impl AgentAttention {
+    /// Unconfirmed reads survive gaps with no current pane or retry route.
+    pub fn has_pending(&self) -> bool {
+        !self.pending.is_empty()
+    }
+
     /// Apply one graph view. `nodes` maps pane keys to public graph nodes;
     /// `visible` panes are currently in front of the user; `live` lists every
     /// currently tracked pane, including away-session catalog nodes. Dropping

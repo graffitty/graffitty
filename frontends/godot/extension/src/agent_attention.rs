@@ -66,6 +66,11 @@ impl AgentAttentionCore {
         }
     }
 
+    #[func]
+    fn has_pending(&self) -> bool {
+        self.state.has_pending()
+    }
+
     /// Current matching receipts to retry until the server broadcasts seen.
     #[func]
     fn acknowledgements(&self) -> Variant {
