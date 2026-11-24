@@ -172,7 +172,8 @@ func _merge_activity(key: String, row: Dictionary, peer: Node, session: String, 
 		scopes[key] = [peer.url, peer.epoch, session]
 
 
-func activity_node(key: String, node: Dictionary) -> Dictionary:
+func activity_node(key: String, node: Dictionary, peer: Node, session: String) -> Dictionary:
+	if _activity_scopes.get(key) != [peer.url, peer.epoch, session]: return node
 	var current: Dictionary = _activity.get(key, {})
 	return current if not current.is_empty() and _newer(current, node) else node
 

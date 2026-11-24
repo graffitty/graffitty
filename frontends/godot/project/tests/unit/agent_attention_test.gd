@@ -147,6 +147,68 @@ func test_offscreen_completion_waits_for_the_pane_to_enter_the_content_area() ->
 	attention.free()
 
 
+func test_floating_panes_cover_only_their_visible_union() -> void:
+	var host := PannedHost.new()
+	var view := host.workspace_view
+	var canvas := Control.new()
+	for key in ["t1", "t2", "t3"]:
+		var control := Control.new()
+		canvas.add_child(control)
+		view.panes[key] = control
+	var pane: Control = view.panes.t1
+	var left: Control = view.panes.t2
+	var right: Control = view.panes.t3
+	pane.position = Vector2(100, 100)
+	pane.size = Vector2(200, 100)
+	left.position = pane.position
+	left.size = Vector2(100, 100)
+	right.position = Vector2(200, 100)
+	right.size = left.size
+	var app := Application.new()
+	var peer := Peer.new()
+	peer.connected = true
+	host.session_backend.connection = peer
+	app.hosts = [host]
+	host.workspace_layout.tabs = [_tab(1, ["t1", "t2", "t3"])]
+	host.workspace_layout.active = 1
+	var event := {"event": "covered-completion", "kind": "completed", "seen": false}
+	peer.available_sessions = [{"id": "$1", "agents": [{"pane": 1, "status": "idle", "attention": event}]}]
+	var attention := CapturedAttention.new()
+	attention.application = app
+	attention.in_view = func(_host): return true
+	attention.refresh()
+	expect(attention.calls.is_empty() and attention.marker(["t1"]).count == 1, "Jointly covered completion stays unread")
+	right.position.x += 1
+	attention.refresh()
+	expect(attention.calls == [{"connection": peer, "pane": 1, "event": "covered-completion"}], "A narrow gap sends the covered pane’s exact receipt")
+	right.position.x -= 1
+	right.rotation = PI
+	right.position += right.size
+	expect(not view.pane_in_content("t1"), "Rotated cover geometry hides the entire result")
+	right.visible = false
+	expect(view.pane_in_content("t1"), "Hidden covers expose the result")
+	host.world.origin.x = 201
+	right.visible = true
+	left.visible = false
+	expect(not view.pane_in_content("t1"), "An uncovered area outside the viewport cannot count as viewed")
+	right.z_index = -1
+	expect(view.pane_in_content("t1"), "A pane behind the result cannot cover it")
+	host.world.origin = Vector2.ZERO
+	pane.size = Vector2(100, 100)
+	right.position = pane.position
+	right.size = pane.size
+	right.pivot_offset = right.size / 2
+	right.rotation = PI / 4
+	right.z_index = 1
+	expect(view.pane_in_content("t1"), "A rotated cover's bounding box cannot hide exposed corners")
+	attention.free()
+	peer.free()
+	canvas.free()
+	view.free()
+	host.world.free()
+	host.free()
+
+
 func test_live_completion_receipt_in_either_snapshot_order() -> void:
 	for scenario in ["catalog_first", "graph_first", "unfocused", "switching", "other_session"]:
 		var app := Application.new()

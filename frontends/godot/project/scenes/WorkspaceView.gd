@@ -895,26 +895,80 @@ func _pane_screen_rect(pane: Control) -> Rect2:
 	return rect
 
 
-## Project the painted pane around its perimeter. A tilted pane can miss
-## the content rectangle even when their axis-aligned bounds overlap.
+static func _rect_outline(rect: Rect2) -> PackedVector2Array:
+	return PackedVector2Array([rect.position, Vector2(rect.end.x, rect.position.y), rect.end,
+		Vector2(rect.position.x, rect.end.y)])
+
+
+static func _polygon_bounds(points: PackedVector2Array) -> Rect2:
+	var bounds := Rect2(points[0], Vector2.ZERO)
+	for point in points: bounds = bounds.expand(point)
+	return bounds
+
+
+## Both panes are painted on the same sheet. Subtract covers there so adjacent
+## edges still meet exactly after the camera bends or tilts the sheet.
+static func _subtract_pane(piece: PackedVector2Array, cover: Control) -> Array[PackedVector2Array]:
+	var transform := cover.get_transform()
+	var local := transform.affine_inverse() * piece
+	var bounds := _polygon_bounds(local)
+	var overlap := Rect2(Vector2.ZERO, cover.size).intersection(bounds)
+	if not overlap.has_area(): return [piece]
+	if overlap == bounds: return []
+	# Four disjoint strips cover the remaining bounds. Each clipped piece is
+	# convex, even when this cover cuts a hole in the middle of the original.
+	var remaining: Array[PackedVector2Array] = []
+	for strip: Rect2 in [
+		Rect2(bounds.position, Vector2(bounds.size.x, overlap.position.y - bounds.position.y)),
+		Rect2(Vector2(bounds.position.x, overlap.end.y), Vector2(bounds.size.x, bounds.end.y - overlap.end.y)),
+		Rect2(Vector2(bounds.position.x, overlap.position.y), Vector2(overlap.position.x - bounds.position.x, overlap.size.y)),
+		Rect2(Vector2(overlap.end.x, overlap.position.y), Vector2(bounds.end.x - overlap.end.x, overlap.size.y))]:
+		# A rotated edge can leave a rounding sliver in local coordinates.
+		if minf(strip.size.x, strip.size.y) > 0.0001:
+			for fragment in Geometry2D.intersect_polygons(local, _rect_outline(strip)):
+				remaining.append(transform * fragment)
+	return remaining
+
+
+func _piece_in_content(piece: PackedVector2Array, content: Rect2) -> bool:
+	var outline := PackedVector2Array()
+	for i in piece.size():
+		# Include edge midpoints for the curved world sheet.
+		for at: Vector2 in [piece[i], (piece[i] + piece[(i + 1) % piece.size()]) * 0.5]:
+			var point: Vector2 = host.world.sheet_window_fraction(at) * size if host.world != null and host.world.has_method("sheet_window_fraction") else at
+			if not point.is_finite(): continue
+			if content.has_point(point) and point.x > content.position.x and point.y > content.position.y: return true
+			outline.append(point)
+	return outline.size() >= 3 and _polygon_bounds(outline).intersects(content) and not Geometry2D.intersect_polygons(outline, _rect_outline(content)).is_empty()
+
+
 func pane_in_content(key: String) -> bool:
 	var pane: Control = panes.get(key)
 	if not is_instance_valid(pane) or not pane.visible or pane.size.x <= 0 or pane.size.y <= 0: return false
 	var content := viewport_content_rect()
 	if not content.has_area(): return false
-	var outline := PackedVector2Array()
-	var transform := pane.get_transform()
-	for fraction: Vector2 in [Vector2.ZERO, Vector2(0.5, 0), Vector2.RIGHT, Vector2(1, 0.5),
-			Vector2.ONE, Vector2(0.5, 1), Vector2.DOWN, Vector2(0, 0.5)]:
-		var at := transform * (pane.size * fraction)
-		var point: Vector2 = host.world.sheet_window_fraction(at) * size if host.world != null and host.world.has_method("sheet_window_fraction") else at
-		if not point.is_finite(): continue
-		if content.has_point(point) and point.x > content.position.x and point.y > content.position.y: return true
-		outline.append(point)
-	if outline.size() < 3: return false
-	var clip := PackedVector2Array([content.position, Vector2(content.end.x, content.position.y),
-		content.end, Vector2(content.position.x, content.end.y)])
-	return not Geometry2D.intersect_polygons(outline, clip).is_empty()
+	var shape := pane.get_transform() * _rect_outline(Rect2(Vector2.ZERO, pane.size))
+	if not _piece_in_content(shape, content): return false
+	var bounds := _polygon_bounds(shape)
+	var pieces: Array[PackedVector2Array] = [shape]
+	var overlapped := false
+	for cover: Control in panes.values():
+		if cover == pane or not cover.visible or cover.z_index < pane.z_index: continue
+		if cover.z_index == pane.z_index and cover.get_index() <= pane.get_index(): continue
+		var transform := cover.get_transform()
+		if transform.determinant() == 0.0 or not cover.size.is_finite(): continue
+		var cover_bounds := transform * Rect2(Vector2.ZERO, cover.size)
+		if not bounds.intersects(cover_bounds): continue
+		overlapped = true
+		var remaining: Array[PackedVector2Array] = []
+		for piece in pieces: remaining.append_array(_subtract_pane(piece, cover))
+		if remaining.is_empty(): return false
+		pieces = remaining
+	# Most panes have no overlapping siblings and need just the first projection.
+	if not overlapped: return true
+	for piece in pieces:
+		if _piece_in_content(piece, content): return true
+	return false
 
 
 ## Titles compensate navigation zoom inside the sheet, so typing motion and

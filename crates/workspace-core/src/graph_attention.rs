@@ -21,15 +21,30 @@ pub(super) fn identity_replaced(previous: &Value, incoming: &Value) -> bool {
     })
 }
 
-/// Catalog and topology carry this same per-pane order, even across live adoption.
-pub(super) fn advance_revision(node: &mut Value) {
-    node["activity_revision"] = json!(node["activity_revision"].as_u64().unwrap_or(0) + 1);
+/// Shared across workspaces for the lifetime of an owner epoch.
+#[derive(Clone, Default)]
+pub struct ActivityClock(std::sync::Arc<std::sync::atomic::AtomicU64>);
+
+impl ActivityClock {
+    pub fn current(&self) -> u64 { self.0.load(std::sync::atomic::Ordering::Relaxed) }
+
+    pub fn resume_after(&self, revision: u64) {
+        self.0.fetch_max(revision, std::sync::atomic::Ordering::Relaxed);
+    }
+
+    pub(super) fn next(&self) -> u64 {
+        self.0.fetch_add(1, std::sync::atomic::Ordering::Relaxed) + 1
+    }
+
+    pub(super) fn advance(&self, node: &mut Value) {
+        node["activity_revision"] = json!(self.next());
+    }
 }
 
-pub(super) fn record_change(node: &mut Value, previous: &Value) {
+pub(super) fn record_change(clock: &ActivityClock, node: &mut Value, previous: &Value) {
     if ["status", "provider", "attention"].iter().any(|key| node[*key] != previous[*key])
         || ["state", "app"].iter().any(|key| node["program_status"][*key] != previous["program_status"][*key]) {
-        advance_revision(node);
+        clock.advance(node);
     }
 }
 
@@ -116,6 +131,8 @@ impl Graph {
         let mut fields = serde_json::to_value(state).map_err(|e| e.to_string())?;
         fields.as_object_mut().unwrap().remove("timed_out_status");
         node.as_object_mut().unwrap().extend(fields.as_object().unwrap().clone());
+        self.activity_clock.resume_after(state.activity_revision.unwrap_or_default());
+        self.activity_clock.advance(node);
         if state.transport.as_deref() == Some("inbox") {
             node["heartbeat_at"] = json!(now());
         }
@@ -153,6 +170,36 @@ mod tests {
         assert_eq!(attention["seen"], false);
         uuid::Uuid::parse_str(attention["event"].as_str().unwrap()).unwrap();
         attention
+    }
+
+    #[test]
+    fn activity_orders_reused_ids_across_moves_and_owner_adoption() {
+        let mut original = graph();
+        complete(&mut original);
+        let clock = original.activity_clock.clone();
+        let saved = original.attention_state(1).unwrap();
+        let revision = |graph: &Graph| graph.nodes["t1"]["activity_revision"].as_u64().unwrap();
+        let completed = revision(&original);
+        original.remove(1);
+        let mut other = Graph::with_activity_clock(NodeSettings::default(), clock.clone());
+        other.add(1, "Restored ID".into());
+        let replacement = revision(&other);
+        assert!(replacement > completed);
+        other.dispatch(1, "agent.event", &json!({"provider":"claude","event":"UserPromptSubmit"})).unwrap();
+        assert!(revision(&other) > replacement);
+        assert_eq!(other.nodes["t1"]["status"], "busy");
+        assert!(receipt(&other).is_null());
+        let busy = revision(&other);
+        other.transfer_nodes_to(&HashSet::from([1]), &mut original);
+        assert!(revision(&original) > busy);
+        let next_owner = ActivityClock::default();
+        next_owner.resume_after(clock.current());
+        let mut adopted = Graph::with_activity_clock(NodeSettings::default(), next_owner);
+        adopted.add(1, "Adopted".into());
+        let shell = revision(&adopted);
+        assert!(shell > revision(&original));
+        adopted.restore_attention_state(1, &saved).unwrap();
+        assert!(revision(&adopted) > shell);
     }
 
     #[test]

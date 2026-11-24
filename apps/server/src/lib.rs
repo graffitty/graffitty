@@ -200,6 +200,7 @@ struct Server {
     next_chromium: u64,
     shell: String,
     epoch: String,
+    activity_clock: graph::ActivityClock,
     graphs: HashMap<String, graph::Graph>,
     chromiums: BTreeMap<u64, chromium::Chromium>,
     filetrees: filetree::Filetrees,
@@ -441,7 +442,7 @@ impl Server {
         }
         self.graphs
             .entry(workspace.into())
-            .or_insert_with(|| graph::Graph::with_settings(self.settings.nodes.clone()))
+            .or_insert_with(|| graph::Graph::with_activity_clock(self.settings.nodes.clone(), self.activity_clock.clone()))
             .add(id, session.title());
         if let Some(pid) = session.pid() {
             self.resources.register(id, pid, Duration::from_secs(1), true);
@@ -2296,6 +2297,7 @@ pub fn run(options: Options, foreground_apps: fn(&Value) -> Value) -> Result<(),
         sessions: BTreeMap::new(),
         tab_titles: HashMap::new(),
         retired_tabs: Default::default(),
+        activity_clock: graph::ActivityClock::default(),
         graphs: HashMap::new(),
         chromiums: BTreeMap::new(),
         filetrees: filetree::Filetrees::default(),
@@ -2916,6 +2918,7 @@ impl Server {
         state.filetrees = self.filetrees.saved();
         state.last_viewed = self.last_viewed.clone();
         state.agent_attention = self.saved_agent_attention();
+        state.activity_revision = self.activity_clock.current();
         state.wiring = self.saved_wiring();
         state.transcripts = self.saved_transcripts();
         state.sessions = self.sessions.values().filter(|s| s.is_held() && !s.exited).map(Session::saved).collect();
@@ -2958,6 +2961,7 @@ fn hand_over(server: &mut Server, runtime: &std::path::Path) {
         session.detached = true;
     }
     state.agent_attention = server.saved_agent_attention();
+    state.activity_revision = server.activity_clock.current();
     state.wiring = server.saved_wiring();
     state.transcripts = server.saved_transcripts();
     if let Err(error) = owner_state::save(&server.descriptor, &state) {
@@ -3015,6 +3019,7 @@ fn owner_state_adopt(server: &mut Server, adopted: Vec<holder_link::Adopted>, pr
         adopted.into_iter().for_each(holder_link::Holders::discard);
         return;
     };
+    server.activity_clock.resume_after(previous.activity_revision);
     server.next = server.next.max(previous.next);
     server.next_chromium = server.next_chromium.max(previous.next_chromium);
     server.tab_titles = previous.tab_titles.clone();
@@ -3037,7 +3042,7 @@ fn owner_state_adopt(server: &mut Server, adopted: Vec<holder_link::Adopted>, pr
         };
         let graph = server.graphs
             .entry(session.workspace.clone())
-            .or_insert_with(|| graph::Graph::with_settings(server.settings.nodes.clone()));
+            .or_insert_with(|| graph::Graph::with_activity_clock(server.settings.nodes.clone(), server.activity_clock.clone()));
         graph.add(id, session.title());
         if let Some(state) = previous.agent_attention.get(&id) {
             if let Err(error) = graph.restore_attention_state(id, state) {

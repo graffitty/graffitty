@@ -74,7 +74,7 @@ func refresh_body() -> void:
 					if prior.get("focused", false) or (prior.get("looking", false) and not focused): continue
 					catalog_views[identity] = {"key": key, "host": host, "peer": peer, "looking": shown, "focused": focused}
 					continue
-				node = application.agent_attention.activity_node(key, node)
+				node = application.agent_attention.activity_node(key, node, connection, connection.workspace)
 				# Never persist client-local remapped IDs; scope pins to the server epoch.
 				var id := JSON.stringify([connection.url, connection.epoch, connection.wire_id(PaneAddress.id(key))])
 				# Two views of the same server terminal are still one agent. Prefer
@@ -91,7 +91,7 @@ func refresh_body() -> void:
 					"provider": node.get("provider", ""), "status": node.get("status", ""),
 					"program": node.get("program_status"),
 					"status_history": node.get("status_history", []),
-					"attention": application.agent_attention.attention(key),
+					"attention": application.agent_attention.project_attention(node.get("attention")),
 					"looking": shown, "focused": focused}
 		host_trees.append([host, ids_by_key])
 	var background_trees := _add_away(input, remotes, sessions, catalog_views)
@@ -153,10 +153,12 @@ func _add_away(input: Dictionary, remotes: Dictionary, sessions: Dictionary, cat
 				var program: Variant = agent.get("program")
 				var title := str(agent.get("title", ""))
 				if title.is_empty() and program is Dictionary: title = str(program.get("msg", ""))
+				var activity: Dictionary = application.agent_attention.activity_node(
+					PaneAddress.key(peer.local_id(pane)), agent, peer, str(value.id))
 				input[id] = {"id": id, "key": view.get("key", PaneAddress.key(pane)), "title": title,
-					"provider": str(agent.get("provider", "")), "status": str(agent.get("status", "")),
-					"program": program, "status_history": agent.get("status_history", []),
-					"attention": application.agent_attention.project_attention(agent.get("attention")),
+					"provider": str(activity.get("provider", "")), "status": str(activity.get("status", "")),
+					"program": activity.get("program_status", activity.get("program")), "status_history": activity.get("status_history", []),
+					"attention": application.agent_attention.project_attention(activity.get("attention")),
 					"looking": view.get("looking", false), "focused": view.get("focused", false)}
 
 			var topology: Dictionary = value.get("agent_tree", {})
@@ -216,6 +218,9 @@ func _build_trees(host_trees: Array) -> Dictionary:
 					if owner_id != id: edges.append({"from": PaneAddress.key(owner_id), "to": key, "kind": "chromium"})
 				elif host.is_terminal_pane(key) and host.sessions.has(id):
 					var node: Dictionary = graph.nodes.get(key, {})
+					var owner: Node = graph.remote_owners.get(key)
+					if is_instance_valid(owner):
+						node = application.agent_attention.activity_node(key, node, owner, owner.workspace)
 					var term: Node = host.sessions[id].term
 					var provider := str(node.get("provider", ""))
 					var status := str(node.get("status", ""))

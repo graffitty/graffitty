@@ -227,6 +227,48 @@ func test_catalog_completion_updates_panel_after_visible_receipt() -> void:
 	peer.free()
 
 
+func test_duplicate_catalogs_share_the_latest_background_activity() -> void:
+	var app := Application.new()
+	var first := SessionHost.new()
+	var second := SessionHost.new()
+	var fresh := Peer.new()
+	var representative := Peer.new()
+	first.session_backend.connection = fresh
+	second.session_backend.connection = representative
+	app.hosts = [first, second]
+	var panel := preload("res://scenes/Agents.gd").new()
+	panel.application = app
+	panel._sounds = {"enabled":false}
+	app.agents = panel
+	var busy := {"pane":7,"provider":"pi","status":"busy","activity_revision":1}
+	fresh.available_sessions = [{"id":"$1","agents":[busy.duplicate()]}]
+	representative.available_sessions = [{"id":"$1","agents":[busy.merged({"title":"Background task"})]}]
+	app.agent_attention.refresh()
+	expect(panel.rows.size() == 1 and panel.rows[0].status == "working", "One background row represents both connections")
+	var done := busy.duplicate()
+	done.merge({"status":"idle","activity_revision":2,"attention":{"event":"finished","kind":"completed","seen":false}}, true)
+	fresh.available_sessions[0].agents = [done]
+	fresh.sessions_changed.emit()
+	expect(app.agent_attention.marker(["t1"]).count == 1 and panel.rows[0].status == "done",
+		"The catalog completion updates both the remapped pane marker and the representative peer's row")
+	expect(panel.rows[0].title == "Background task" and panel._away[panel.rows[0].id].peer == representative,
+		"The background row retains its navigation peer and title")
+	representative.sessions_changed.emit()
+	expect(panel.rows[0].status == "done", "Repeating the older catalog keeps the completion")
+	var replacement := busy.merged({"provider":"claude","activity_revision":3}, true)
+	representative.available_sessions[0].agents = [replacement]
+	representative.sessions_changed.emit()
+	expect(app.agent_attention.marker(["t1"]).count == 0 and panel.rows[0].status == "working" and panel.rows[0].provider == "claude",
+		"A replacement at the same pane address supersedes the former agent even when the removal was missed")
+	expect(app.agent_attention.activity_node("t1", done, fresh, "$other") == done, "Another session cannot override this row")
+	panel.free()
+	app.free()
+	first.free()
+	second.free()
+	fresh.free()
+	representative.free()
+
+
 func test_agents_in_other_sessions_and_servers_are_listed() -> void:
 	var app := Application.new()
 	var host := SessionHost.new()

@@ -74,6 +74,8 @@ pub struct OwnerState {
     pub tab_titles: HashMap<u64, String>,
     pub sessions: Vec<SavedSession>,
     pub workspaces: crate::session_registry::Registry,
+    #[serde(default)]
+    pub activity_revision: u64,
     /// Optional agent metadata, bound to the live panes adopted from holders.
     #[serde(default)]
     pub agent_attention: HashMap<u64, graffitty_workspace_core::graph::AttentionState>,
@@ -206,6 +208,7 @@ impl OwnerState {
             tab_titles: tab_titles.clone(),
             sessions: Vec::new(),
             workspaces: Default::default(),
+            activity_revision: 0,
             agent_attention: HashMap::new(),
             wiring: HashMap::new(),
             transcripts: HashMap::new(),
@@ -218,7 +221,7 @@ impl OwnerState {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use graffitty_workspace_core::graph::Graph;
+    use graffitty_workspace_core::graph::{ActivityClock, Graph, NodeSettings};
     use serde_json::json;
 
     #[test]
@@ -245,7 +248,8 @@ mod tests {
         let directory = std::env::temp_dir().join(format!("gft-attention-test-{}", uuid::Uuid::new_v4()));
         std::fs::create_dir(&directory).unwrap();
         let descriptor = directory.join("server.json");
-        let mut graph = Graph::default();
+        let clock = ActivityClock::default();
+        let mut graph = Graph::with_activity_clock(NodeSettings::default(), clock.clone());
         graph.add(1, "Task".into());
         for event in ["SessionStart", "UserPromptSubmit", "Stop"] {
             graph.dispatch(1, "agent.event", &json!({"provider":"pi","event":event,"pid":10})).unwrap();
@@ -254,12 +258,18 @@ mod tests {
         for seen in [false, true] {
             if seen { graph.dispatch(1, "agent.seen", &json!({"event":event})).unwrap(); }
             let mut state = OwnerState::new("test-owner", &directory, 2, graffitty_protocol::pane_id::CHROMIUM_BASE + 1, &HashMap::new());
+            graph.add(2, "Short-lived task".into());
+            graph.remove(2);
+            state.activity_revision = clock.current();
             state.agent_attention.insert(1, graph.attention_state(1).unwrap());
             save(&descriptor, &state).unwrap();
             let loaded = load(&descriptor).unwrap();
             assert_eq!(loaded.version, 1);
-            let mut adopted = Graph::default();
+            let adopted_clock = ActivityClock::default();
+            adopted_clock.resume_after(loaded.activity_revision);
+            let mut adopted = Graph::with_activity_clock(NodeSettings::default(), adopted_clock);
             adopted.add(1, "Adopted task".into());
+            assert!(adopted.nodes["t1"]["activity_revision"].as_u64().unwrap() > state.activity_revision);
             adopted.restore_attention_state(1, &loaded.agent_attention[&1]).unwrap();
             assert_eq!(adopted.nodes["t1"]["attention"], graph.nodes["t1"]["attention"]);
             adopted.observe_agent(1, &json!({"provider":"pi","pid":10,"status":"unknown"}));

@@ -6,7 +6,7 @@ use std::collections::{BTreeMap, HashMap, HashSet, VecDeque};
 mod checkpoint;
 #[path = "graph_attention.rs"]
 mod attention;
-pub use attention::AttentionState;
+pub use attention::{ActivityClock, AttentionState};
 type Result<T> = std::result::Result<T, String>;
 const QUEUE_LIMIT: usize = 10_000;
 const RUN_MESSAGE_LIMIT: usize = 10_000;
@@ -69,6 +69,7 @@ impl NodeSettings {
     }
 }
 pub struct Graph {
+    activity_clock: ActivityClock,
     settings: NodeSettings,
     pub nodes: BTreeMap<String, Value>,
     pub edges: BTreeMap<String, Value>,
@@ -193,7 +194,11 @@ impl Default for Graph {
 }
 impl Graph {
     pub fn with_settings(settings: NodeSettings) -> Self {
+        Self::with_activity_clock(settings, ActivityClock::default())
+    }
+    pub fn with_activity_clock(settings: NodeSettings, activity_clock: ActivityClock) -> Self {
         Self {
+            activity_clock,
             owner_wiring: None,
             nodes: BTreeMap::new(), edges: BTreeMap::new(), queues: BTreeMap::new(),
             receipts: Vec::new(), runs: HashMap::new(), run_limits: HashMap::new(),
@@ -310,7 +315,7 @@ impl Graph {
         let key = format!("t{id}");
         self.nodes
             .entry(key)
-            .or_insert_with(|| json!({"provider":"shell","status":"unintegrated","title":title}));
+            .or_insert_with(|| json!({"provider":"shell","status":"unintegrated","title":title,"activity_revision":self.activity_clock.next()}));
     }
     /// Apply owner-side process discovery. Live integrated agents retain their
     /// hook status; discovery still records process exits and replacements.
@@ -400,7 +405,7 @@ impl Graph {
         }
         if ["codex", "claude", "opencode", "pi"].contains(&string(node, "provider")) { record_status_at(node, self.settings.status_history, observed_at.as_deref()); }
         let waiting = node["status"] == "waiting";
-        attention::record_change(node, &previous);
+        attention::record_change(&self.activity_clock, node, &previous);
         if *node != previous { self.notification_revision = self.notification_revision.wrapping_add(1); }
         if !was_waiting && waiting {
             let _ = self.enqueue_lifecycle(&key, "waiting", &json!({}), self.nodes[&key]["run_id"].clone());
@@ -443,7 +448,7 @@ impl Graph {
         let claude_blocked = node["provider"] == "claude" && matches!(string(node, "status"), "busy" | "idle")
             && node["program_status"] != previous["program_status"] && node["program_status"]["app"] == "claude-code" && node["program_status"]["state"] == "blocked";
         if !claude_blocked && !matches!(node["status"].as_str(), Some("unintegrated" | "unknown")) && node["status_source"] != "program" {
-            attention::record_change(node, &previous);
+            attention::record_change(&self.activity_clock, node, &previous);
             if *node != previous { self.notification_revision = self.notification_revision.wrapping_add(1); }
             return;
         }
@@ -465,7 +470,7 @@ impl Graph {
         let app = string(&node["program_status"], "app");
         let replaced = !previous_app.is_empty() && !app.is_empty() && previous_app != app;
         attention::update(node, string(&previous, "status"), replaced);
-        attention::record_change(node, &previous);
+        attention::record_change(&self.activity_clock, node, &previous);
         if *node != previous { self.notification_revision = self.notification_revision.wrapping_add(1); }
         if previous["status"] != "waiting" && node["status"] == "waiting" && node["provider"] == "claude" && node["program_status"]["app"] == "claude-code" {
             let _ = self.enqueue_lifecycle(&format!("t{id}"), "waiting", &json!({}), previous["run_id"].clone());
@@ -488,8 +493,12 @@ impl Graph {
         let internal: Vec<_> = self.edges.iter().filter(|(_, e)|
             keys.contains(string(e, "from")) && keys.contains(string(e, "to")))
             .map(|(id, edge)| (id.clone(), edge.clone())).collect();
+        target.activity_clock.resume_after(self.activity_clock.current());
         for key in &keys {
-            if let Some(node) = self.nodes.remove(key) { target.nodes.insert(key.clone(), node); }
+            if let Some(mut node) = self.nodes.remove(key) {
+                target.activity_clock.advance(&mut node);
+                target.nodes.insert(key.clone(), node);
+            }
             if let Some(turns) = self.codex_turn_runs.remove(key) { target.codex_turn_runs.insert(key.clone(), turns); }
             if let Some(status) = self.timed_out_status.remove(key) { target.timed_out_status.insert(key.clone(), status); }
             if let Some(context) = self.contexts.remove(key) { target.contexts.insert(key.clone(), context); }
@@ -651,7 +660,7 @@ impl Graph {
                 && node["heartbeat_at"].as_f64().is_some_and(|at| now - at > 15.0) {
                 self.timed_out_status.insert(key.clone(), node["status"].clone());
                 node["status"] = json!("offline");
-                attention::advance_revision(node);
+                self.activity_clock.advance(node);
                 // A heartbeat gap is reversible: keep the current receipt so
                 // readers can settle it while the waiting marker is hidden.
                 self.notification_revision = self.notification_revision.wrapping_add(1);
@@ -802,7 +811,7 @@ impl Graph {
                 let node = self.nodes.get_mut(&key).unwrap();
                 if node["attention"]["event"] == receipt.event && node["attention"]["seen"] == false {
                     node["attention"]["seen"] = json!(true);
-                    attention::advance_revision(node);
+                    self.activity_clock.advance(node);
                     self.notification_revision = self.notification_revision.wrapping_add(1);
                 }
                 Ok(json!({"attention":node["attention"]}))
@@ -855,7 +864,7 @@ impl Graph {
                     node["heartbeat_at"] = json!(now());
                     if let Some(status) = self.timed_out_status.remove(&key) {
                         node["status"] = status;
-                        attention::advance_revision(node);
+                        self.activity_clock.advance(node);
                         record_status(node, self.settings.status_history);
                         self.notification_revision = self.notification_revision.wrapping_add(1);
                     }
@@ -979,8 +988,15 @@ impl Graph {
                 if reconnect && matches!(previous_status.as_str(), Some("busy" | "idle" | "waiting")) {
                     node["status"] = previous_status.clone();
                 }
-                attention::update(node, previous_status.as_str().unwrap_or(""), replaced || (starting && !reconnect));
-                attention::record_change(node, &previous);
+                let event = string(p, "event");
+                let failed = event == "Error" || (matches!(event, "Stop" | "AwaitingInput") && p["outcome"] == "error");
+                let interrupted = event == "Stop" && p["outcome"] == "interrupted";
+                if interrupted || (failed && node["status"] == "idle") {
+                    node.as_object_mut().unwrap().remove("attention");
+                } else {
+                    attention::update(node, previous_status.as_str().unwrap_or(""), replaced || (starting && !reconnect));
+                }
+                attention::record_change(&self.activity_clock, node, &previous);
                 record_status(node, self.settings.status_history);
                 if p["event"] == "UserPromptSubmit" || p["event"] == "SessionStart" {
                     node.as_object_mut().unwrap().remove("codex_prompt_turn");
@@ -1021,13 +1037,13 @@ impl Graph {
                 if !was_waiting && self.nodes[&key]["status"] == "waiting" {
                     self.enqueue_lifecycle(&key, "waiting", &json!({}), self.nodes[&key]["run_id"].clone())?;
                 }
-                if p["event"] == "Error" || (matches!(string(p, "event"), "Stop" | "AwaitingInput") && p["outcome"] == "error") {
+                if failed {
                     let signature = json!([p["session_id"], p["completion_id"], p["text"]]);
                     if self.nodes[&key]["last_lifecycle_error"] != signature {
                         self.nodes.get_mut(&key).unwrap()["last_lifecycle_error"] = signature;
                         self.enqueue_lifecycle(&key, "error", p, self.nodes[&key]["run_id"].clone())?;
                     }
-                } else if p["event"] == "Stop" && p["outcome"] != "interrupted" {
+                } else if event == "Stop" && !interrupted {
                     // A user interrupt only returns the node to idle: it is
                     // neither a completed turn nor an error.
                     let signature = format!("{}:{}:{}", p["session_id"], p["completion_id"], p["text"]);

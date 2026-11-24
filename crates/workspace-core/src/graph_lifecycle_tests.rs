@@ -49,6 +49,25 @@ fn waiting_is_transition_triggered_and_errors_are_not_completions() {
 }
 
 #[test]
+fn unsuccessful_idle_hooks_clear_attention_before_advancing_revision() {
+    for (event, outcome) in [("Error", "error"), ("Stop", "error"), ("Stop", "interrupted")] {
+        for previous in ["UserPromptSubmit", "AwaitingInput"] {
+            let mut graph = fixture("claude");
+            graph.dispatch(1, "agent.event", &json!({"provider":"claude","event":previous})).unwrap();
+            let before = graph.nodes["t1"]["activity_revision"].as_u64().unwrap();
+            let hook = json!({"provider":"claude","event":event,"outcome":outcome});
+            graph.dispatch(1, "agent.event", &hook).unwrap();
+            let node = &graph.nodes["t1"];
+            assert_eq!(node["status"], "idle");
+            assert!(node["attention"].is_null(), "{previous} -> {hook}");
+            assert_eq!(node["activity_revision"], before + 1);
+            graph.dispatch(1, "agent.event", &hook).unwrap();
+            assert_eq!(graph.nodes["t1"]["activity_revision"], before + 1);
+        }
+    }
+}
+
+#[test]
 fn lifecycle_messages_obey_connection_permissions_and_revocation() {
     let mut graph = fixture("claude");
     graph.dispatch(1, "graph.disconnect", &json!({"from":"t1","to":"t2","from_port":"turn_completed","to_port":"in"})).unwrap();
@@ -188,6 +207,7 @@ fn claude_login_prompt_and_hook_emit_one_waiting_event_in_either_order() {
             graph.observe_program_status(1, Some(&blocked));
             graph.observe_agent(1, &json!({"provider":"claude","pid":1,"session_id":"session-1","status":"busy"}));
             assert_eq!(graph.nodes["t1"]["status"], "waiting");
+            assert_eq!(graph.nodes["t1"]["attention"]["kind"], "waiting");
             assert_eq!(graph.queues["t2"].iter().filter(|e| e["source_port"] == "waiting").count(), turn);
             assert_eq!(graph.queues["t2"].iter().filter(|e| e["source_port"] == "error").count(), turn);
         }
