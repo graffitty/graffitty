@@ -52,7 +52,9 @@ impl Graph {
             .values()
             .map(|edge| {
                 let mut edge = edge.clone();
-                edge.as_object_mut().unwrap().remove("revision");
+                let fields = edge.as_object_mut().unwrap();
+                fields.remove("revision");
+                fields.remove("created_revision");
                 edge
             })
             .collect();
@@ -132,6 +134,7 @@ impl Graph {
         for (_, mut edge) in staged.edges {
             self.revision += 1;
             edge["revision"] = json!(self.revision);
+            edge["created_revision"] = json!(self.revision);
             self.edges.insert(edge_key(&edge), edge);
         }
         if let Some(limit) = limit {

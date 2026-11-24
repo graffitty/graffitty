@@ -457,8 +457,8 @@ func edge_tooltip(key: String) -> String:
 	var edge: Dictionary = graph.edges.get(key, {})
 	if edge.is_empty(): return ""
 	var text := _endpoint_description(edge, true) + "\n→ " + _endpoint_description(edge, false)
-	var revision := int(edge.get("revision", 0))
-	var queue: Dictionary = graph.queue_log.snapshot(key, revision)
+	var created_revision := int(edge.get("created_revision", 0x7fffffffffffffff))
+	var queue: Dictionary = graph.queue_log.snapshot(key, created_revision)
 	text += "\n" + tr("%d pending · %d recorded deliveries") % [queue.pending, queue.events.size() + queue.omitted]
 	text += "\n" + tr("Click this wire for delivery history · Double-click to add a reroute.")
 	if edge.get("muted", false): text += "\n" + tr("Paused")
@@ -472,7 +472,7 @@ func edge_tooltip(key: String) -> String:
 	if not str(edge.get("outcome", "")).is_empty(): text += "\n" + tr("Outcome: %s") % tr(str(edge.outcome))
 	for i in range(graph.receipts.size() - 1, -1, -1):
 		var receipt: Dictionary = graph.receipts[i]
-		if receipt.get("edge") != key or receipt.get("edge_revision") != revision: continue
+		if receipt.get("edge") != key or int(receipt.get("edge_revision", -1)) < created_revision: continue
 		text += "\n" + tr("Last delivery: %s") % QueueInspector.status_label(str(receipt.get("status", "unknown")))
 		if not str(receipt.get("message", "")).is_empty(): text += "\n" + str(receipt.message)
 		break

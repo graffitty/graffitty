@@ -77,7 +77,7 @@ func test_connection_inspector_updates_in_place_and_excludes_other_wires() -> vo
 func test_reconnected_wire_tooltip_and_open_inspector_show_only_its_revision() -> void:
 	var graph := Graph.new()
 	var key := "t1>t2"
-	graph.edges[key] = {"from":"t1","to":"t2","revision":1}
+	graph.edges[key] = {"from":"t1","to":"t2","revision":1,"created_revision":1}
 	var old := event("old")
 	record(graph.queue_log, old, "queued in Codex", true)
 	graph.receipts = [{"edge":key,"edge_revision":1,"status":"queued in Codex","message":"old delivery"}]
@@ -90,7 +90,17 @@ func test_reconnected_wire_tooltip_and_open_inspector_show_only_its_revision() -
 	inspector.visible = true
 	inspector.refresh()
 	expect(inspector.rows.size() == 1 and "old delivery" in overlay.edge_tooltip(key), "The original connection has its pending event")
+	graph.edges[key].revision = 2
+	graph.edges[key].muted = true
+	graph.changed.emit()
+	inspector._flush_refresh()
+	expect(inspector.rows.size() == 1 and "old delivery" in overlay.edge_tooltip(key), "Pausing retains prior deliveries and receipts")
+	graph.edges[key].erase("created_revision")
+	graph.changed.emit()
+	inspector._flush_refresh()
+	expect(inspector.rows.is_empty() and "old delivery" not in overlay.edge_tooltip(key), "A new optimistic connection has no history")
 	graph.edges[key].revision = 4
+	graph.edges[key].created_revision = 4
 	graph.changed.emit()
 	inspector._flush_refresh()
 	var hint := overlay.edge_tooltip(key)

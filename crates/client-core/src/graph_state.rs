@@ -67,12 +67,12 @@ impl JournalCache {
     pub fn snapshot(&self, edge: &str) -> Journal {
         self.scoped_snapshot(edge, None)
     }
-    pub fn scoped_snapshot(&self, edge: &str, revision: Option<u64>) -> Journal {
+    pub fn scoped_snapshot(&self, edge: &str, created_revision: Option<u64>) -> Journal {
         let mut result = Journal::default();
         result.events = self
             .entries
             .values()
-            .filter(|row| edge.is_empty() || (row.edge == edge && revision.is_none_or(|r| row.delivery.edge_revision == r)))
+            .filter(|row| edge.is_empty() || (row.edge == edge && created_revision.is_none_or(|start| row.delivery.edge_revision >= start)))
             .cloned()
             .collect();
         result
@@ -87,12 +87,16 @@ impl JournalCache {
                 total = total
                     .saturating_add(value.events.len() as u64)
                     .saturating_add(value.omitted);
-            } else if let Some(count) = value.by_edge.get(edge).and_then(|counts| match revision {
-                Some(r) => counts.by_revision.get(&r),
-                None => Some(&counts.all),
-            }) {
-                result.pending = result.pending.saturating_add(count.pending);
-                total = total.saturating_add(count.total);
+            } else if let Some(counts) = value.by_edge.get(edge) {
+                if let Some(start) = created_revision {
+                    for count in counts.by_revision.range(start..).map(|(_, count)| count) {
+                        result.pending = result.pending.saturating_add(count.pending);
+                        total = total.saturating_add(count.total);
+                    }
+                } else {
+                    result.pending = result.pending.saturating_add(counts.all.pending);
+                    total = total.saturating_add(counts.all.total);
+                }
             }
         }
         result.omitted = total.saturating_sub(result.events.len() as u64);
@@ -186,9 +190,14 @@ impl GraphState {
             .iter()
             .find(|n| params["to"] == n.node)
             .ok_or("Choose a node on the same server workspace")?;
-        let edge = graph::connection(params, from, to, |key| {
+        let previous = |key: &str| {
+            if let Some(edge) = self.previews.get(&owner).and_then(|edges| edges.get(key)) {
+                return edge.clone();
+            }
             state.edges.iter().find(|e| e.key() == key).cloned()
-        })?;
+        };
+        let mut edge = graph::connection(params, from, to, previous)?;
+        edge.created_revision = previous(&edge.key()).and_then(|e| e.created_revision);
         self.previews
             .entry(owner)
             .or_default()
@@ -330,7 +339,7 @@ mod tests {
         graph["journal"] = json!({
             "events":[row("delivered",false)],"omitted":7,"pending":5,
             "by_edge":{edge:{"total":8,"pending":5,"by_revision":{
-                "1":{"total":5,"pending":2},"4":{"total":3,"pending":3}
+                "1":{"total":5,"pending":2},"4":{"total":1,"pending":1},"6":{"total":2,"pending":2}
             }}}
         });
         let mut state = GraphState::default();
@@ -339,7 +348,7 @@ mod tests {
         assert!(current.events.is_empty());
         assert_eq!((current.pending,current.omitted),(3,3));
         let old = state.journal.scoped_snapshot(edge,Some(1));
-        assert_eq!((old.events.len(),old.pending,old.omitted),(1,2,4));
+        assert_eq!((old.events.len(),old.pending,old.omitted),(1,5,7));
         let all = state.journal.snapshot(edge);
         assert_eq!((all.events.len(),all.pending,all.omitted),(1,5,7));
     }
@@ -386,8 +395,13 @@ mod tests {
         state.rollback(2);
         let mut accepted = first;
         accepted["edges"] = json!([first_edge]);
+        accepted["edges"][0]["created_revision"] = json!(5);
         state.receive(1, accepted).unwrap();
         assert_eq!(state.view()["edges"].as_object().unwrap().len(), 1);
+        let params = json!({"from":"t1","to":"t2","send":true,"muted":true});
+        assert_eq!(state.preview_connect(1, &params).unwrap().created_revision,Some(5));
+        state.preview_disconnect(1, "t1", "t2", "send", "in");
+        assert_eq!(state.preview_connect(1, &params).unwrap().created_revision,None);
     }
     #[test]
     fn imports_are_quiet_live_transitions_once_and_owners_stay_isolated() {

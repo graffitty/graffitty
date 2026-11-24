@@ -8,7 +8,7 @@ use serde_json::{Value, json};
 pub struct Inspector {
     pub open: bool,
     pub edge: String,
-    revision: Option<u64>,
+    created_revision: Option<u64>,
     pub pending_only: bool,
     pub selected: String,
     pub new_runs: bool,
@@ -76,11 +76,29 @@ fn status(language: &str, source: &str) -> String {
     text(language, source).into_owned()
 }
 
-fn wire_counts<'a>(graph: &'a Value, key: &str, revision: Option<u64>) -> &'a Value {
+fn history_start(edge: &Value) -> u64 {
+    edge["created_revision"].as_u64().unwrap_or(u64::MAX)
+}
+
+fn includes_row(row: &Value, start: Option<u64>) -> bool {
+    start.is_none_or(|start| row["edge_revision"].as_u64().is_some_and(|revision| revision >= start))
+}
+
+fn wire_counts(graph: &Value, key: &str, start: Option<u64>) -> Option<(u64, u64)> {
     let counts = &graph["journal"]["by_edge"][key];
-    match revision {
-        Some(revision) => &counts["by_revision"][revision.to_string()],
-        None => counts,
+    if let Some(start) = start {
+        let revisions = counts["by_revision"].as_object()?;
+        let mut pending: u64 = 0;
+        let mut total: u64 = 0;
+        for (revision, count) in revisions {
+            if revision.parse::<u64>().ok().is_some_and(|revision| revision >= start) {
+                pending = pending.saturating_add(count["pending"].as_u64()?);
+                total = total.saturating_add(count["total"].as_u64()?);
+            }
+        }
+        Some((pending, total))
+    } else {
+        Some((counts["pending"].as_u64()?, counts["total"].as_u64()?))
     }
 }
 
@@ -101,10 +119,9 @@ pub fn edge_hint(graph:&Value,key:&str,language:&str)->String {
             .and_then(|port|port["name"].as_str()).filter(|name|!name.is_empty()).unwrap_or(port);
         if name.is_empty() {title.to_owned()} else {format!("{title} · {name}")}
     };
-    let revision = edge["revision"].as_u64();
+    let revision = Some(history_start(edge));
     let counts = wire_counts(graph, key, revision);
-    let pending=counts["pending"].as_u64().unwrap_or(0);
-    let total=counts["total"].as_u64().unwrap_or_else(||graph["journal"]["events"].as_array().into_iter().flatten().filter(|row|row["edge"]==key && row["edge_revision"].as_u64()==revision).count() as u64);
+    let (pending,total)=counts.unwrap_or_else(||(0,graph["journal"]["events"].as_array().into_iter().flatten().filter(|row|row["edge"]==key && includes_row(row,revision)).count() as u64));
     let mut lines=vec![endpoint(true),format!("→ {}",endpoint(false)),
         tr("%d pending · %d recorded deliveries").replacen("%d",&pending.to_string(),1).replacen("%d",&total.to_string(),1),
         tr("Click this wire for delivery history · Double-click to add a reroute.")];
@@ -119,7 +136,7 @@ pub fn edge_hint(graph:&Value,key:&str,language:&str)->String {
         let value=string(edge,field);
         if !value.is_empty() {lines.push(tr(label).replace("%s",&if field=="outcome" {tr(value)}else{value.to_owned()}));}
     }
-    if let Some(receipt)=graph["receipts"].as_array().into_iter().flatten().rev().find(|row|row["edge"]==key && row["edge_revision"].as_u64()==revision) {
+    if let Some(receipt)=graph["receipts"].as_array().into_iter().flatten().rev().find(|row|row["edge"]==key && includes_row(row,revision)) {
         lines.push(tr("Last delivery: %s").replace("%s",&status(language,string(receipt,"status"))));
         let message=string(receipt,"message");
         if !message.is_empty() {lines.push(message.into());}
@@ -133,9 +150,9 @@ impl Inspector {
     }
 
     fn rows<'a>(&self, graph: &'a Value) -> Vec<&'a Value> {
-        let revision = self.connection(graph).and_then(|edge| edge["revision"].as_u64()).or(self.revision);
+        let revision = self.connection(graph).map(history_start).or(self.created_revision);
         graph["journal"]["events"].as_array().into_iter().flatten()
-            .filter(|row| row["edge"] == self.edge && revision.is_none_or(|r| row["edge_revision"] == r) && (!self.pending_only || row["pending"] == true))
+            .filter(|row| row["edge"] == self.edge && includes_row(row,revision) && (!self.pending_only || row["pending"] == true))
             .collect()
     }
 
@@ -152,7 +169,7 @@ impl Inspector {
     pub fn refresh(&mut self, graph: &Value) {
         if !self.open {return;}
         let connection=self.connection(graph);
-        if let Some(edge) = connection { self.revision = edge["revision"].as_u64(); }
+        if let Some(edge) = connection { self.created_revision = Some(history_start(edge)); }
         self.stop.refresh(connection);
         let rows = self.rows(graph);
         if !rows.iter().any(|row| row["event_id"] == self.selected) {
@@ -220,12 +237,11 @@ impl Inspector {
         let count = if defaults {0} else {usage["count"].as_u64().unwrap_or(0)};
         let connected = graph["edges"].as_array().into_iter().flatten().any(|edge|
             format!("{}/{}>{}/{}",string(edge,"from"),string(edge,"from_port"),string(edge,"to"),string(edge,"to_port")) == self.edge);
-        let revision = self.connection(graph).and_then(|edge| edge["revision"].as_u64()).or(self.revision);
+        let revision = self.connection(graph).map(history_start).or(self.created_revision);
         let counts = wire_counts(graph, &self.edge, revision);
-        let pending = counts["pending"].as_u64().unwrap_or(0);
-        let total = counts["total"].as_u64().unwrap_or(rows.len() as u64);
+        let (pending,total) = counts.unwrap_or((0, rows.len() as u64));
         let removed = if connected {String::new()} else {tr(" · connection removed")};
-        let visible = graph["journal"]["events"].as_array().into_iter().flatten().filter(|row|row["edge"]==self.edge && revision.is_none_or(|r| row["edge_revision"] == r)).count() as u64;
+        let visible = graph["journal"]["events"].as_array().into_iter().flatten().filter(|row|row["edge"]==self.edge && includes_row(row,revision)).count() as u64;
         let omitted = if total>visible {tr(" · %d omitted").replace("%d",&(total-visible).to_string())} else {String::new()};
         let summary = format!("{}\n{}{}{}", self.edge,
             tr("%d pending · %d recorded").replacen("%d", &pending.to_string(),1).replacen("%d", &total.to_string(),1),removed,omitted);
@@ -271,8 +287,8 @@ mod tests {
     fn hover_uses_authoritative_metadata_without_expanding_queued_content() {
         let mut graph=json!({"nodes":[{"node":"t1","title":"Source","manifest":{"outputs":[{"id":"out","name":"Answer"}]}},
             {"node":"t2","manifest":{"name":"Reviewer","inputs":[{"id":"in","name":"Prompt"}]}}],
-            "edges":[{"from":"t1","from_port":"out","to":"t2","to_port":"in","revision":3,"muted":true,"stop_at":1,"contains":"APPROVED"}],
-            "journal":{"by_edge":{"t1/out>t2/in":{"pending":3,"total":9,"by_revision":{"3":{"pending":2,"total":7}}}},"events":[{"edge":"t1/out>t2/in","text":"PRIVATE_MESSAGE"}]},
+            "edges":[{"from":"t1","from_port":"out","to":"t2","to_port":"in","revision":5,"created_revision":3,"muted":true,"stop_at":1,"contains":"APPROVED"}],
+            "journal":{"by_edge":{"t1/out>t2/in":{"pending":3,"total":9,"by_revision":{"1":{"pending":1,"total":2},"3":{"pending":1,"total":3},"5":{"pending":1,"total":4}}}},"events":[{"edge":"t1/out>t2/in","text":"PRIVATE_MESSAGE"}]},
             "queues":{"t2":[{"text":"PRIVATE_MESSAGE"}]},"receipts":[{"edge":"t1/out>t2/in","edge_revision":3,"status":"submitted","message":"Native transport accepted"},{"edge":"t1/out>t2/in","edge_revision":1,"status":"old receipt"}]});
         let before=graph.clone();let hint=edge_hint(&graph,"t1/out>t2/in","en-US");
         for expected in ["Source · Answer","→ Reviewer · Prompt","2 pending · 7 recorded deliveries","Paused","Stopped: stop time reached","Contains: APPROVED","Last delivery: submitted","Native transport accepted"] {

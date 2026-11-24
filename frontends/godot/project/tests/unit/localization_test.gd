@@ -78,7 +78,7 @@ func test_graph_status_translates_failure_and_preserves_provider_details() -> vo
 	var graph := preload("res://scenes/AgentGraph.gd").new()
 	var overlay := preload("res://scenes/AgentGraphOverlay.gd").new()
 	var key := "t1/send>t2/in"
-	graph.edges[key] = {"from":"t1", "to":"t2", "from_port":"send", "to_port":"in", "revision":4}
+	graph.edges[key] = {"from":"t1", "to":"t2", "from_port":"send", "to_port":"in", "revision":4, "created_revision":4}
 	graph.receipts = [{"edge":key, "edge_revision":4, "status":row.status}]
 	overlay.graph = graph
 	expect(overlay.edge_tooltip(key).contains(inspector.status_label(row.status)), "The wire tooltip translates the same structured status as the inspector")

@@ -5,7 +5,7 @@ const Ports := preload("res://scenes/GraphPorts.gd")
 const DEFAULT_SIZE := Vector2i(1100, 720)
 var graph: Node
 var edge_key := ""
-var _edge_revision := -1
+var _edge_created_revision := -1
 var summary := Label.new()
 var empty := Label.new()
 var events := Tree.new()
@@ -120,7 +120,7 @@ func _ready() -> void:
 func inspect(target_graph: Node, key: String) -> void:
 	_bind_graph(target_graph)
 	edge_key = key
-	_edge_revision = -1
+	_edge_created_revision = -1
 	stop_editor.bind_graph(graph, key)
 	selected = ""
 	selected_run = ""
@@ -165,7 +165,7 @@ func _journal_changed(edge: String) -> void:
 	if edge == edge_key: _queue_refresh()
 
 func _graph_changed() -> void:
-	if is_instance_valid(graph) and graph.edges.has(edge_key) and graph.edges[edge_key].get("revision", 0) != _edge_revision:
+	if is_instance_valid(graph) and graph.edges.has(edge_key) and graph.edges[edge_key].get("created_revision", 0x7fffffffffffffff) != _edge_created_revision:
 		_queue_refresh()
 	if visible and not last_snapshot.is_empty() and is_instance_valid(graph):
 		_update_summary(last_snapshot)
@@ -300,8 +300,8 @@ func refresh(force := false) -> void:
 		_update_run_budget(true)
 		return
 	if graph.edges.has(edge_key):
-		_edge_revision = int(graph.edges[edge_key].get("revision", 0))
-	var snapshot: Dictionary = graph.queue_log.snapshot(edge_key, _edge_revision)
+		_edge_created_revision = int(graph.edges[edge_key].get("created_revision", 0x7fffffffffffffff))
+	var snapshot: Dictionary = graph.queue_log.snapshot(edge_key, _edge_created_revision)
 	_update_summary(snapshot)
 	_update_run_budget()
 	if not force and snapshot == last_snapshot: return

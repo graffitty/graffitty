@@ -309,6 +309,9 @@ pub struct Edge {
     pub stop_at: Option<f64>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub revision: Option<u64>,
+    /// First authorization revision of this wire, preserved when editing its settings.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub created_revision: Option<u64>,
     #[serde(flatten)]
     pub extra: Map<String, Value>,
 }

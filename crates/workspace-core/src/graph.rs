@@ -1217,9 +1217,12 @@ impl Graph {
                 let mut edge = serde_json::to_value(canonical).map_err(|e| e.to_string())?;
                 let id = edge_key(&edge);
                 let mut retained_revision = None;
+                let mut created_revision = None;
                 if let Some(existing) = self.edges.get(&id) {
                     let mut previous = existing.clone();
-                    previous.as_object_mut().unwrap().remove("revision");
+                    let fields = previous.as_object_mut().unwrap();
+                    fields.remove("revision");
+                    created_revision = fields.remove("created_revision");
                     if previous == edge {
                         return Ok(existing.clone());
                     }
@@ -1232,6 +1235,7 @@ impl Graph {
                 }
                 self.revision += 1;
                 edge["revision"] = retained_revision.unwrap_or_else(|| json!(self.revision));
+                edge["created_revision"] = created_revision.unwrap_or_else(|| json!(self.revision));
                 self.edges.insert(id, edge.clone());
                 self.revoke();
                 Ok(edge)
@@ -1731,8 +1735,13 @@ mod tests {
         params["muted"] = json!(true);
         let edge = g.dispatch(1, "graph.connect", &params).unwrap();
         assert_ne!(edge["revision"], original["revision"]);
+        assert_eq!(edge["created_revision"], original["revision"]);
         assert!(!g.allowed(&event));
         assert!(g.queues["t2"].is_empty());
+        g.dispatch(1, "graph.disconnect", &params).unwrap();
+        let replacement = g.dispatch(1, "graph.connect", &params).unwrap();
+        assert_eq!(replacement["created_revision"], replacement["revision"]);
+        assert_ne!(replacement["created_revision"], edge["created_revision"]);
     }
 
     #[test]
