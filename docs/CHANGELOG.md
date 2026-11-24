@@ -4,6 +4,10 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [v0.0.5] - 2026-11-24
+### :bug: Bug Fixes
+- **agents**: keep server and session captions above row highlights ([#6](https://github.com/graffitty/graffitty/pull/6)).
+
 ## [v0.0.4] - 2026-11-24
 ### :bug: Bug Fixes
 - distinguish pane IDs and correct remote session, rendering, and agent status issues ([#4](https://github.com/graffitty/graffitty/pull/4)).
