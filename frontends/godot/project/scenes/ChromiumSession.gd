@@ -419,7 +419,18 @@ func remote_input(event: InputEvent, extent: Vector2) -> void:
 			KEY_SHIFT: ["Shift", 16], KEY_CTRL: ["Control", 17], KEY_ALT: ["Alt", 18], KEY_META: ["Meta", 91],
 		}
 		var key := String.chr(event.unicode) if event.unicode > 0 else OS.get_keycode_string(event.keycode).to_lower()
-		var code: int = event.keycode if event.keycode < 128 else 0
+		# Godot keycodes below 128 are ASCII. Only digits, letters and space equal a Windows virtual key;
+		# punctuation collides with navigation keys (39 is VK_RIGHT, 35 is VK_END, 46 is VK_DELETE).
+		var oem := {
+			KEY_SEMICOLON: 186, KEY_EQUAL: 187, KEY_COMMA: 188, KEY_MINUS: 189, KEY_PERIOD: 190, KEY_SLASH: 191,
+			KEY_QUOTELEFT: 192, KEY_BRACKETLEFT: 219, KEY_BACKSLASH: 220, KEY_BRACKETRIGHT: 221,
+			KEY_APOSTROPHE: 222, KEY_NUMBERSIGN: 222,
+		}
+		var code: int = 0
+		if event.keycode == KEY_SPACE or (event.keycode >= KEY_0 and event.keycode <= KEY_9) or (event.keycode >= KEY_A and event.keycode <= KEY_Z):
+			code = event.keycode
+		elif oem.has(event.keycode):
+			code = oem[event.keycode]
 		if keys.has(event.keycode):
 			key = keys[event.keycode][0]
 			code = keys[event.keycode][1]
