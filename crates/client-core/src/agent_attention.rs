@@ -21,11 +21,18 @@ struct Pane {
     current: bool,
 }
 
+#[derive(Debug)]
+struct PendingRead {
+    wire: Option<u64>,
+    activity_revision: u64,
+}
+
 #[derive(Default, Debug)]
 pub struct AgentAttention {
     panes: BTreeMap<String, Pane>,
     /// Event UUIDs outlive presentation-local pane keys and session switches.
-    pending: HashSet<String>,
+    pending: BTreeMap<String, PendingRead>,
+    inventory_revision: u64,
 }
 
 impl AgentAttention {
@@ -57,7 +64,8 @@ impl AgentAttention {
             // read or acknowledge a remembered event during graph repair.
             let Some(attention) = current.get(key) else { continue; };
             if let Some(previous) = pane.attention.as_ref()
-                && !current_events.contains(previous.event.as_str()) {
+                && !current_events.contains(previous.event.as_str())
+                && self.pending.get(&previous.event).is_some_and(|read| read.wire.is_none()) {
                 // A current node replaced/removed this event; a missing
                 // presentation or a key remap alone cannot settle a receipt.
                 self.pending.remove(&previous.event);
@@ -65,15 +73,61 @@ impl AgentAttention {
             pane.attention = attention.clone();
             pane.offline = nodes[key]["status"].as_str() == Some("offline");
             pane.current = true;
-            if let Some(attention) = attention.as_ref()
-                && !attention.seen && visible.contains(key)
-                && !self.pending.contains(&attention.event) {
-                self.pending.insert(attention.event.clone());
+            if let Some(attention) = attention.as_ref().filter(|attention| !attention.seen) {
+                let revision = nodes[key]["activity_revision"].as_u64().unwrap_or(0);
+                let wire = nodes[key]["wire"].as_u64();
+                if visible.contains(key) {
+                    self.pending.entry(attention.event.clone())
+                        .or_insert(PendingRead { wire, activity_revision: revision });
+                }
+                if let Some(read) = self.pending.get_mut(&attention.event)
+                    && revision >= read.activity_revision && wire.is_some() {
+                    read.wire = wire;
+                    read.activity_revision = revision;
+                }
             }
         }
         for attention in current.values().flatten().filter(|attention| attention.seen) {
             self.confirm(&attention.event);
         }
+        self.snapshot() != before
+    }
+
+    /// A complete same-epoch catalog can retire a read after its presentation disappeared.
+    /// A partial view or an inventory older than the observed activity cannot settle it.
+    pub fn reconcile_inventory(&mut self, revision: u64, rows: &Value) -> bool {
+        let Some(rows) = rows.as_object() else { return false };
+        if revision < self.inventory_revision { return false; }
+        self.inventory_revision = revision;
+        if self.pending.is_empty() { return false; }
+
+        let mut events = BTreeMap::new();
+        for (key, row) in rows {
+            let (Ok(wire), Some(_)) = (key.parse::<u64>(), row.as_object()) else { return false };
+            let Some(value) = row.get("attention") else { return false };
+            let Ok(attention) = serde_json::from_value::<Option<ServerAttention>>(value.clone()) else { return false };
+            if let Some(attention) = attention {
+                events.insert(attention.event, (wire, attention.seen, row["activity_revision"].as_u64().unwrap_or(0)));
+            }
+        }
+        let before = self.snapshot();
+        let mut confirmed = Vec::new();
+        self.pending.retain(|event, read| {
+            let Some(origin) = read.wire else { return true };
+            if revision < read.activity_revision { return true; }
+            let Some(&(wire, seen, activity_revision)) = events.get(event) else {
+                // A complete removal has only the catalog watermark. A replacement
+                // row also carries its own clock and cannot supersede fresher graph data.
+                return rows.get(&origin.to_string()).is_some_and(|row| {
+                    row["activity_revision"].as_u64().unwrap_or(0) < read.activity_revision
+                });
+            };
+            if seen { confirmed.push(event.clone()); }
+            read.wire = Some(wire);
+            read.activity_revision = read.activity_revision.max(activity_revision);
+            true
+        });
+        for event in confirmed { self.confirm(&event); }
         self.snapshot() != before
     }
 
@@ -88,7 +142,7 @@ impl AgentAttention {
 
     fn effective(&self, attention: &ServerAttention) -> ServerAttention {
         let mut attention = attention.clone();
-        attention.seen |= self.pending.contains(&attention.event);
+        attention.seen |= self.pending.contains_key(&attention.event);
         attention
     }
 
@@ -118,7 +172,7 @@ impl AgentAttention {
     pub fn acknowledgements(&self) -> Value {
         Value::Array(self.panes.iter().filter_map(|(key, pane)| {
             let attention = pane.attention.as_ref()?;
-            (pane.current && !attention.seen && self.pending.contains(&attention.event))
+            (pane.current && !attention.seen && self.pending.contains_key(&attention.event))
                 .then(|| json!({"key":key, "event":attention.event}))
         }).collect())
     }
@@ -126,7 +180,7 @@ impl AgentAttention {
     pub fn pane(&self, key: &str) -> Option<Marker> {
         let pane = self.panes.get(key)?;
         let attention = pane.attention.as_ref()?;
-        if attention.seen || self.pending.contains(&attention.event)
+        if attention.seen || self.pending.contains_key(&attention.event)
             || (pane.offline && attention.kind == AttentionKind::Waiting) { return None; }
         Some(match attention.kind {
             AttentionKind::Completed => Marker::Completed,
@@ -169,6 +223,50 @@ mod tests {
     }
     fn view(panes: &[(&str, Value)]) -> Value {
         Value::Object(panes.iter().map(|(k, v)| (k.to_string(), v.clone())).collect())
+    }
+
+    #[test]
+    fn only_current_complete_inventory_can_retire_a_detached_read() {
+        let mut first = node(FIRST, "completed", false);
+        first["wire"] = json!(7);
+        first["activity_revision"] = json!(20);
+        for replacement in [json!({}), json!({"8":{"activity_revision":42,"attention":null}}),
+                            json!({"8":{"activity_revision":42,"attention":event(SECOND, "completed", false)}})] {
+            let mut a = AgentAttention::default();
+            a.reconcile_inventory(40, &json!({"7": first}));
+            a.observe(&view(&[("original", first.clone())]), &set(&["original"]), &set(&["original"]));
+            a.observe(&json!({}), &set(&[]), &set(&[]));
+            for (revision, stale) in [(10, json!({})), (30, replacement.clone()),
+                                      (40, json!({"7":{"attention":{"seen":true}}})),
+                                      (40, json!({"7":{"activity_revision":10,"attention":null}})),
+                                      (40, json!({"7":{"activity_revision":40}}))] {
+                a.reconcile_inventory(revision, &stale);
+                assert!(a.has_pending());
+            }
+            let catalog = json!({"7":node(SECOND, "completed", false), "8":first});
+            a.reconcile_inventory(41, &catalog);
+            assert!(a.has_pending(), "the UUID moved with its pane");
+            let mut moved = first.clone();
+            moved["wire"] = json!(8);
+            a.observe(&view(&[("destination", moved)]), &set(&[]), &set(&["destination"]));
+            assert_eq!(a.acknowledgements(), json!([{"key":"destination","event":FIRST}]));
+            a.observe(&json!({}), &set(&[]), &set(&[]));
+            a.reconcile_inventory(42, &replacement);
+            assert!(!a.has_pending());
+            assert_eq!(a.project_attention(&event(SECOND, "completed", false))["seen"], false);
+        }
+    }
+
+    #[test]
+    fn later_graph_activity_survives_an_earlier_complete_catalog() {
+        let mut a = AgentAttention::default();
+        let row = json!({"wire":7, "activity_revision":20, "attention":event(FIRST,"completed",false)});
+        a.observe(&view(&[("pane", row)]), &set(&["pane"]), &set(&["pane"]));
+        a.observe(&json!({}), &set(&[]), &set(&[]));
+        a.reconcile_inventory(19, &json!({}));
+        assert!(a.has_pending());
+        a.reconcile_inventory(20, &json!({"7":{"attention":event(FIRST,"completed",true)}}));
+        assert!(!a.has_pending());
     }
 
     #[test]

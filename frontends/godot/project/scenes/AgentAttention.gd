@@ -133,10 +133,15 @@ func refresh() -> void:
 	# A delayed socket can deliver an old full inventory after another socket
 	# has already reported a removal or transfer in the same server epoch.
 	var retained_scopes := {}
+	var inventories := {}
 	for peer in peers:
 		if not is_instance_valid(peer): continue
 		var scope := [peer.url, peer.epoch]
 		retained_scopes[scope] = true
+		# Authentication clears the previous socket's inventory before session_list arrives.
+		if peer.connected and int(peer.catalog_revision) >= 0 and (not "sessions_known" in peer or peer.sessions_known):
+			if not inventories.has(scope) or peer.catalog_revision > inventories[scope].catalog_revision:
+				inventories[scope] = peer
 		if int(peer.catalog_revision) >= int(_catalogs.get(scope, {}).get("revision", -1)):
 			_catalogs[scope] = _catalog_snapshot(peer)
 	for scope in _catalogs.keys():
@@ -191,7 +196,7 @@ func refresh() -> void:
 		if nodes.has(scoped): continue
 		var scope: Array = JSON.parse_string(scoped)
 		var catalog: Dictionary = _catalogs.get(scope.slice(0, 2), {})
-		if outside_catalog(catalog, scope[3], scope[2], _activity.get(scoped, {})): nodes[scoped] = {}
+		if outside_catalog(catalog, scope[3], scope[2], _activity.get(scoped, {})): nodes[scoped] = {"wire":scope[3]}
 	for scoped in _receipt_owners:
 		var prior: Dictionary = _activity.get(scoped, {})
 		if _newer(prior, nodes[scoped]): nodes[scoped] = prior
@@ -222,6 +227,15 @@ func refresh() -> void:
 		var core: RefCounted = _core if domain.is_empty() else _remote_cores[domain]
 		var batch: Dictionary = observations.get(domain, {})
 		if core.observe(batch.get("nodes", {}), batch.get("visible", PackedStringArray()), batch.get("live", PackedStringArray())): updated = true
+		if inventories.has(domain):
+			var source: Node = inventories[domain]
+			if int(source.catalog_revision) >= int(_catalogs[domain].revision):
+				var rows := {}
+				if core.has_pending():
+					for session in source.available_sessions:
+						for agent in session.get("agents", []):
+							rows[str(int(agent.pane))] = agent
+				if core.reconcile_inventory(source.catalog_revision, rows): updated = true
 		if not domain.is_empty() and not retained_scopes.has(domain):
 			# An empty observation cleared the panes. Keep only epochs with reads
 			# that can still be confirmed when a matching server view returns.
@@ -274,7 +288,7 @@ func _merge_activity(peer: Node, session: String, wire: int, row: Dictionary, no
 	var route: Node = _receipt_owners.get(scoped)
 	var now_connected: bool = peer.connected and is_instance_valid(route) and not route.connected
 	var same_revision := int(row.get("activity_revision", 0)) == int(current.get("activity_revision", 0))
-	if _newer(row, current) or (now_connected and same_revision): nodes[scoped] = row
+	if _newer(row, current) or (now_connected and same_revision): nodes[scoped] = row.merged({"wire":wire}, true)
 	if not is_instance_valid(route) or (peer.connected and not route.connected):
 		_receipt_owners[scoped] = peer
 		_receipt_panes[scoped] = peer.local_id(wire)

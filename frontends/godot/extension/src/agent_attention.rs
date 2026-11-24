@@ -71,6 +71,18 @@ impl AgentAttentionCore {
         self.state.has_pending()
     }
 
+    #[func]
+    fn reconcile_inventory(&mut self, revision: i64, rows: VarDictionary) -> bool {
+        let Ok(revision) = u64::try_from(revision) else { return false };
+        match from_variant(&rows.to_variant()) {
+            Ok(rows) => self.state.reconcile_inventory(revision, &rows),
+            Err(error) => {
+                godot_error!("Agent attention ignored an invalid catalog: {error}");
+                false
+            }
+        }
+    }
+
     /// Current matching receipts to retry until the server broadcasts seen.
     #[func]
     fn acknowledgements(&self) -> Variant {

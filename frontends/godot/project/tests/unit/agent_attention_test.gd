@@ -152,6 +152,74 @@ func test_last_view_gap_retries_only_the_original_epochs_unconfirmed_read() -> v
 	for item in [attention, original, restored, first, reconnected]: item.free()
 
 
+class InventoryPeer extends Peer:
+	var sessions_known := true
+
+
+func test_complete_inventory_settles_superseded_reads_after_the_last_view_detaches() -> void:
+	for change in ["replacement", "explicit_null", "removed", "transferred"]:
+		var app := Application.new()
+		var controller := CapturedAttention.new()
+		controller.application = app
+		controller.in_view = func(host): return host.in_view
+		var host := RemoteHost.new()
+		host.workspace_layout.tabs.assign([_tab(1, ["t1"])])
+		host.workspace_layout.active = 1
+		var peer := InventoryPeer.new()
+		var recovered := InventoryPeer.new()
+		var read_event := {"event":"original","kind":"completed","seen":false}
+		var row := {"pane":1,"status":"idle","activity_revision":20,"attention":read_event}
+		peer.connected = true
+		peer.catalog_revision = 50
+		peer.available_sessions = [{"id":"$1","agents":[row]}]
+		host.session_backend.connection = peer
+		app.hosts = [host]
+		controller.refresh()
+		expect(controller.calls.size() == 1, "Viewed event has one pending receipt")
+		app.hosts = []
+		controller.refresh()
+		host.in_view = false
+		host.session_backend.connection = recovered
+		app.hosts = [host]
+
+		recovered.connected = true
+		recovered.sessions_known = false
+		recovered.catalog_revision = -1
+		controller.refresh()
+		expect(controller.project_attention(read_event, recovered).seen, "Authentication without a session list preserves the read")
+		recovered.sessions_known = true
+		recovered.catalog_revision = 40
+		recovered.available_sessions = [{"id":"$1","agents":[]}]
+		controller.refresh()
+		expect(controller.project_attention(read_event, recovered).seen, "A delayed inventory predating the accepted catalog cannot retire the read")
+		recovered.connected = false
+		recovered.catalog_revision = 60
+		controller.refresh()
+		expect(controller.project_attention(read_event, recovered).seen, "A disconnected attachment cannot settle the read")
+
+		recovered.connected = true
+		recovered.catalog_revision = 61
+		var next_event := {"event":"next","kind":"completed","seen":false}
+		if change == "transferred":
+			recovered.available_sessions = [{"id":"$1","agents":[]},{"id":"$2","agents":[{"pane":7,"status":"idle","attention":read_event.duplicate(),"activity_revision":60}]}]
+		elif change != "removed":
+			recovered.available_sessions = [{"id":"$1","agents":[{"pane":1,"status":"idle","activity_revision":60,"attention":next_event if change == "replacement" else null}]}]
+		controller.refresh()
+		if change == "transferred":
+			expect(controller.calls.size() == 2 and controller.calls[1] == {"connection":recovered,"pane":7,"event":"original"}, "The identical UUID retries through its new route while offscreen")
+			recovered.available_sessions[1].agents[0].attention.seen = true
+			recovered.available_sessions[1].agents[0].activity_revision = 62
+			recovered.catalog_revision = 63
+			controller.refresh()
+		else:
+			expect(controller.calls.size() == 1 and not controller.project_attention(read_event, recovered).seen, "The complete inventory retires the superseded UUID: " + change)
+			if change == "replacement": expect(not controller.project_attention(next_event, recovered).seen, "The unseen replacement stays unread")
+		app.hosts = []
+		controller.refresh()
+		expect(controller._remote_cores.is_empty(), "The settled epoch is reclaimed on final detachment: " + change)
+		for item in [controller,host,peer,recovered]: item.free()
+
+
 class PannedView extends "res://scenes/WorkspaceView.gd":
 	func viewport_content_rect() -> Rect2: return Rect2(0, 36, 1280, 684)
 
