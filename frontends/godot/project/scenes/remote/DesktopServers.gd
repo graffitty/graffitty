@@ -67,6 +67,7 @@ func _ready() -> void:
 	Page.style_button(new_window)
 	new_window.pressed.connect(_save.bind(true))
 	form.body.add_child(new_window)
+	editor.submitted.connect(form.confirmed.emit)
 	form.confirmed.connect(_save.bind(false))
 	form.canceled.connect(_cancel_edit)
 	form.hide()

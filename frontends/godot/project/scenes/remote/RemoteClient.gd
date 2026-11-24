@@ -183,7 +183,7 @@ func _ready() -> void:
 		connection.authenticated.connect(func():
 			if settings.has("remember") and not settings.remember:
 				var error := Authentication.clear_password(str(settings.url), str(settings.get("credential_id", "")))
-				if not error.is_empty(): connection._set_state(error)
+				if not error.is_empty(): _show_save_error(error)
 		)
 	if host != null: _bind_host()
 	if not settings.is_empty():
@@ -232,19 +232,23 @@ func _connect() -> void:
 	else:
 		if not auth_bound:
 			settings.url = endpoint.text
-			Authentication.bind(self, connection, settings, false)
+			Authentication.bind(self, connection, settings, false, _show_save_error)
 			connection.authenticated.connect(func():
 				settings.alias = connection.server_alias
 				if settings.get("remember", false) or remember.button_pressed:
 					var error := Authentication.remember(settings.merged({"url": connection.url}, true), connection.token)
 					if not error.is_empty():
-						status.text = error
+						_show_save_error(error)
 			)
 			auth_bound = true
 		connection.server_alias = str(settings.get("alias", ""))
 		connection.controller_identity = str(settings.get("credential_id", endpoint.text))
 		connection.connect_remote(endpoint.text, secret.text)
 		secret.clear()
+
+
+func _show_save_error(message: String) -> void:
+	get_node("/root/Localization").text(status, message)
 
 
 func _show_connection_ui() -> void:

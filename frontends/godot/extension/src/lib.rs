@@ -173,6 +173,8 @@ mod graph_client;
 mod x11_scale;
 #[cfg(target_os = "ios")]
 mod ios_renderer;
+#[cfg(target_os = "ios")]
+mod ios_password_keyboard;
 mod agent_attention;
 mod agents;
 mod attention_audio;

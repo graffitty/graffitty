@@ -54,6 +54,17 @@ func run() -> void:
 		await settle()
 		check(desktop.form.visible and not desktop.chooser.visible, "Add uses separate Android-style editor page")
 		check(desktop.editor.is_visible_in_tree(), "Shared editor is visible")
+		desktop.editor.endpoint.text = "ws://example.invalid:7183"
+		for field in [desktop.editor.label, desktop.editor.server_alias, desktop.editor.endpoint, desktop.editor.token]:
+			desktop.editor.form_status.text = ""
+			field.grab_focus()
+			var enter := InputEventKey.new()
+			enter.keycode = KEY_ENTER
+			enter.pressed = true
+			desktop.push_input(enter, true)
+			enter.pressed = false
+			desktop.push_input(enter, true)
+			check(desktop.editor.form_status.text == "Enter the current password shown on the computer.", "Enter runs Save and connect validation from a text field")
 		desktop.editor.token.text = "unsubmitted-fixture"
 		var escape := InputEventKey.new()
 		escape.keycode = KEY_ESCAPE

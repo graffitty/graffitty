@@ -110,17 +110,17 @@ static func password(url: String, credential_id := "") -> Dictionary:
 	return Store.new().credential("get", account(url, credential_id))
 
 
-static func bind(owner: Node, connection: Node, settings: Dictionary, remember_password: bool) -> void:
+static func bind(owner: Node, connection: Node, settings: Dictionary, remember_password: bool, on_save_error: Callable) -> void:
 	connection.authenticated.connect(func():
 		for field in ["hostname", "platform", "username"]:
 			settings[field] = connection.get("server_" + field)
 		var save_error := save_connection(settings)
-		if not save_error.is_empty(): connection._set_state(save_error)
+		if not save_error.is_empty(): on_save_error.call(save_error)
 		connection.server_alias = str(settings.get("alias", ""))
 		if remember_password:
 			var error := remember(settings, connection.token)
 			if not error.is_empty():
-				connection._set_state(error)
+				on_save_error.call(error)
 	)
 	connection.code_required.connect(func():
 		var dialog := ConfirmationDialog.new()

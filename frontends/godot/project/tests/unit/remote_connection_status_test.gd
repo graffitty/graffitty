@@ -30,6 +30,18 @@ func test_protocol_and_server_failures_stop_retrying_and_preserve_reason() -> vo
 		expect(connection.socket == null and failures.size() == 1, "Later frames cannot silently reconnect")
 		connection.free()
 
+func test_authenticated_settings_save_error_preserves_connection_status() -> void:
+	var connection := Connection.new()
+	connection.connected = true
+	connection._set_state("Connected")
+	var errors: Array[String] = []
+	var auth := preload("res://scenes/remote/ClientAuthentication.gd")
+	auth.bind(connection, connection, {"url": "https://example.invalid"}, false, errors.append)
+	connection.authenticated.emit()
+	expect(errors.size() == 1 and not errors[0].is_empty(), "The form receives the persistence warning")
+	expect(connection.connected and connection.status_source == "Connected", "The card keeps the live connection status")
+	connection.free()
+
 func test_authenticated_session_failure_is_not_a_password_failure() -> void:
 	var connection := Connection.new()
 	var peer := FailedPeer.new()

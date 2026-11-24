@@ -203,6 +203,7 @@ func _ready() -> void:
 	dialog.ok_button_text = "Save and connect"
 	add_child(dialog)
 	_build_editor()
+	editor.submitted.connect(dialog.confirmed.emit)
 	dialog.confirmed.connect(_submit_connection)
 	dialog.canceled.connect(_cancel_editor)
 	dialog.hide()
@@ -422,6 +423,10 @@ func saved_servers_reordered() -> void:
 func _server_order_error(_error: String) -> void:
 	localization.text(landing_status, "Could not reorder servers.")
 
+func _show_save_error(message: String) -> void:
+	localization.text(save_hint, message)
+
+
 func _refresh_card(key: String) -> void:
 	if not cards.has(key):
 		var created := ServerCard.new()
@@ -534,7 +539,7 @@ func open_connection(settings: Dictionary) -> Node:
 			_connected_transition("")
 			_set_state(key, "disconnected", "Disconnected · Server is still saved")
 	)
-	Authentication.bind(self, transport, settings, bool(settings.get("remember", false)))
+	Authentication.bind(self, transport, settings, bool(settings.get("remember", false)), _show_save_error)
 	transport.state_changed.connect(func(message):
 		if transports.get(key) != transport: return
 		var state := "connected" if transport.connected else "offline" if str(message).begins_with("Offline") else "authenticating" if "Authenticat" in str(message) or "code" in str(message) else "connecting"
@@ -552,12 +557,10 @@ func open_connection(settings: Dictionary) -> Node:
 		for field in ["hostname", "platform", "username"]:
 			settings[field] = transport.get("server_" + field)
 			entries[key][field] = settings[field]
-		var save_error := Authentication.save_connection(settings)
-		if not save_error.is_empty(): save_hint.text = save_error
 		_refresh_card(key)
 		if settings.has("remember") and not bool(settings.remember):
 			var error := Authentication.clear_password(address, str(settings.get("credential_id", "")))
-			if not error.is_empty(): save_hint.text = error
+			if not error.is_empty(): _show_save_error(error)
 	)
 	transport.sessions_changed.connect(func():
 		if transports.get(key) != transport: return

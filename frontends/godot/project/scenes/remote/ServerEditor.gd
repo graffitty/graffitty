@@ -1,5 +1,7 @@
 extends VBoxContainer
 ## The same server fields on desktop and Android; persistence validates in Rust.
+signal submitted
+
 var endpoint := LineEdit.new()
 var token: LineEdit = preload("res://scenes/SecretInput.gd").new()
 var label := LineEdit.new()
@@ -45,6 +47,7 @@ func _ready() -> void:
 		add_child(_caption(field[1]))
 		field[0].placeholder_text = field[2]
 		field[0].custom_minimum_size.y = 48
+		field[0].text_submitted.connect(func(_text): submitted.emit())
 		add_child(field[0])
 	remember.text = "Remember password on this device"
 	remember.custom_minimum_size.y = 48
