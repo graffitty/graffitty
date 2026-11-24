@@ -2,19 +2,23 @@
 //! reads run through Workers, never in the PTY actor, and retain process identity.
 use graffitty_workspace_core::graph::Graph;
 use serde_json::{Value, json};
-use std::collections::{HashMap, HashSet, VecDeque};
+use std::collections::{BTreeMap, HashMap, HashSet, VecDeque};
 use std::time::{Duration, Instant};
 
 #[derive(Default)]
 pub struct Completions {
     pending: VecDeque<(String, Pending)>,
 }
+enum Outcome {
+    Read { path: String, target: Option<Value> },
+    Failed(Value),
+}
 struct Pending {
     workspace: String,
     id: u64,
     identity: Value,
-    path: String,
-    target: Option<Value>,
+    routes: BTreeMap<String, u64>,
+    outcome: Outcome,
     run_id: String,
     launched: bool,
     retries: u8,
@@ -31,7 +35,7 @@ fn identity(node: &Value) -> Value {
 impl Pending {
     fn matches(&self, graph: &Graph) -> bool {
         graph.nodes.get(&format!("t{}", self.id)).is_some_and(|node|
-            identity(node) == self.identity && node["integrated"] != true)
+            identity(node) == self.identity && (matches!(self.outcome, Outcome::Failed(_)) || node["integrated"] != true))
     }
 }
 impl Completions {
@@ -39,11 +43,41 @@ impl Completions {
     /// Apply backpressure before taking the next sample.
     pub fn ready_for_scan(&self) -> bool { self.pending.len() < 1024 }
 
+    /// The graph and PTYs have moved. Keep queued outcomes, worker keys and
+    /// retry deadlines attached to their live source pane.
+    pub fn transfer(&mut self, source: &str, target: &str, moved: &HashSet<u64>, destination: &Graph) {
+        self.pending.retain_mut(|(_, pending)| {
+            if pending.workspace != source || !moved.contains(&pending.id) { return true; }
+            if !pending.matches(destination) { return false; }
+            pending.workspace = target.to_owned();
+            true
+        });
+    }
+
     pub fn retain_current(&mut self, graphs: &HashMap<String, Graph>) {
         self.pending.retain(|(_, p)| graphs.get(&p.workspace).is_some_and(|graph| p.matches(graph)));
     }
 
-    pub fn observe(&mut self, workspace: &str, id: u64, before: &Value, after: &Value) {
+    /// Publish ready errors in source order. A read, including one awaiting a
+    /// retry, blocks only the subsequent outcomes of its own pane.
+    pub fn advance(&mut self, graphs: &mut HashMap<String, Graph>) {
+        self.retain_current(graphs);
+        let mut reading = HashSet::new();
+        self.pending.retain(|(_, job)| {
+            let pane = (job.workspace.clone(), job.id);
+            match &job.outcome {
+                Outcome::Read { .. } => { reading.insert(pane); true }
+                Outcome::Failed(turn) if !reading.contains(&pane) => {
+                    let _ = graphs.get_mut(&job.workspace).unwrap().discovered_failure(job.id, turn, &job.run_id, &job.routes);
+                    false
+                }
+                Outcome::Failed(_) => true,
+            }
+        });
+    }
+
+    pub fn observe(&mut self, workspace: &str, id: u64, before: &Value, graph: &Graph) {
+        let after = &graph.nodes[&format!("t{id}")];
         let successful = match after["provider"].as_str() {
             Some("codex") => graffitty_workspace_core::graph::discovered_codex_success(before, after),
             Some("claude") => {
@@ -69,29 +103,38 @@ impl Completions {
             if id.is_none() && checkpoint.is_none() { return; }
             Some(json!({"turn_id":id,"checkpoint":checkpoint}))
         } else { None };
-        self.enqueue(workspace, id, after, target, after["run_id"].as_str().unwrap_or(""));
+        self.enqueue_read(workspace, id, graph, after, target, after["run_id"].as_str().unwrap_or(""));
     }
 
-    pub fn observe_turns(&mut self, workspace: &str, id: u64, before: &Value, after: &Value, successes: Vec<(Value, String)>) {
-        if after["integrated"] == true || identity(before) != identity(after) { return; }
-        for (turn, run) in successes {
-            let target = json!({"turn_id":turn["id"],"checkpoint":turn["completion_checkpoint"]});
-            self.enqueue(workspace, id, after, Some(target), &run);
+    pub fn observe_turns(&mut self, workspace: &str, id: u64, before: &Value, graph: &Graph, outcomes: Vec<(Value, String)>) {
+        let after = &graph.nodes[&format!("t{id}")];
+        for (turn, run) in outcomes {
+            if turn["status"] == "failed" {
+                self.enqueue(workspace, id, graph, after, Outcome::Failed(turn), &run);
+            } else if after["integrated"] != true && identity(before) == identity(after) {
+                let target = json!({"turn_id":turn["id"],"checkpoint":turn["completion_checkpoint"]});
+                self.enqueue_read(workspace, id, graph, after, Some(target), &run);
+            }
         }
     }
 
-    fn enqueue(&mut self, workspace: &str, id: u64, after: &Value, target: Option<Value>, run_id: &str) {
-        let Some(path) = after["transcript_path"].as_str().filter(|p| !p.is_empty()) else {
-            return;
-        };
+    fn enqueue_read(&mut self, workspace: &str, id: u64, graph: &Graph, after: &Value, target: Option<Value>, run_id: &str) {
+        if let Some(path) = after["transcript_path"].as_str().filter(|p| !p.is_empty()) {
+            self.enqueue(workspace, id, graph, after, Outcome::Read { path: path.into(), target }, run_id);
+        }
+    }
+
+    fn enqueue(&mut self, workspace: &str, id: u64, graph: &Graph, after: &Value, outcome: Outcome, run_id: &str) {
+        let routes = graph.outcome_routes(id, matches!(outcome, Outcome::Failed(_)));
+        if routes.is_empty() { return; }
         self.pending.push_back((
             format!("completion:{}", uuid::Uuid::new_v4().simple()),
             Pending {
                 workspace: workspace.into(),
                 id,
                 identity: identity(after),
-                path: path.into(),
-                target,
+                routes,
+                outcome,
                 run_id: run_id.into(),
                 launched: false,
                 retries: 0,
@@ -105,12 +148,13 @@ impl Completions {
         self.pending
             .iter()
             .filter(|(_, p)| panes.insert((&p.workspace, p.id)) && !p.launched && p.retry_at.is_none_or(|at| at <= now))
-            .map(|(key, p)| {
-                let request = match &p.target {
-                    Some(target) => json!({"op":"codex_completion","path":p.path,"target":target}),
-                    None => json!({"op":"read","path":p.path}),
+            .filter_map(|(key, p)| {
+                let Outcome::Read { path, target } = &p.outcome else { return None; };
+                let request = match target {
+                    Some(target) => json!({"op":"codex_completion","path":path,"target":target}),
+                    None => json!({"op":"read","path":path}),
                 };
-                (key.clone(), request)
+                Some((key.clone(), request))
             })
             .collect()
     }
@@ -129,7 +173,8 @@ impl Completions {
         }
         // Daemon metadata may precede the terminal record on disk. Keep the
         // original turn at the front of its pane's queue while waiting for it.
-        if result["status"] == "awaiting_record" && pending.target.as_ref().is_some_and(|target|
+        let Outcome::Read { target, .. } = &pending.outcome else { return; };
+        if result["status"] == "awaiting_record" && target.as_ref().is_some_and(|target|
             target["turn_id"].is_string() && target["checkpoint"].is_null()) && pending.retries < 8 {
             let delay = Duration::from_millis(125 << pending.retries.min(5));
             pending.retry_at = Some(Instant::now() + delay);
@@ -144,7 +189,7 @@ impl Completions {
         else {
             return;
         };
-        if let Some(target) = &pending.target {
+        if let Outcome::Read { target: Some(target), .. } = &pending.outcome {
             if !result["completion_checkpoint"].is_u64()
                 || target["checkpoint"].is_u64() && target["checkpoint"] != result["completion_checkpoint"]
                 || target["turn_id"].is_string() && target["turn_id"] != result["turn_id"] {
@@ -152,7 +197,7 @@ impl Completions {
             }
         }
         let checkpoint = result["completion_checkpoint"].as_u64().unwrap_or(size);
-        let _ = graph.discovered_completion(pending.id, text, checkpoint, &pending.run_id);
+        let _ = graph.discovered_completion(pending.id, text, checkpoint, &pending.run_id, &pending.routes);
     }
 }
 
@@ -193,10 +238,10 @@ mod tests {
         before["observed_turn"] = Value::Null;
         let node = graph.nodes.get_mut("t1").unwrap();
         node["observed_turn"] = json!({"id":"A","status":"completed"});
-        jobs.observe("main", 1, &before, node);
-        let after_a = node.clone();
-        node["observed_turn"] = json!({"id":"B","status":"completed"});
-        jobs.observe("main", 1, &after_a, node);
+        jobs.observe("main", 1, &before, graph);
+        let after_a = graph.nodes["t1"].clone();
+        graph.nodes.get_mut("t1").unwrap()["observed_turn"] = json!({"id":"B","status":"completed"});
+        jobs.observe("main", 1, &after_a, graph);
         let requests = jobs.requests();
         assert_eq!(requests.len(), 1);
         let (key, request) = &requests[0];
@@ -229,9 +274,10 @@ mod tests {
     fn unavailable_daemon_records_expire_and_identity_changes_cancel_backoff() {
         for replaced in [false, true] {
             let (mut jobs, mut graphs, before) = fixture();
-            let node = graphs.get_mut("main").unwrap().nodes.get_mut("t1").unwrap();
+            let graph = graphs.get_mut("main").unwrap();
+            let node = graph.nodes.get_mut("t1").unwrap();
             node["observed_turn"] = json!({"id":"A","status":"completed"});
-            jobs.observe("main", 1, &before, node);
+            jobs.observe("main", 1, &before, graph);
             for attempt in 0..9 {
                 let (key, _) = jobs.requests().pop().unwrap();
                 jobs.launched(&key);
@@ -256,20 +302,94 @@ mod tests {
         before["observed_turn"] = json!({"id":"A","status":"inProgress"});
         node["observed_turn"] = json!({"id":"A","status":"completed"});
         node["completion_checkpoint"] = json!(900); // the independently sampled tail now ends at B
-        jobs.observe("main", 1, &before, node);
+        jobs.observe("main", 1, &before, graph);
         let (key, request) = jobs.requests().pop().unwrap();
         assert_eq!(request["target"], json!({"turn_id":"A","checkpoint":null}));
+        let node = graph.nodes.get_mut("t1").unwrap();
         node["observed_turn"] = json!({"id":"B","status":"inProgress"});
         node["status"] = json!("busy");
         jobs.finish(&key, &json!({"turn_id":"A","completion_checkpoint":500,"last_message":"finished A","size":940}), &mut graphs);
         assert_eq!(graphs["main"].queues["t2"][0]["text"], "finished A");
         assert_eq!(graphs["main"].nodes["t1"]["status"], "busy");
-        let (mut jobs, graphs, mut before) = fixture();
-        let mut after = graphs["main"].nodes["t1"].clone();
+        let (mut jobs, mut graphs, mut before) = fixture();
+        let after = graphs.get_mut("main").unwrap().nodes.get_mut("t1").unwrap();
         before["provider"] = json!("claude");
         after["provider"] = json!("claude");
-        jobs.observe("main", 1, &before, &after);
-        assert_eq!(jobs.requests()[0].1, json!({"op":"read","path":after["transcript_path"]}));
+        jobs.observe("main", 1, &before, &graphs["main"]);
+        assert_eq!(jobs.requests()[0].1, json!({"op":"read","path":graphs["main"].nodes["t1"]["transcript_path"]}));
+    }
+
+    #[test]
+    fn transfer_preserves_inflight_and_retrying_reads_and_uses_destination_wires() {
+        for scenario in ["launched", "retrying", "split", "disconnected", "reconnected", "replaced"] {
+            let (mut jobs, mut graphs, before) = fixture();
+            let source = graphs.get_mut("main").unwrap();
+            source.dispatch(1, "graph.connect", &json!({"from":"t1","to":"t2","send":true})).unwrap();
+            let delivers = matches!(scenario, "launched" | "retrying");
+            if delivers {
+                source.dispatch(1, "graph.connect", &json!({"from":"t1","from_port":"error","to":"t2"})).unwrap();
+            }
+            let completion_wire = json!({"from":"t1","to":"t2","turn_completed":true});
+            let old_edge = source.edges.values().find(|edge| edge["turn_completed"] == true).unwrap().clone();
+            source.dispatch(1, "graph.disconnect", &old_edge).unwrap();
+            let observed_edge = source.dispatch(1, "graph.connect", &completion_wire).unwrap();
+            let run = source.dispatch(1, "graph.send", &json!({"to":"t2","text":"start"})).unwrap()["run_id"].clone();
+            source.queues.clear();
+            let sender = source.nodes.get_mut("t1").unwrap();
+            sender["observed_turn"] = json!({"id":"A","status":"completed"});
+            sender["run_id"] = run.clone();
+            jobs.observe("main", 1, &before, source);
+            if delivers {
+                jobs.observe_turns("main", 1, &before, source, vec![(json!({
+                    "id":"B","status":"failed","error":{"message":"B failed"}
+                }), run.as_str().unwrap().into())]);
+            }
+            let (key, request) = jobs.requests().pop().unwrap();
+            jobs.launched(&key);
+            if scenario == "retrying" { jobs.finish(&key, &json!({"status":"awaiting_record"}), &mut graphs); }
+            let deadline = jobs.pending[0].1.retry_at;
+            let moved = if scenario == "split" { HashSet::from([1]) } else { HashSet::from([1,2]) };
+            let mut destination = Graph::default();
+            graphs.get_mut("main").unwrap().transfer_nodes_to(&moved, &mut destination);
+            jobs.transfer("main", "destination", &moved, &destination);
+            if matches!(scenario, "disconnected" | "reconnected") {
+                let edge = destination.edges.values().find(|e| e["turn_completed"] == true).unwrap().clone();
+                assert_eq!(edge["revision"], observed_edge["revision"]);
+                destination.dispatch(1, "graph.disconnect", &edge).unwrap();
+                if scenario == "reconnected" {
+                    let replacement = destination.dispatch(1, "graph.connect", &completion_wire).unwrap();
+                    assert!(replacement["revision"].as_u64() > observed_edge["revision"].as_u64());
+                }
+            }
+            if scenario == "replaced" { destination.nodes.get_mut("t1").unwrap()["session_id"] = json!("new provider session"); }
+            graphs.insert("destination".into(), destination);
+            jobs.advance(&mut graphs);
+            if scenario == "retrying" {
+                assert!(deadline.is_some());
+                assert_eq!(jobs.pending[0].1.retry_at, deadline);
+                jobs.pending[0].1.retry_at = None;
+                assert_eq!(jobs.requests(), vec![(key.clone(), request)]);
+                jobs.launched(&key);
+            } else { assert!(jobs.requests().is_empty()); }
+            jobs.finish(&key, &json!({"turn_id":"A","completion_checkpoint":245,"last_message":"Answer A","size":416}), &mut graphs);
+            jobs.advance(&mut graphs);
+            assert!(jobs.pending.is_empty());
+            assert!(graphs["main"].queues.values().all(Vec::is_empty));
+            let destination = graphs.get_mut("destination").unwrap();
+            if delivers {
+                let events = destination.dispatch(2, "graph.take", &json!({})).unwrap();
+                let event = &events["events"][0];
+                assert_eq!(events["events"].as_array().unwrap().len(), 2);
+                assert_eq!(events["events"][1]["kind"], "agent.error");
+                assert_eq!(events["events"][1]["text"], "B failed");
+                assert_eq!(events["events"][1]["run_id"], run);
+                assert_eq!(event["text"], "Answer A");
+                assert_eq!(event["run_id"], run);
+                assert_eq!(event["sessions"][0]["checkpoint"]["byte_offset"], 245);
+            } else {
+                assert!(destination.queues.values().all(Vec::is_empty), "{scenario}");
+            }
+        }
     }
 
     #[test]
@@ -282,12 +402,88 @@ mod tests {
             let graph = graphs.get_mut("main").unwrap();
             let node = graph.nodes.get_mut("t1").unwrap();
             node["observed_turn"] = json!({"id":"A","status":"completed","completion_checkpoint":500});
-            jobs.observe("main", 1, &before, node);
+            jobs.observe("main", 1, &before, graph);
             let key = jobs.requests()[0].0.clone();
+            let node = graph.nodes.get_mut("t1").unwrap();
             node["observed_turn"] = json!({"id":"B","status":"inProgress"});
             jobs.finish(&key, &result, &mut graphs);
             assert!(graphs["main"].queues.values().all(Vec::is_empty));
         }
+    }
+
+    #[test]
+    fn failures_wait_for_earlier_reads_without_blocking_another_source() {
+        for materialized in [true, false] {
+            let (mut jobs, mut graphs, _) = fixture();
+            let graph = graphs.get_mut("main").unwrap();
+            graph.add(3, "Third agent".into());
+            graph.dispatch(3,"agent.event",&json!({"event":"SessionStart","provider":"codex","session_id":"third","pid":103})).unwrap();
+            for source in ["t1", "t3"] {
+                graph.dispatch(2,"graph.connect",&json!({"from":source,"to":"t2","from_port":"error"})).unwrap();
+            }
+            let node = graph.nodes.get_mut("t1").unwrap();
+            node["observed_turn"] = json!({"id":"a","status":"inProgress"});
+            node["status"] = json!("busy");
+            let before = node.clone();
+            let mut state = before.clone();
+            state["turn_outcomes"] = json!([{"id":"a","status":"completed"},
+                {"id":"b","status":"failed","error":{"message":"B failed"}}]);
+            state["observed_turn"] = json!({"id":"c","status":"inProgress"});
+            let outcomes = graph.observe_agent_outcomes(1, &state);
+            jobs.observe_turns("main",1,&before,graph,outcomes);
+            let third = &graph.nodes["t3"];
+            jobs.observe_turns("main",3,third,graph,vec![(json!({"id":"x","status":"failed","error":{"message":"independent"}}),String::new())]);
+            jobs.advance(&mut graphs);
+            let first = graphs.get_mut("main").unwrap().dispatch(2,"graph.take",&json!({})).unwrap();
+            assert_eq!(first["events"].as_array().unwrap().len(),1);
+            assert_eq!(first["events"][0]["text"],"independent");
+            graphs.get_mut("main").unwrap().queues.get_mut("t2").unwrap().clear();
+            let (key, _) = jobs.requests().pop().unwrap();
+            jobs.launched(&key);
+            jobs.finish(&key,&json!({"status":"awaiting_record"}),&mut graphs);
+            jobs.advance(&mut graphs);
+            assert!(graphs["main"].queues["t2"].is_empty());
+            jobs.pending.front_mut().unwrap().1.retry_at = None;
+            jobs.launched(&key);
+            let response = if materialized {
+                json!({"turn_id":"a","completion_checkpoint":245,"last_message":"A answer","size":500})
+            } else { json!({"error":"read failed"}) };
+            jobs.finish(&key,&response,&mut graphs);
+            jobs.advance(&mut graphs);
+            let delivered = graphs.get_mut("main").unwrap().dispatch(2,"graph.take",&json!({})).unwrap();
+            let texts: Vec<_> = delivered["events"].as_array().unwrap().iter().map(|e| e["text"].as_str().unwrap()).collect();
+            assert_eq!(texts, if materialized { vec!["A answer","B failed"] } else { vec!["B failed"] });
+            jobs.advance(&mut graphs);
+            assert!(jobs.pending.is_empty());
+            assert_eq!(graphs["main"].queues["t2"].len(),texts.len());
+        }
+    }
+
+    #[test]
+    fn later_wires_do_not_receive_already_observed_outcomes() {
+        let (mut jobs, mut graphs, before) = fixture();
+        let graph = graphs.get_mut("main").unwrap();
+        graph.add(3, "Later recipient".into());
+        graph.dispatch(3, "agent.event", &json!({"event":"SessionStart","provider":"codex"})).unwrap();
+        let failure = || vec![(json!({"id":"b","status":"failed","error":{"message":"B failed"}}),String::new())];
+        jobs.observe_turns("main",1,&before,graph,failure());
+        assert!(jobs.pending.is_empty(), "No Error wire exists yet");
+        graph.dispatch(1,"graph.connect",&json!({"from":"t1","to":"t2","from_port":"error"})).unwrap();
+        jobs.observe("main",1,&before,graph);
+        jobs.observe_turns("main",1,&before,graph,failure());
+        for port in ["turn_completed", "error"] {
+            graph.dispatch(1,"graph.connect",&json!({"from":"t1","to":"t3","from_port":port})).unwrap();
+        }
+        let (key, _) = jobs.requests().pop().unwrap();
+        jobs.finish(&key,&json!({"completion_checkpoint":500,"size":500,"last_message":"A answer"}),&mut graphs);
+        jobs.advance(&mut graphs);
+        assert_eq!(graphs["main"].queues["t2"].len(),2);
+        assert!(graphs["main"].queues.get("t3").is_none_or(Vec::is_empty));
+        for edge in graphs["main"].edges.values().cloned().collect::<Vec<_>>() {
+            graphs.get_mut("main").unwrap().dispatch(1,"graph.disconnect",&edge).unwrap();
+        }
+        jobs.observe("main",1,&before,&graphs["main"]);
+        assert!(jobs.requests().is_empty(), "Without a Turn completed wire no read starts");
     }
 
     #[test]
@@ -312,11 +508,11 @@ mod tests {
             {"id":"b","status":"completed","completion_checkpoint":416}]);
         let successes = graph.observe_agent(1, &state);
         let after = graph.nodes["t1"].clone();
-        completions.observe_turns("main", 1, &before, &after, successes);
+        completions.observe_turns("main", 1, &before, graph, successes);
         assert_eq!(after["status"], "busy");
         state["turn_outcomes"] = json!([]);
         let repeated = graph.observe_agent(1, &state);
-        completions.observe_turns("main", 1, &after, &graph.nodes["t1"], repeated);
+        completions.observe_turns("main", 1, &after, graph, repeated);
         for (turn, end) in [("a",245),("b",416)] {
             let jobs = completions.requests();
             assert_eq!(jobs.len(), 1);
@@ -335,9 +531,10 @@ mod tests {
     fn failed_and_interrupted_discovery_do_not_emit_success_completions() {
         for status in ["failed", "interrupted"] {
             let (mut completions, mut graphs, before) = fixture();
-            let node = graphs.get_mut("main").unwrap().nodes.get_mut("t1").unwrap();
+            let graph = graphs.get_mut("main").unwrap();
+            let node = graph.nodes.get_mut("t1").unwrap();
             node["observed_turn"] = json!({"id":"turn","status":status});
-            completions.observe("main", 1, &before, node);
+            completions.observe("main", 1, &before, graph);
             assert!(completions.requests().is_empty());
         }
     }
@@ -367,12 +564,12 @@ mod tests {
             scan["observed_turn"] = json!({"id":"first-success","status":"completed","completion_checkpoint":213,"rollout_offset":220});
             graph.observe_agent(1, &scan);
             let after = graph.nodes["t1"].clone();
-            completions.observe("main", 1, &before, &after);
+            completions.observe("main", 1, &before, graph);
             let verified = matches!(baseline, "pre-turn" | "running" | "interrupted" | "failed");
             assert_eq!(after["attention"]["kind"] == "completed", verified, "{baseline}");
             assert_eq!(completions.requests().len(), usize::from(verified), "{baseline}");
             graph.observe_agent(1, &scan);
-            completions.observe("main", 1, &after, &graph.nodes["t1"]);
+            completions.observe("main", 1, &after, graph);
             assert_eq!(graph.nodes["t1"]["attention"], after["attention"], "{baseline}");
             assert_eq!(completions.requests().len(), usize::from(verified), "{baseline}");
         }
@@ -385,25 +582,25 @@ mod tests {
         graph.nodes.get_mut("t1").unwrap()["completion_checkpoint"] = json!(100);
         let before = graph.nodes["t1"].clone();
         graph.nodes.get_mut("t1").unwrap()["completion_checkpoint"] = json!(200);
-        completions.observe("main", 1, &before, &graph.nodes["t1"]);
+        completions.observe("main", 1, &before, graph);
         let requests = completions.requests();
         assert_eq!(requests.len(), 1);
         completions.finish(&requests[0].0, &json!({"last_message":"fast answer","size":250,"completion_checkpoint":200}), &mut graphs);
         assert_eq!(graphs["main"].queues["t2"][0]["text"], "fast answer");
         let after = graphs["main"].nodes["t1"].clone();
-        completions.observe("main", 1, &after, &after);
+        completions.observe("main", 1, &after, &graphs["main"]);
         assert!(completions.requests().is_empty());
         let mut initial = after.clone();
         initial.as_object_mut().unwrap().remove("completion_checkpoint");
-        completions.observe("main", 1, &initial, &after);
+        completions.observe("main", 1, &initial, &graphs["main"]);
         assert!(completions.requests().is_empty(), "First discovery must not replay old turns");
     }
     #[test]
     fn discovered_stop_reads_once_and_preserves_newer_busy_status() {
         let (mut completions, mut graphs, before) = fixture();
         let idle = graphs["main"].nodes["t1"].clone();
-        completions.observe("main", 1, &before, &idle);
-        completions.observe("main", 1, &idle, &idle);
+        completions.observe("main", 1, &before, &graphs["main"]);
+        completions.observe("main", 1, &idle, &graphs["main"]);
         let requests = completions.requests();
         assert_eq!(requests.len(), 1);
         assert_eq!(
@@ -444,8 +641,7 @@ mod tests {
     fn replaced_process_or_integrated_hooks_cannot_deliver_stale_discovery() {
         for change in ["pid", "session_id", "transcript_path", "integrated"] {
             let (mut completions, mut graphs, before) = fixture();
-            let idle = graphs["main"].nodes["t1"].clone();
-            completions.observe("main", 1, &before, &idle);
+            completions.observe("main", 1, &before, &graphs["main"]);
             let key = completions.requests()[0].0.clone();
             graphs
                 .get_mut("main")
@@ -467,10 +663,9 @@ mod tests {
                 "{change}"
             );
         }
-        let (mut completions, graphs, before) = fixture();
-        let mut idle = graphs["main"].nodes["t1"].clone();
-        idle["integrated"] = json!(true);
-        completions.observe("main", 1, &before, &idle);
+        let (mut completions, mut graphs, before) = fixture();
+        graphs.get_mut("main").unwrap().nodes.get_mut("t1").unwrap()["integrated"] = json!(true);
+        completions.observe("main", 1, &before, &graphs["main"]);
         assert!(completions.requests().is_empty());
     }
     #[test]
@@ -493,7 +688,7 @@ mod tests {
         let before = graph.nodes["t1"].clone();
         graph.nodes.get_mut("t1").unwrap()["status"] = json!("idle");
         graph.nodes.get_mut("t1").unwrap()["completion_checkpoint"] = json!(700);
-        completions.observe("main", 1, &before, &graph.nodes["t1"]);
+        completions.observe("main", 1, &before, graph);
         let key = completions.requests()[0].0.clone();
         graph
             .dispatch(
@@ -517,8 +712,7 @@ mod tests {
         let (mut completions, mut graphs, before) = fixture();
         for size in [500, 500, 800] {
             graphs.get_mut("main").unwrap().nodes.get_mut("t1").unwrap()["completion_checkpoint"] = json!(size);
-            let idle = graphs["main"].nodes["t1"].clone();
-            completions.observe("main", 1, &before, &idle);
+            completions.observe("main", 1, &before, &graphs["main"]);
             let key = completions.requests()[0].0.clone();
             completions.finish(
                 &key,

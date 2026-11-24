@@ -114,15 +114,15 @@ func refresh() -> void:
 		if is_instance_valid(group.get("peer")): peers[group.peer] = true
 	# A delayed socket can deliver an old full inventory after another socket
 	# has already reported a removal or transfer in the same server epoch.
-	var connected_scopes := {}
+	var retained_scopes := {}
 	for peer in peers:
-		if not is_instance_valid(peer) or not peer.connected: continue
+		if not is_instance_valid(peer): continue
 		var scope := [peer.url, peer.epoch]
-		connected_scopes[scope] = true
+		retained_scopes[scope] = true
 		if int(peer.catalog_revision) >= int(_catalogs.get(scope, {}).get("revision", -1)):
 			_catalogs[scope] = _catalog_snapshot(peer)
 	for scope in _catalogs.keys():
-		if not connected_scopes.has(scope): _catalogs.erase(scope)
+		if not retained_scopes.has(scope): _catalogs.erase(scope)
 	var displayed_events := {}
 	for peer in peers:
 		if not is_instance_valid(peer): continue

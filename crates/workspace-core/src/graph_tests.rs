@@ -5,6 +5,26 @@ use super::*;
 mod lifecycle;
 
 #[test]
+fn delayed_completion_uses_only_continuously_connected_wires() {
+    let mut graph = Graph::default();
+    for id in 1..=4 {
+        graph.add(id, "Terminal".into());
+        graph.dispatch(id, "agent.event", &json!({"provider":"codex","event":"SessionStart","pid":id})).unwrap();
+    }
+    let wire = |to| json!({"from":"t1","to":format!("t{to}"),"turn_completed":true});
+    graph.dispatch(1, "graph.connect", &wire(2)).unwrap();
+    graph.dispatch(1, "graph.connect", &wire(4)).unwrap();
+    let routes = graph.outcome_routes(1, false);
+    graph.dispatch(1, "graph.disconnect", &wire(2)).unwrap();
+    graph.dispatch(1, "graph.connect", &wire(2)).unwrap();
+    graph.dispatch(1, "graph.connect", &wire(3)).unwrap();
+    graph.discovered_completion(1, "Answer A", 100, "", &routes).unwrap();
+    assert!(graph.queues.get("t2").is_none_or(Vec::is_empty));
+    assert!(graph.queues.get("t3").is_none_or(Vec::is_empty));
+    assert_eq!(graph.queues["t4"][0]["text"], "Answer A");
+}
+
+#[test]
 fn provider_inbox_uses_real_ports_queue_runs_titles_and_completions() {
     let mut graph = Graph::default();
     for (id, provider) in [(1, "codex"), (2, "claude"), (3, "codex")] {
@@ -743,11 +763,11 @@ fn a_rejected_completion_is_visible_in_delivery_history() {
     .unwrap();
     g.default_run_limit = 1;
     let params = json!({"run_id":"limited","text":"done"});
-    g.enqueue_completion("t1", &params, "first".into(), None)
+    g.enqueue_completion("t1", &params, "first".into(), None, None)
         .unwrap();
     assert_eq!(g.queues["t2"][0]["kind"], "turn.completed");
     assert!(
-        g.enqueue_completion("t1", &params, "second".into(), None)
+        g.enqueue_completion("t1", &params, "second".into(), None, None)
             .is_err()
     );
     assert_eq!(

@@ -52,10 +52,11 @@ func refresh_body() -> void:
 	var catalog_views := {}
 	var groups := preload("res://scenes/session/SessionsList.gd").collect(application.hosts, [])
 	var membership := {}
+	var connected_scopes := {}
 	for group in groups:
 		if not group.connected: continue
 		var peer: Node = group.peer
-		membership[[peer.url, peer.epoch]] = application.agent_attention.catalog_snapshot(peer)
+		connected_scopes[[peer.url, peer.epoch]] = true
 	for host in application.hosts:
 		if not is_instance_valid(host) or host.is_queued_for_deletion(): continue
 		var looking: bool = application.agent_attention.in_view.call(host)
@@ -74,13 +75,15 @@ func refresh_body() -> void:
 				var local_id := PaneAddress.id(key)
 				var peer: Node = transport.owners.get(local_id) if is_instance_valid(transport) and "owners" in transport else transport
 				if is_instance_valid(peer):
-					var catalog: Dictionary = membership.get([peer.url, peer.epoch], {})
+					var scope := [peer.url, peer.epoch]
+					if not membership.has(scope): membership[scope] = application.agent_attention.catalog_snapshot(peer)
+					var catalog: Dictionary = membership[scope]
 					var pane: int = peer.wire_id(local_id)
-					if not catalog.is_empty() and not peer.connected:
+					if connected_scopes.has(scope) and not peer.connected:
 						stale_keys[key] = true
 						continue
 					if application.agent_attention.outside_catalog(catalog, pane, peer.workspace, node): continue
-					if not catalog.is_empty() and catalog.destinations.has(pane) and not peer.session_view_ready(peer.workspace):
+					if peer.connected and catalog.destinations.has(pane) and not peer.session_view_ready(peer.workspace):
 						stale_keys[key] = true
 						continue
 					# The graph cache is shared across windows. Resolve selection through

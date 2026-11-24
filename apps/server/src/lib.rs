@@ -540,11 +540,11 @@ impl Server {
                             && !graffitty_workspace_core::graph::is_custom_node(&previous) {
                             self.checkpoint_lifecycle.observe(id, state);
                         }
-                        let successes = graph.observe_agent(id, state);
-                        if state["turn_outcomes"].is_array() {
-                            self.completions.observe_turns(&session.workspace, id, &previous, &graph.nodes[key], successes);
+                        let outcomes = graph.observe_agent_outcomes(id, state);
+                        if !outcomes.is_empty() || state["turn_outcomes"].is_array() {
+                            self.completions.observe_turns(&session.workspace, id, &previous, graph, outcomes);
                         } else {
-                            self.completions.observe(&session.workspace, id, &previous, &graph.nodes[key]);
+                            self.completions.observe(&session.workspace, id, &previous, graph);
                         }
                     }
                 }
@@ -620,7 +620,7 @@ impl Server {
                 );
             }
         }
-        self.completions.retain_current(&self.graphs);
+        self.completions.advance(&mut self.graphs);
         for (key, request) in self.completions.requests() {
             if self.workers.start(&self.cli, key.clone(), request, json!({})) {
                 self.completions.launched(&key);

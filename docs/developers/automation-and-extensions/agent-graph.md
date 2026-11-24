@@ -52,6 +52,7 @@ A connection from A's output to B's input determines what B receives or can read
 - Waiting and Error do not grant transcript access.
 - A recorded Codex quota failure emits Error once, including when a retry starts between discovery polls. The failed turn leaves no unread completion. Reattaching restores the recorded status without replaying old failures.
 - For a discovered Codex completion, the wire reads the answer for the completed turn. Local discovery records its byte offset, and daemon discovery identifies it by native turn ID. With Read permission, the queued session reference exposes the byte offset at the end of that completion. When daemon metadata arrives before the rollout record, the owner retries the matching turn up to eight times and delivers completions for that pane in order.
+- When a live tab moves to another workspace, pending turn outcomes follow the source pane. Delivery still requires an original wire that moved with both endpoints and remains authorized.
 - Local Codex sessions use the rollout’s turn records. A token-count update at 100% usage supplies no turn outcome. An older client that records only a turn start leaves discovery waiting for the next lifecycle record. A plain completion from a client that omitted its failure details is indistinguishable from success.
 - An expired Claude login enters Waiting. The terminal report and the authentication hook share one Waiting notification per transition. The failure hook also emits Error.
 - An interrupted turn emits neither completion nor failure.

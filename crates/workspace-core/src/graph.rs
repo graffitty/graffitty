@@ -277,27 +277,43 @@ impl Graph {
         }
     }
 
+    /// A delayed outcome may use only wires active at observation and delivery.
+    pub fn outcome_routes(&self, id: u64, failed: bool) -> BTreeMap<String, u64> {
+        self.outcome_edges(&format!("t{id}"), failed.then_some("error"), None)
+            .map(|(key, edge)| (key.clone(), edge["revision"].as_u64().unwrap())).collect()
+    }
+
+    fn outcome_edges<'a>(&'a self, key: &'a str, port: Option<&'a str>, routes: Option<&'a BTreeMap<String, u64>>)
+        -> impl Iterator<Item = (&'a String, &'a Value)> {
+        let at = now();
+        self.edges.iter().filter(move |(id, edge)| {
+            let output = match port {
+                Some(port) => edge["from_port"] == port && edge["send"] == true,
+                None => edge["turn_completed"] == true,
+            };
+            output && edge["from"] == key && edge["muted"] != true && !expired(edge, at)
+                && routes.is_none_or(|routes| routes.get(*id).is_some_and(|revision| edge["revision"] == *revision))
+        })
+    }
+
     /// A native discovery worker can finish reading a completed turn after a
     /// newer turn has started. Route its output without changing live status.
-    pub fn discovered_completion(&mut self, id: u64, text: &str, checkpoint: u64, run_id: &str) -> Result<()> {
+    pub fn discovered_completion(&mut self, id: u64, text: &str, checkpoint: u64, run_id: &str, routes: &BTreeMap<String, u64>) -> Result<()> {
         let key = format!("t{id}");
         let node = self.nodes.get(&key).ok_or("Unknown agent")?;
         let run_id = if self.runs.contains_key(run_id) { run_id } else { "" };
         let params = json!({"text":text,"session_id":node["session_id"],"run_id":run_id});
         let signature = format!("{}:{checkpoint}:{text}", node["session_id"]);
         self.expire();
-        self.enqueue_completion(&key, &params, signature, Some(checkpoint))
+        self.enqueue_completion(&key, &params, signature, Some(checkpoint), Some(routes))
     }
 
-    fn enqueue_completion(&mut self, key: &str, params: &Value, signature: String, checkpoint: Option<u64>) -> Result<()> {
+    fn enqueue_completion(&mut self, key: &str, params: &Value, signature: String, checkpoint: Option<u64>, routes: Option<&BTreeMap<String, u64>>) -> Result<()> {
         if self.seen.get(key) == Some(&signature) {
             return Ok(());
         }
         self.seen.insert(key.into(), signature);
-        let edges: Vec<_> = self.edges.values().filter(|edge| {
-            edge["from"] == key && edge["turn_completed"] == true
-                && edge["muted"] != true && !expired(edge, now())
-        }).cloned().collect();
+        let edges: Vec<_> = self.outcome_edges(key, None, routes).map(|(_, edge)| edge.clone()).collect();
         for edge in edges {
             if let Err(error) = self.enqueue(&edge, params, None, true, checkpoint) {
                 let event = json!({"event_id":uuid(),"source":edge["from"],"target":edge["to"],"source_port":edge["from_port"],"target_port":edge["to_port"],"run_id":params["run_id"],"type":"turn.completed"});
@@ -313,7 +329,7 @@ impl Graph {
 
     /// Lifecycle outputs use ordinary message delivery, without granting Read.
     /// Their trigger is owner-observed state, not an agent's graph.send call.
-    fn enqueue_lifecycle(&mut self, key: &str, output: &str, fields: &Value, run: Value) -> Result<()> {
+    fn enqueue_lifecycle(&mut self, key: &str, output: &str, fields: &Value, run: Value, routes: Option<&BTreeMap<String, u64>>) -> Result<()> {
         if is_custom_node(&self.nodes[key]) { return Ok(()); }
         let mut params = fields.clone();
         params["kind"] = json!(format!("agent.{output}"));
@@ -325,10 +341,7 @@ impl Graph {
         if params["text"].as_str().is_none_or(str::is_empty) {
             params["text"] = json!(if output == "waiting" { "Agent is awaiting input" } else { "Agent failed" });
         }
-        let edges: Vec<_> = self.edges.values().filter(|edge| {
-            edge["from"] == key && edge["from_port"] == output && edge["send"] == true
-                && edge["muted"] != true && !expired(edge, now())
-        }).cloned().collect();
+        let edges: Vec<_> = self.outcome_edges(key, Some(output), routes).map(|(_, edge)| edge.clone()).collect();
         for edge in edges {
             if let Err(error) = self.enqueue(&edge, &params, None, false, None) {
                 let event = json!({"event_id":uuid(),"source":key,"target":edge["to"],
@@ -349,9 +362,33 @@ impl Graph {
     /// hook status; discovery still records process exits and replacements.
     pub fn observe_agent(&mut self, id: u64, state: &Value) -> Vec<(Value, String)> {
         let mut successes = Vec::new();
+        for (turn, run) in self.observe_agent_outcomes(id, state) {
+            if turn["status"] == "failed" {
+                let _ = self.discovered_failure(id, &turn, &run, &self.outcome_routes(id, true));
+            } else {
+                successes.push((turn, run));
+            }
+        }
+        successes
+    }
+
+    pub fn discovered_failure(&mut self, id: u64, turn: &Value, run_id: &str, routes: &BTreeMap<String,u64>) -> Result<()> {
         let key = format!("t{id}");
-        let Some(node) = self.nodes.get(&key) else { return successes; };
-        if is_custom_node(node) { return successes; }
+        if !self.nodes.contains_key(&key) { return Err("Unknown agent".into()); }
+        let run = self.runs.get_key_value(run_id).map(|(id, _)| id.clone());
+        self.expire();
+        self.enqueue_lifecycle(&key, "error", &json!({
+            "text":turn["error"]["message"], "outcome":"error",
+            "payload":{"error":turn["error"],"turn_id":turn["id"]}
+        }), json!(run), Some(routes))
+    }
+
+    /// The server sequences these outcomes while completion text is being read.
+    pub fn observe_agent_outcomes(&mut self, id: u64, state: &Value) -> Vec<(Value, String)> {
+        let mut discovered = Vec::new();
+        let key = format!("t{id}");
+        let Some(node) = self.nodes.get(&key) else { return discovered; };
+        if is_custom_node(node) { return discovered; }
         let previous = node.clone();
         let replaced = attention::identity_replaced(node, state);
         let was_waiting = node["status"] == "waiting";
@@ -364,7 +401,7 @@ impl Graph {
             // but allow a subsequently launched real provider to replace it.
             if !["codex", "claude", "opencode", "pi"].contains(&string(state, "provider"))
                 || state["pid"].as_i64().is_none_or(|pid| Some(pid) == node["pid"].as_i64()) {
-                return successes;
+                return discovered;
             }
             self.clear_queue(&key);
         }
@@ -375,7 +412,7 @@ impl Graph {
                 node.as_object_mut().unwrap().remove(field);
             }
         }
-        let Some(found) = state.as_object() else { return successes; };
+        let Some(found) = state.as_object() else { return discovered; };
         let mut found = found.clone();
         let outcomes = found.remove("turn_outcomes").unwrap_or(Value::Null);
         let turn = &state["observed_turn"];
@@ -444,7 +481,7 @@ impl Graph {
         attention::record_change(&self.activity_clock, node, &previous);
         if *node != previous { self.notification_revision = self.notification_revision.wrapping_add(1); }
         if !was_waiting && waiting {
-            let _ = self.enqueue_lifecycle(&key, "waiting", &json!({}), self.nodes[&key]["run_id"].clone());
+            let _ = self.enqueue_lifecycle(&key, "waiting", &json!({}), self.nodes[&key]["run_id"].clone(), None);
         }
         // Establish a baseline on attachment; do not replay a historical error.
         // Comparing status too catches a turn seen running before it failed.
@@ -458,15 +495,9 @@ impl Graph {
                     let index = turns.iter().position(|(turn_id, _)| turn_id == string(outcome, "id"))?;
                     turns.remove(index).map(|(_, run)| run)
                 }).filter(|run| self.runs.contains_key(run));
-                if outcome["status"] == "completed" {
-                    if self.nodes[&key]["integrated"] != true {
-                        successes.push((outcome.clone(), run.unwrap_or_default()));
-                    }
-                } else if outcome["status"] == "failed" {
-                    let _ = self.enqueue_lifecycle(&key, "error", &json!({
-                        "text":outcome["error"]["message"], "outcome":"error",
-                        "payload":{"error":outcome["error"],"turn_id":outcome["id"]}
-                    }), json!(run));
+                if outcome["status"] == "failed" ||
+                    (outcome["status"] == "completed" && self.nodes[&key]["integrated"] != true) {
+                    discovered.push((outcome.clone(), run.unwrap_or_default()));
                 }
             }
         }
@@ -478,7 +509,7 @@ impl Graph {
                 turns.drain(..index + usize::from(finished));
             }
         }
-        successes
+        discovered
     }
     /// Apply the terminal's OSC 7501 root record (`None` once cleared). Every
     /// node keeps the record as `program_status`. A node without lifecycle hooks
@@ -519,7 +550,7 @@ impl Graph {
         attention::record_change(&self.activity_clock, node, &previous);
         if *node != previous { self.notification_revision = self.notification_revision.wrapping_add(1); }
         if previous["status"] != "waiting" && node["status"] == "waiting" && node["provider"] == "claude" && node["program_status"]["app"] == "claude-code" {
-            let _ = self.enqueue_lifecycle(&format!("t{id}"), "waiting", &json!({}), previous["run_id"].clone());
+            let _ = self.enqueue_lifecycle(&format!("t{id}"), "waiting", &json!({}), previous["run_id"].clone(), None);
         }
     }
     pub fn remove(&mut self, id: u64) {
@@ -539,6 +570,9 @@ impl Graph {
         let internal: Vec<_> = self.edges.iter().filter(|(_, e)|
             keys.contains(string(e, "from")) && keys.contains(string(e, "to")))
             .map(|(id, edge)| (id.clone(), edge.clone())).collect();
+        // Imported wires retain their revision. Future destination edits must
+        // never reuse that revision, including a reconnect of the same ports.
+        target.revision = target.revision.max(self.revision);
         target.activity_clock.resume_after(self.activity_clock.current());
         for key in &keys {
             if let Some(mut node) = self.nodes.remove(key) {
@@ -1084,13 +1118,13 @@ impl Graph {
                 self.reconcile_ports(&key);
                 self.revoke();
                 if !was_waiting && self.nodes[&key]["status"] == "waiting" {
-                    self.enqueue_lifecycle(&key, "waiting", &json!({}), self.nodes[&key]["run_id"].clone())?;
+                    self.enqueue_lifecycle(&key, "waiting", &json!({}), self.nodes[&key]["run_id"].clone(), None)?;
                 }
                 if failed {
                     let signature = json!([p["session_id"], p["completion_id"], p["text"]]);
                     if self.nodes[&key]["last_lifecycle_error"] != signature {
                         self.nodes.get_mut(&key).unwrap()["last_lifecycle_error"] = signature;
-                        self.enqueue_lifecycle(&key, "error", p, self.nodes[&key]["run_id"].clone())?;
+                        self.enqueue_lifecycle(&key, "error", p, self.nodes[&key]["run_id"].clone(), None)?;
                     }
                 } else if event == "Stop" && !interrupted {
                     // A user interrupt only returns the node to idle: it is
@@ -1098,7 +1132,7 @@ impl Graph {
                     let signature = format!("{}:{}:{}", p["session_id"], p["completion_id"], p["text"]);
                     let mut completion = p.clone();
                     completion["run_id"] = self.nodes[&key]["run_id"].clone();
-                    self.enqueue_completion(&key, &completion, signature, None)?;
+                    self.enqueue_completion(&key, &completion, signature, None, None)?;
                 }
                 let adjacent = self.adjacent(&key);
                 // Lifecycle/status updates advance the snapshot revision but
