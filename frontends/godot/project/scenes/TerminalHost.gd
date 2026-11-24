@@ -1,4 +1,6 @@
 extends Node3D
+
+const PaneAddress := preload("res://scenes/PaneAddress.gd")
 var localization: Node:
 	get: return Engine.get_main_loop().root.get_node("Localization")
 ## Per-window workspace host. World resources are optional and loaded at runtime.
@@ -202,7 +204,7 @@ func refresh_app_context() -> void:
 	var app := {}
 	var holds: Array = []
 	if is_terminal_pane(pane_focus):
-		var pair: Dictionary = sessions.get(int(pane_focus.substr(1)), {})
+		var pair: Dictionary = sessions.get(PaneAddress.id(pane_focus), {})
 		if pair.has("model"):
 			app = pair.model.foreground_app
 			holds = pair.model.effect_holds
@@ -214,7 +216,7 @@ func refresh_app_context() -> void:
 func release_effect_holds() -> void:
 	if not is_terminal_pane(pane_focus): return
 	if not session_backend.is_remote: return
-	await session_backend.connection.remote_call(int(pane_focus.substr(1)), "effects.release", {})
+	await session_backend.connection.remote_call(PaneAddress.id(pane_focus), "effects.release", {})
 
 
 func settle_effects(effects: Array) -> void:
@@ -501,11 +503,11 @@ func activate_session(pair: Dictionary) -> void:
 	if active_session_id != index:
 		active_session_id = index
 		if index >= 0 and not layout_transaction:
-			var group: int = workspace_layout.containing("%%%d" % index)
+			var group: int = workspace_layout.containing(PaneAddress.key(index))
 			if group >= 0:
 				workspace_layout.active = group
-				workspace_layout.tab(group).focused = "%%%d" % index
-				pane_focus = "%%%d" % index
+				workspace_layout.tab(group).focused = PaneAddress.key(index)
+				pane_focus = PaneAddress.key(index)
 		_refresh_workspace_layout()
 		active_session_changed.emit(index)
 		ui_changed.emit()
@@ -517,12 +519,12 @@ func session_model(index: int) -> Node:
 
 func is_terminal_pane(key: String) -> bool:
 	if not preload("res://scenes/PaneTargets.gd").valid(key): return false
-	var id := int(key.substr(1))
+	var id := PaneAddress.id(key)
 	return not chromiums.has(id) and (sessions.has(id) or workspaces.has(id))
 
 
 func is_chromium_pane(key: String) -> bool:
-	return preload("res://scenes/PaneTargets.gd").valid(key) and chromiums.has(int(key.substr(1)))
+	return preload("res://scenes/PaneTargets.gd").valid(key) and chromiums.has(PaneAddress.id(key))
 
 
 func resource_monitor_for(index: int) -> Node:
@@ -602,7 +604,7 @@ func _show_rename_dialog(caption: String, current: String, apply: Callable) -> v
 
 
 func rename_pane(key: String) -> void:
-	var id := int(key.substr(1))
+	var id := PaneAddress.id(key)
 	var model: Node = session_model(id) if self.is_terminal_pane(key) else chromiums.get(id)
 	if model == null:
 		return
@@ -615,7 +617,7 @@ func rename_pane(key: String) -> void:
 
 
 func set_pane_title(key: String, value: String) -> bool:
-	var id := int(key.substr(1))
+	var id := PaneAddress.id(key)
 	var terminal := self.is_terminal_pane(key)
 	var model: Node = session_model(id) if terminal else chromiums.get(id)
 	if not is_instance_valid(model): return false
@@ -675,11 +677,11 @@ func get_tabs(session_only := false) -> Array[Dictionary]:
 		var all_keys := WorkspaceLayout.keys(group.tree)
 		if focused not in all_keys and not all_keys.is_empty():
 			focused = all_keys[0]
-		var first: int = int(focused.substr(1)) if self.is_terminal_pane(focused) else -1
+		var first: int = PaneAddress.id(focused) if self.is_terminal_pane(focused) else -1
 		var model := session_model(first)
 		var title: String = model.title if model != null else ""
 		if self.is_chromium_pane(focused):
-			var chromium_id := int(focused.substr(1))
+			var chromium_id := PaneAddress.id(focused)
 			var chromium_owner: Node = application.chromium_host(chromium_id)
 			if chromium_owner != null:
 				var chromium: Node = chromium_owner.chromiums[chromium_id]
@@ -702,7 +704,7 @@ func get_tabs(session_only := false) -> Array[Dictionary]:
 				"progress_value": model.progress_value if model != null else -1,
 				"exited": false,
 				"chromium_count": count - terminals.size(),
-				"attention": application.agent_attention.marker(terminals) if application != null and application.agent_attention != null else {"state": "", "count": 0},
+				"attention": application.agent_attention.marker(self, terminals) if application != null and application.agent_attention != null else {"state": "", "count": 0},
 			}
 		)
 	return result
@@ -718,7 +720,7 @@ func get_tab_menu_items() -> Array[Dictionary]:
 		var agents: Array = []
 		var panes: Array[Dictionary] = []
 		for key in keys:
-			var id := int(key.substr(1))
+			var id := PaneAddress.id(key)
 			var title := pane_title(key).replace("\n", " ")
 			panes.append({"key": key, "title": title, "ordinal": panes.size() + 1})
 			var description := "%s — %s" % [key, title]
@@ -739,9 +741,15 @@ func get_tab_menu_items() -> Array[Dictionary]:
 	return items
 
 
+## Only the active terminal is presented in a world without workspace panes.
+func pane_is_presented(key: String) -> bool:
+	if workspace_view != null: return workspace_view.pane_in_content(key)
+	return world != null and active_session_id == PaneAddress.id(key) and pane_focus == key
+
+
 ## A pane's title as the tab list shows it.
 func pane_title(key: String) -> String:
-	var id := int(key.substr(1))
+	var id := PaneAddress.id(key)
 	if self.is_chromium_pane(key):
 		var owner: Node = application.chromium_host(id)
 		return str(owner.chromiums[id].title) if owner != null else "Terminal"
@@ -766,7 +774,7 @@ func create_chromium_session(
 	var result: Dictionary = await session_backend.create_chromium_remote(self, tab_id, url, reveal, profile)
 	if result.has("error"): return null
 	var key := str(result.get("result", {}).get("chromium", ""))
-	return chromiums.get(int(key.substr(1))) if self.is_chromium_pane(key) else null
+	return chromiums.get(PaneAddress.id(key)) if self.is_chromium_pane(key) else null
 
 
 func select_session(index: int) -> void:
@@ -793,13 +801,16 @@ func create_terminal_window(beside := "", axis := "h", before := false) -> void:
 
 
 ## `destination` is a position in the tab strip, which holds one session's tabs.
-func move_session(id: int, destination: int) -> void:
+func move_session(id: int, destination: int, instant := false) -> void:
 	var strip := session_tabs()
 	if not strip.is_empty() and strip.size() != workspace_layout.tabs.size():
 		destination = workspace_layout.tabs.find(strip[clampi(destination, 0, strip.size() - 1)])
 	workspace_layout.reorder(id, destination)
 	if world != null and world.has_method("follow_tab_order"):
+		var previous_instant := instant_workspace_switch
+		instant_workspace_switch = previous_instant or instant
 		world.follow_tab_order()
+		instant_workspace_switch = previous_instant
 	ui_changed.emit()
 
 
@@ -892,15 +903,15 @@ func _name_largest_close(dialog: ConfirmationDialog, ids: Array) -> void:
 
 
 func _remove_session_mirror(index: int) -> void:
-	var close_origin := _pane_close_origin("%%%d" % index)
-	var group: int = workspace_layout.containing("%%%d" % index)
+	var close_origin := _pane_close_origin(PaneAddress.key(index))
+	var group: int = workspace_layout.containing(PaneAddress.key(index))
 	for id in workspaces.get(index, { }).get("chromiums", []).duplicate():
 		var owner: Node = application.chromium_host(id)
 		# Remote chromium lifetime comes from topology. A filetree close can
 		# detach its chromium in this same update; preserve that live mirror.
-		if not session_backend.is_remote and owner == self and workspace_layout.containing("%%%d" % id) == group:
+		if not session_backend.is_remote and owner == self and workspace_layout.containing(PaneAddress.key(id)) == group:
 			close_chromium_session(id)
-	workspace_layout.take_pane("%%%d" % index)
+	workspace_layout.take_pane(PaneAddress.key(index))
 	workspaces.erase(index)
 	application.forget(index)
 	var removed: Dictionary = sessions.get(index, { })
@@ -914,7 +925,7 @@ func _remove_session_mirror(index: int) -> void:
 	sessions.erase(index)
 	if active_session_id == index: active_session_id = -1
 	world.remove_terminal_tab(surface_index)
-	var pane_key := "%%%d" % index
+	var pane_key := PaneAddress.key(index)
 	if is_instance_valid(workspace_view) and workspace_view.panes.has(pane_key):
 		workspace_view.panes[pane_key].texture.texture = null
 	if not removed.is_empty():
@@ -938,7 +949,7 @@ func close_chromium_session(index: int) -> void:
 	if session_backend.is_remote and not layout_transaction:
 		chromium.close()
 		return
-	var close_origin := _pane_close_origin("%%%d" % index)
+	var close_origin := _pane_close_origin(PaneAddress.key(index))
 	var tab_id: int = chromium.tab_id
 	var owner: Node = application.host_for_workspace(tab_id)
 	if owner != null and owner.workspaces.has(tab_id):
@@ -946,7 +957,7 @@ func close_chromium_session(index: int) -> void:
 		var remaining: Array = owner.workspaces[tab_id].chromiums
 		if owner.workspaces[tab_id].chromium == index:
 			owner.workspaces[tab_id].chromium = remaining[0] if not remaining.is_empty() else -1
-	workspace_layout.take_pane("%%%d" % index)
+	workspace_layout.take_pane(PaneAddress.key(index))
 	chromiums.erase(index)
 	if not session_backend.is_remote:
 		chromium.close()
@@ -1024,7 +1035,7 @@ func workspace_surfaces(tab_id: int) -> Array[Dictionary]:
 	if not workspaces.has(tab_id):
 		return result
 	if sessions.has(tab_id):
-		result.append({ "id": "%%%d" % tab_id, "kind": "terminal", "tab_id": tab_id })
+		result.append({ "id": PaneAddress.key(tab_id), "kind": "terminal", "tab_id": tab_id })
 	for id in workspaces[tab_id].chromiums:
 		var owner: Node = application.chromium_host(id)
 		if owner == null:
@@ -1032,7 +1043,7 @@ func workspace_surfaces(tab_id: int) -> Array[Dictionary]:
 		var chromium: Node = owner.chromiums[id]
 		result.append(
 			{
-				"id": "%%%d" % id,
+				"id": PaneAddress.key(id),
 				"chromium_id": id,
 				"kind": "chromium",
 				"tab_id": tab_id,
@@ -1062,11 +1073,11 @@ func visible_chromium() -> Node:
 		return null
 	var shown := WorkspaceLayout.keys(group.tree, true)
 	var preferred: int = workspaces.get(active_session_id, { }).get("chromium", -1)
-	if ("%%%d" % preferred) in shown:
+	if (PaneAddress.key(preferred)) in shown:
 		return chromiums.get(preferred)
 	for key in WorkspaceLayout.keys(group.tree, true):
 		if self.is_chromium_pane(key):
-			return chromiums.get(int(key.substr(1)))
+			return chromiums.get(PaneAddress.id(key))
 	return null
 
 
@@ -1192,16 +1203,20 @@ func _fit_world_viewport() -> void:
 	var density := get_viewport().get_final_transform().get_scale().abs()
 	density = density.max(Vector2.ONE)
 	world_container.scale = Vector2.ONE / density
-	world_container.size = (layout_root.size * density).round()
 	world_viewport.size_2d_override = Vector2i(layout_root.size.round())
 	world_viewport.size_2d_override_stretch = true
-	var device := RenderingServer.get_rendering_device()
-	var limit := 8192.0
-	if device != null:
-		limit = minf(float(device.limit_get(RenderingDevice.LIMIT_MAX_TEXTURE_SIZE_2D)), 16384.0)
-	var size := world_container.size
-	world_container.stretch_shrink = maxi(1, ceili(maxf(size.x, size.y) / maxf(limit, 1.0)))
+	var limit := preload("res://scenes/EffectCaptureBudget.gd").texture_limit()
+	_resize_world_container(world_container, (layout_root.size * density).round(), limit)
 	_sync_world_chrome_clip()
+
+
+static func _resize_world_container(container: SubViewportContainer, size: Vector2, limit: float) -> void:
+	var shrink := maxi(1, ceili(maxf(size.x, size.y) / maxf(limit, 1.0)))
+	# Both setters immediately resize the child's render targets. Increase
+	# shrink before growing; decrease it only after the old size is gone.
+	if shrink > container.stretch_shrink: container.stretch_shrink = shrink
+	container.size = size
+	container.stretch_shrink = shrink
 
 
 func _sync_world_chrome_clip() -> void:
@@ -1357,6 +1372,7 @@ func _configure_terminal_space(presenter: Node) -> void:
 		workspace_view = ui.create_terminal_space(scene)
 		if workspace_view != null:
 			layout_root.add_child(workspace_view)
+			workspace_view.navigation_changed.connect(application.agent_attention.queue_refresh)
 			workspace_view.set_anchors_and_offsets_preset(Control.PRESET_FULL_RECT)
 	_sync_world_chrome_clip()
 
@@ -1531,7 +1547,7 @@ func terminal_menu_action(action: String) -> void:
 ## Floating controls keep pane focus, and resize only that pane's content.
 func change_text_size(direction: int) -> void:
 	if self.is_chromium_pane(pane_focus):
-		var id := int(pane_focus.substr(1))
+		var id := PaneAddress.id(pane_focus)
 		if chromiums.has(id): chromiums[id].change_text_size(direction)
 	elif self.is_terminal_pane(pane_focus) and sessions.has(active_session_id) and world != null:
 		world._on_terminal_shortcut("increase_font_size" if direction > 0 else ("decrease_font_size" if direction < 0 else "reset_font_size"))
@@ -1573,7 +1589,7 @@ func shortcut_text(action: String) -> String:
 
 func close_focused_pane() -> void:
 	if self.is_terminal_pane(pane_focus):
-		request_close_terminal(int(pane_focus.substr(1)))
+		request_close_terminal(PaneAddress.id(pane_focus))
 	elif self.is_chromium_pane(pane_focus):
 		workspace_view.panes[pane_focus]._confirm_chromium_close()
 
@@ -2368,7 +2384,7 @@ func take_workspace(id: int, chromium_keys: Array[String] = []) -> Dictionary:
 	for chromium_id in workspaces[id].chromiums:
 		if (
 			not chromiums.has(chromium_id)
-			or (not chromium_keys.is_empty() and not ("%%%d" % chromium_id) in chromium_keys)
+			or (not chromium_keys.is_empty() and not (PaneAddress.key(chromium_id)) in chromium_keys)
 		):
 			continue
 		var chromium: Node = chromiums[chromium_id]
@@ -2378,9 +2394,9 @@ func take_workspace(id: int, chromium_keys: Array[String] = []) -> Dictionary:
 	if sessions.has(id):
 		sessions[id].model.changed.disconnect(_on_session_changed)
 		sessions.erase(id)
-	workspace_layout.take_pane("%%%d" % id)
+	workspace_layout.take_pane(PaneAddress.key(id))
 	for chromium_id in payload.chromiums:
-		workspace_layout.take_pane("%%%d" % chromium_id)
+		workspace_layout.take_pane(PaneAddress.key(chromium_id))
 	workspaces.erase(id)
 	if active_session_id == id:
 		active_session_id = -1
@@ -2411,7 +2427,7 @@ func receive_workspace(payload: Dictionary) -> void:
 	if not layout_transaction:
 		workspace_layout.ensure_terminal(id, application.tiling_default)
 		for chromium_id in payload.chromiums:
-			workspace_layout.merge(id, WorkspaceLayout.leaf("%%%d" % chromium_id, false))
+			workspace_layout.merge(id, WorkspaceLayout.leaf(PaneAddress.key(chromium_id), false))
 
 
 ## Put terminal viewports under the workspace canvas so they draw first.
@@ -2575,8 +2591,8 @@ func focus_pane(key: String) -> void:
 	if workspace_view != null:
 		workspace_view.raise_window(key)
 	if self.is_terminal_pane(key):
-		select_session(int(key.substr(1)))
-		var pair: Dictionary = sessions.get(int(key.substr(1)), { })
+		select_session(PaneAddress.id(key))
+		var pair: Dictionary = sessions.get(PaneAddress.id(key), { })
 		if not pair.is_empty():
 			pair.term.grab_focus()
 	elif self.is_chromium_pane(key):
@@ -2621,9 +2637,9 @@ func request_close_tab(index := -1) -> void:
 	for key in keys:
 		needs_confirmation = (
 			needs_confirmation or self.is_chromium_pane(key)
-			or session_has_running_process(int(key.substr(1)))
+			or session_has_running_process(PaneAddress.id(key))
 		)
-	var warning := session_end_warning(keys.map(func(key): return int(str(key).substr(1))))
+	var warning := session_end_warning(keys.map(func(key): return PaneAddress.id(str(key))))
 	if not needs_confirmation and warning.is_empty():
 		_close_group(id)
 		return
@@ -2631,7 +2647,7 @@ func request_close_tab(index := -1) -> void:
 	close_dialog.title = 'Close tab?'
 	close_dialog.dialog_text = tr('Close all terminals and chromiums in this tab? Running processes and unsaved chromium state will be lost.') + warning
 	close_dialog.ok_button_text = 'Close Tab'
-	_name_largest_close(close_dialog, keys.map(func(key): return int(str(key).substr(1))))
+	_name_largest_close(close_dialog, keys.map(func(key): return PaneAddress.id(str(key))))
 	add_child(close_dialog)
 	preload("res://scenes/DialogActionStyle.gd").apply(close_dialog.get_ok_button(), Color("ad3434"))
 	close_dialog.confirmed.connect(_close_group.bind(id))

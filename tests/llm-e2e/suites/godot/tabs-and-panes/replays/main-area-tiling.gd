@@ -1,4 +1,5 @@
 extends "../../../../replay/replay.gd"
+
 const Layout := preload("res://scenes/WorkspaceLayout.gd")
 
 
@@ -71,7 +72,7 @@ func play() -> void:
 		await view_menu("Floating Pane Physics")
 	var view: Control = host.workspace_view
 	var alpha: String = host.pane_focus
-	var pid: int = host.sessions[int(alpha.substr(1))].term.get_shell_pid()
+	var pid: int = host.sessions[PaneAddress.id(alpha)].term.get_shell_pid()
 	await say("Tile the main area; open a window beside ALPHA")
 	var beta := await add_window(alpha, "h")
 	if beta.is_empty():
@@ -93,7 +94,7 @@ func play() -> void:
 	)
 	var pids := { }
 	for key in [alpha, beta, gamma]:
-		pids[key] = host.sessions[int(key.substr(1))].term.get_shell_pid()
+		pids[key] = host.sessions[PaneAddress.id(key)].term.get_shell_pid()
 	await say("Drag the divider to give ALPHA more width")
 	var dividers := Layout.tile_dividers(
 		host.workspace_layout.tab(host.workspace_layout.active).tree.tiles,
@@ -205,7 +206,7 @@ func play() -> void:
 	check_tiles()
 	for key in pids:
 		check(
-			host.sessions[int(key.substr(1))].term.get_shell_pid() == pids[key],
+			host.sessions[PaneAddress.id(key)].term.get_shell_pid() == pids[key],
 			"Layout changes preserve %s's shell" % key,
 		)
 	check(
@@ -238,7 +239,7 @@ func play() -> void:
 	await say("Balance sizes restores equal siblings")
 	var response := preload("res://scenes/TilingCommands.gd").dispatch(
 		host,
-		int(alpha.substr(1)),
+		PaneAddress.id(alpha),
 		"tiling.balance-sizes",
 		{ },
 	)

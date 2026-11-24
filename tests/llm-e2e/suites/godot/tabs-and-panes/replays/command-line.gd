@@ -1,4 +1,5 @@
 extends "../../../../replay/replay.gd"
+
 const Layout := preload("res://scenes/WorkspaceLayout.gd")
 const Model := preload("res://scenes/CommandLineModel.gd")
 
@@ -12,7 +13,7 @@ func play() -> void:
 	await open_tabs(3)
 	await select_tab(0)
 	await owner_at_rest()
-	var shell := int(host.pane_focus.substr(1))
+	var shell := PaneAddress.id(host.pane_focus)
 	await say("Prefix then : opens the command line listing every command")
 	await keys("ctrl+a")
 	await type(":")

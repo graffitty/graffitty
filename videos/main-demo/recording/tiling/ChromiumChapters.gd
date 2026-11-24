@@ -1,5 +1,6 @@
 extends RefCounted
 ## Real editor/plugin, real chromium surfaces, and scripted agents executing gft.
+const PaneAddress := preload("res://scenes/PaneAddress.gd")
 const Layout := preload("res://scenes/WorkspaceLayout.gd")
 var r: SceneTree
 var host: Node
@@ -203,7 +204,7 @@ func play() -> void:
 	for id in host.chromiums:
 		if id not in old_chromiums: preview_id = id
 	var preview: Node = host.chromiums[preview_id]
-	var preview_key := "%%%d" % preview_id
+	var preview_key := PaneAddress.key(preview_id)
 	if not await wait_chromium(preview, "document.querySelector('#content h1')?.textContent === 'A connected workspace'", "The real Markdown plugin renders the document"):
 		host.world.fx_idle_after = saved_idle_after
 		return
@@ -272,7 +273,7 @@ func play() -> void:
 		if id not in before_diagram:
 			preview_id = id
 			preview = host.chromiums[id]
-			preview_key = "%%%d" % id
+			preview_key = PaneAddress.key(id)
 	var temporary_directory := "(location.pathname.startsWith('/tmp/') || location.pathname.startsWith('/private/tmp/'))"
 	if OS.get_name() == "Windows":
 		temporary_directory = "decodeURIComponent(location.pathname).toLowerCase() === %s" % JSON.stringify(("/" + output.path_join("diagram/http-request.html").replace("\\", "/")).to_lower())
@@ -350,12 +351,12 @@ func play() -> void:
 		if host.chromiums[id].tab_id == int(editor.substr(1)):
 			preview_id = id
 			preview = host.chromiums[id]
-			preview_key = "%%%d" % id
+			preview_key = PaneAddress.key(id)
 		elif host.chromiums[id].tab_id == int(codex.substr(1)):
 			task_id = id
 	if not r.check(task_id != 0 and task_id != preview_id, "Each new chromium belongs to its own agent"): return
 	var task_chromium: Node = host.chromiums[task_id]
-	var task_key := "%%%d" % task_id
+	var task_key := PaneAddress.key(task_id)
 	r.check(preview.tab_id == int(editor.substr(1)) and task_chromium.tab_id == int(codex.substr(1)),
 		"Each chromium belongs to the agent that controls it")
 	if not await r.until(func(): return preview.texture != null and task_chromium.texture != null,

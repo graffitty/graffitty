@@ -38,7 +38,7 @@ impl RemoteClientCore {
         if let Some(id) = self.namespace.local(WireId(id)) {
             return id.0;
         }
-        let local = allocate.call(&[]).to::<i64>();
+        let local = allocate.call(&[id.to_variant()]).to::<i64>();
         self.namespace.bind(WireId(id), LocalId(local));
         local
     }
@@ -125,6 +125,10 @@ impl RemoteClientCore {
             Field::from_key(&field.to_string()),
             &allocate,
         )
+    }
+    #[func]
+    fn reconnect_delay_msec(&self, failures: u32) -> i64 {
+        graffitty_client_core::transport::reconnect_delay(failures).as_millis() as i64
     }
     #[func]
     fn poll_action(

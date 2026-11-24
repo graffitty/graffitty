@@ -9,19 +9,19 @@ To give an agent the instructions, ask it to run `gft skill chromium`.
 gft chromium new --url http://localhost:3000
 ```
 
-Copy the returned browser ID. The examples below use `%3`; replace it with yours.
+Copy the returned browser ID. The examples below use `c3`; replace it with yours.
 
 ## Inspect, then interact
 
 ```sh
-gft chromium snapshot --target %3
+gft chromium snapshot --target c3
 ```
 
 Use the returned element references to fill or click:
 
 ```sh
-gft chromium fill --target %3 --ref <snapshot-ref> --text hello
-gft chromium click --target %3 --ref <snapshot-ref>
+gft chromium fill --target c3 --ref <snapshot-ref> --text hello
+gft chromium click --target c3 --ref <snapshot-ref>
 ```
 
 Replace `<snapshot-ref>` with a reference from your snapshot.

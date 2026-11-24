@@ -1,4 +1,6 @@
 extends Node
+
+const PaneAddress := preload("res://scenes/PaneAddress.gd")
 ## v1 local API: routing and authorization use the workspace capability, not focus.
 const Targets := preload("res://scenes/PaneTargets.gd")
 var application: Node
@@ -65,8 +67,8 @@ func environment_for(tab_id: int) -> Dictionary:
 		"GRAFFITTY_RUNTIME_DIR": runtime_directory,
 		"GRAFFITTY_TOKEN": tab_tokens[tab_id],
 		"GRAFFITTY_TAB_ID": str(tab_id),
-		"GRAFFITTY_SURFACE_ID": "%%%d" % tab_id,
-		"GRAFFITTY_PANE": "%%%d" % tab_id,
+		"GRAFFITTY_SURFACE_ID": str(tab_id),
+		"GRAFFITTY_PANE": PaneAddress.key(tab_id),
 		# A GUI launched from an agent must not pass that agent's identity to new shells.
 		"CODEX_THREAD_ID": "",
 		"CODEX_SESSION_ID": "",
@@ -131,9 +133,9 @@ func _handle(peer: int, json: String) -> void:
 
 func chromium_info(chromium: Node) -> Dictionary:
 	return {
-		"chromium": "%%%d" % chromium.session_id,
-		"surface": "%%%d" % chromium.session_id,
-		"pane": "%%%d" % chromium.session_id,
+		"chromium": PaneAddress.key(chromium.session_id),
+		"surface": chromium.session_id,
+		"pane": PaneAddress.key(chromium.session_id),
 		"tab_id": chromium.tab_id,
 		"native_visible": chromium.native_visible,
 		"profile": chromium.profile_directory,
@@ -173,7 +175,7 @@ func dispatch(tab_id: int, method: String, params: Dictionary) -> Dictionary:
 	params = params.duplicate(true)
 	# Resolve aliases before dispatch; the original operation still authorizes access.
 	for field in ["from", "to", "node", "chromium"]:
-		if params.has(field) and (str(params[field]).begins_with("%") or str(params[field]).begins_with(":") or str(params[field]).begins_with("@")):
+		if params.has(field) and (PaneAddress.id(str(params[field])) > 0 or str(params[field]).begins_with(":") or str(params[field]).begins_with("@")):
 			var resolved := Targets.resolve(application, owner, str(params[field]))
 			if resolved.is_empty():
 				return error("invalid_target", "Unknown pane target: " + str(params[field]) + Targets.hint(str(params[field])))
@@ -203,7 +205,7 @@ func dispatch(tab_id: int, method: String, params: Dictionary) -> Dictionary:
 		var key := Targets.resolve(application, owner, str(params.get("target", "")))
 		if not Targets.valid(key):
 			return error("invalid_target", "Choose a terminal pane")
-		return inspect_terminal(int(key.substr(1)))
+		return inspect_terminal(PaneAddress.id(key))
 	if method == "notification.bind":
 		return await owner.session_backend.connection.remote_call(tab_id, method, params)
 	if method == "terminal.pid":
@@ -215,7 +217,7 @@ func dispatch(tab_id: int, method: String, params: Dictionary) -> Dictionary:
 		var key := Targets.resolve(application, owner, str(params.target))
 		if key.is_empty():
 			return error("invalid_target", "Unknown pane target" + Targets.hint(str(params.target)))
-		if key != "%%%d" % tab_id:
+		if key != PaneAddress.key(tab_id):
 			return error("forbidden", "Terminal access is scoped to the calling terminal")
 		params.erase("target")
 	if owner.session_backend.is_remote and method in ["terminal.get_text", "terminal.type", "terminal.press"]:
@@ -248,7 +250,7 @@ func dispatch(tab_id: int, method: String, params: Dictionary) -> Dictionary:
 					"active": tab.active,
 					"windows": owner.workspace_layout.keys(owner.workspace_layout.tab(int(tab.id)).tree).size(),
 					"pid": pid,
-					"self": int(tab.id) == owner.workspace_layout.containing("%%%d" % tab_id),
+					"self": int(tab.id) == owner.workspace_layout.containing(PaneAddress.key(tab_id)),
 				}
 			)
 		return { "result": { "tabs": tabs } }
@@ -261,11 +263,11 @@ func dispatch(tab_id: int, method: String, params: Dictionary) -> Dictionary:
 			if model == null:
 				return error("no_terminal", "This workspace has no terminal")
 			model.pin_title(title)
-			return { "result": { "window": "%%%d" % tab_id, "title": model.title } }
+			return { "result": { "window": PaneAddress.key(tab_id), "title": model.title } }
 		# Titles are the one thing a workspace may set on another tab: a name
 		# grants no access to what runs there.
 		var target_host := owner
-		var target: int = owner.workspace_layout.containing("%%%d" % tab_id)
+		var target: int = owner.workspace_layout.containing(PaneAddress.key(tab_id))
 		if target < 0:
 			target = tab_id
 		if params.has("target"):
@@ -295,7 +297,7 @@ func dispatch(tab_id: int, method: String, params: Dictionary) -> Dictionary:
 			return error("invalid_params", "Expected left, down, up or right")
 		if owner.workspace_view == null:
 			return error("unsupported_layout", "This world has not opted into TerminalSpace")
-		var source := "%%%d" % tab_id
+		var source := PaneAddress.key(tab_id)
 		if params.has("target"):
 			if not params.target is String:
 				return error("invalid_params", "Expected a pane target string")
@@ -323,7 +325,7 @@ func dispatch(tab_id: int, method: String, params: Dictionary) -> Dictionary:
 		return await virtual_input.dispatch(owner, tab_id, method, params)
 	if method == "identify":
 		return {
-			"result": { "tab_id": tab_id, "terminal": "%%%d" % tab_id, "pane": "%%%d" % tab_id, "tab": Targets.tab_id(owner.workspace_layout.containing("%%%d" % tab_id)), "api_version": 1 }
+			"result": { "tab_id": tab_id, "terminal": PaneAddress.key(tab_id), "pane": PaneAddress.key(tab_id), "tab": Targets.tab_id(owner.workspace_layout.containing(PaneAddress.key(tab_id))), "api_version": 1 }
 		}
 	if method in ["surface.list", "chromium.list"]:
 		var items: Array = []
@@ -357,9 +359,9 @@ func dispatch(tab_id: int, method: String, params: Dictionary) -> Dictionary:
 			return error("launch_failed", message)
 		return { "result": chromium_info(chromium) }
 	var ref := str(params.get("chromium", ""))
-	if not Targets.valid(ref):
-		return error("invalid_target", "Explicit %N required")
-	var id := int(ref.substr(1))
+	if not ref.begins_with("c") or not Targets.valid(ref):
+		return error("invalid_target", "Explicit cN required")
+	var id := PaneAddress.id(ref)
 	var chromium_owner: Node = application.chromium_host(id)
 	var chromium: Node = chromium_owner.chromiums.get(id) if chromium_owner != null else null
 	if chromium == null:
@@ -493,7 +495,7 @@ func terminal_pids(owner: Node, params: Dictionary) -> Dictionary:
 	for pane in panes:
 		if pane.type != "terminal":
 			continue
-		var id := int(str(pane.id).substr(1))
+		var id := PaneAddress.id(str(pane.id))
 		if not owner.sessions.has(id):
 			continue
 		var term: Node = owner.sessions[id].term
@@ -570,7 +572,7 @@ func _exit_tree() -> void:
 
 
 func inspect_terminal(id: int) -> Dictionary:
-	var key := "%%%d" % id
+	var key := PaneAddress.key(id)
 	var target: Node = application.host_for_workspace(id)
 	if target == null or target.workspace_layout.containing(key) < 0:
 		return error("invalid_target", "Notification source pane has closed")

@@ -215,12 +215,12 @@ mod tests {
                 "one",
                 10,
                 ticket,
-                &json!({"result":{"pane":"%7"},"id":"forged"}),
+                &json!({"result":{"pane":"t7"},"id":"forged"}),
             )
             .unwrap();
         let response = rx.try_recv().unwrap();
         assert_eq!(response["id"], "cli");
-        assert_eq!(response["result"]["pane"], "%7");
+        assert_eq!(response["result"]["pane"], "t7");
         assert!(
             broker
                 .complete("one", 10, ticket, &json!({"result":{}}))

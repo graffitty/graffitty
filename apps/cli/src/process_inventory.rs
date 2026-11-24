@@ -363,13 +363,13 @@ mod tests {
     #[ignore = "timing observation, run with --ignored --nocapture"]
     fn foreground_reader_latency() {
         with_pty_job(|pid| {
-            let roots = serde_json::json!([{"pid":pid,"node":"%1","agent":{}}]);
+            let roots = serde_json::json!([{"pid":pid,"node":"t1","agent":{}}]);
             let mut times = Vec::new();
             for i in 0..220 {
                 let start = std::time::Instant::now();
                 let result = crate::foreground_apps::scan(&roots);
                 let elapsed = start.elapsed().as_secs_f64() * 1000.;
-                assert_eq!(result["%1"]["id"], "sleep");
+                assert_eq!(result["t1"]["id"], "sleep");
                 if i >= 20 {
                     times.push(elapsed);
                 }

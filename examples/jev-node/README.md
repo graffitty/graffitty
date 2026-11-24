@@ -60,9 +60,9 @@ For example, if the source, judge, and two receivers happen to be terminals
 1, 2, 3, and 4, the equivalent CLI commands are:
 
 ```sh
-gft graph connect --from %1 --to %2 --to-port evaluate --turn-completed
-gft graph connect --from %2 --from-port True --to %3 --send
-gft graph connect --from %2 --from-port False --to %4 --send
+gft graph connect --from t1 --to t2 --to-port evaluate --turn-completed
+gft graph connect --from t2 --from-port True --to t3 --send
+gft graph connect --from t2 --from-port False --to t4 --send
 ```
 
 Find actual IDs with `gft graph list`. For explicit incoming messages,
@@ -113,7 +113,7 @@ selects destinations from the canvas wiring.
   "type": "turn.completed",
   "event_id": "...",
   "run_id": "...",
-  "source": "%1",
+  "source": "t1",
   "text": "The changes are approved.",
   "sessions": [{
     "provider": "codex", "id": "...", "path": "/absolute/session.jsonl",

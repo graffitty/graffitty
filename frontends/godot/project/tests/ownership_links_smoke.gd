@@ -9,8 +9,8 @@ func check(ok: bool, label: String) -> void:
 func run() -> void:
 	var links := Links.new()
 	root.add_child(links)
-	var rectangles := {"%1": Rect2(0, 0, 100, 100), "%2": Rect2(200, 0, 100, 100), "%3": Rect2(200, 200, 100, 100)}
-	var owners := {"%2": "%1", "%3": "%1"}
+	var rectangles := {"t1": Rect2(0, 0, 100, 100), "t2": Rect2(200, 0, 100, 100), "t3": Rect2(200, 200, 100, 100)}
+	var owners := {"t2": "t1", "t3": "t1"}
 	links.sync(rectangles, owners)
 	check(links.edges.size() == 2, "All spawned panes show ownership without explicit edges")
 	for i in 4: await process_frame
@@ -19,14 +19,14 @@ func run() -> void:
 	for i in 4: await process_frame
 	check(links.wire_layer.draw_count == draws, "Camera movement does not repaint ownership wires")
 	var wire_draws: int = links.wire_layer.wire_draw_count()
-	rectangles["%2"].position += Vector2(10, 5)
+	rectangles["t2"].position += Vector2(10, 5)
 	links.sync(rectangles, owners)
 	for i in 4: await process_frame
 	check(links.wire_layer.wire_draw_count() - wire_draws == 1, "Moving a child repaints only its ownership wire")
-	for edge in [{"from": "%1", "to": "%2"}, {"from": "%2", "to": "%1"}, {"from": "%1", "to": "%2", "muted": true}]:
+	for edge in [{"from": "t1", "to": "t2"}, {"from": "t2", "to": "t1"}, {"from": "t1", "to": "t2", "muted": true}]:
 		links.sync(rectangles, owners, Callable(), {}, [edge])
-		check(links.edges.size() == 1 and not links.routes.has("%2"), "Explicit edge replaces ownership paint in either direction, including muted edges")
-	check(owners == {"%2": "%1", "%3": "%1"}, "Spawn ownership metadata is unchanged")
+		check(links.edges.size() == 1 and not links.routes.has("t2"), "Explicit edge replaces ownership paint in either direction, including muted edges")
+	check(owners == {"t2": "t1", "t3": "t1"}, "Spawn ownership metadata is unchanged")
 	links.sync(rectangles, owners)
 	check(links.edges.size() == 2, "Removing the graph connection restores ownership paint")
 	links.queue_free()

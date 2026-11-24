@@ -65,12 +65,12 @@ func test_shift_turns_one_terminal_drag_into_a_selecting_chord() -> void:
 	move.button_mask = MOUSE_BUTTON_MASK_LEFT
 	var release := InputEventMouseButton.new()
 	release.button_index = MOUSE_BUTTON_LEFT
-	for event in [press, move, release]: bar.apply_pointer_modifiers(event, "%1")
+	for event in [press, move, release]: bar.apply_pointer_modifiers(event, "t1")
 	expect(press.shift_pressed and move.shift_pressed and release.shift_pressed, "The press, the drag and the release all carry Shift")
 	expect(not bar.shift_drag_selects() and bar.pointer_chords.is_empty(), "One-shot Shift is spent by that drag")
 	bar.cycle_modifier("shift")
 	bar.cycle_modifier("shift")
-	for event in [press, move, release]: bar.apply_pointer_modifiers(event, "%1")
+	for event in [press, move, release]: bar.apply_pointer_modifiers(event, "t1")
 	expect(bar.shift_drag_selects(), "Locked Shift keeps selecting drag after drag")
 	bar.hide()
 	expect(not bar.shift_drag_selects(), "A hidden strip claims nothing")

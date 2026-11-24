@@ -69,7 +69,7 @@ class Fixture:
         host = next(b["state"]["pid"] for b in self.owner.topology["chromiums"] if b["id"] == sid)
         self.rpc("chromium.command", chromium=created, action="resize", args={"width": 800, "height": 600})
         page = "document.body.style.margin='0';window.testIdentity=" + json.dumps(identity) + ";" \
-            + "let n=0;function tick(){let c=[0,0,0];c[" + str(channel) + "]=170+(n++%70);" \
+            + "let n=0;function tick(){let c=[0,0,0];c[" + str(channel) + "]=170+(n++t70);" \
             + "document.body.style.background='rgb('+c.join(',')+')';requestAnimationFrame(tick)}tick();true"
         assert evaluate(self.rpc, created, page)
         return created, sid, host

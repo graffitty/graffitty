@@ -30,7 +30,7 @@ Restore is always something you start; Graffitty never restores by itself.
 ## Pane IDs stay the same
 
 A restored pane, chromium, or tab keeps the ID it had when it was saved, so
-`%7` still names the same pane in commands, scripts, and graph connections.
+`t7` still names the same pane in commands, scripts, and graph connections.
 
 An ID that a live pane already has is replaced by a new one, for example when
 you restore beside the original windows. `gft checkpoint restore` lists those

@@ -18,7 +18,7 @@ Reusing a hold ID replaces that hold.
 | --- | --- |
 | `--off sparks,camera` | Disable named effects or groups |
 | `--on cursor_trail` | Keep an effect on despite other holds in this pane |
-| `--target %12` | Manage another pane in the workspace |
+| `--target t12` | Manage another pane in the workspace |
 | `--osc` | Print a terminal sequence; useful over SSH |
 | `gft effects release` | Release every hold in the pane |
 

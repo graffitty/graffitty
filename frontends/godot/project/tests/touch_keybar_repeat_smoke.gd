@@ -1,4 +1,6 @@
 extends SceneTree
+
+const PaneAddress := preload("res://scenes/PaneAddress.gd")
 ## Real touch dispatch, with deterministic elapsed time for accessory-key holds.
 
 class RecordedTerminal extends Node:
@@ -11,12 +13,12 @@ class CommandLine extends Node:
 
 class Host extends Node:
 	var active_session_id := 1
-	var pane_focus := "%1"
+	var pane_focus := "t1"
 	var sessions := {}
 	var command_line := CommandLine.new()
 	var command_open := false
 	func command_line_open() -> bool: return command_open
-	func is_terminal_pane(key: String) -> bool: return key.begins_with("%")
+	func is_terminal_pane(key: String) -> bool: return PaneAddress.id(key) > 0
 
 var failures := 0
 
@@ -372,7 +374,7 @@ func run() -> void:
 		check(bar.held_arrow == null and terminal.keys.size() == before and other.keys.is_empty(), reason + " change cancels without sending to another target")
 		touch(bar.buttons.left, false)
 		host.active_session_id = 1
-		host.pane_focus = "%1"
+		host.pane_focus = "t1"
 		host.command_open = false
 		bar.show()
 	host.command_open = true

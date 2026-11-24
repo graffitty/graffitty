@@ -13,13 +13,13 @@ func test_direct_output_style_survives_normalization_and_renaming() -> void:
 		"outputs": [{"id": "out", "line_style": "solid"}]})
 	expect(not checked.has("error"), "Direct-output hint is accepted")
 	var graph := Graph.new()
-	graph.nodes = {"%1": {"manifest": checked.manifest}, "%2": {"provider": "claude"}}
+	graph.nodes = {"t1": {"manifest": checked.manifest}, "t2": {"provider": "claude"}}
 	var overlay := Overlay.new()
 	overlay.graph = graph
-	var edge := {"from": "%1", "from_port": "out", "send": true}
+	var edge := {"from": "t1", "from_port": "out", "send": true}
 	expect(overlay.wire_pattern(edge) == "solid", "Renamed direct outputs are solid")
-	expect(overlay.wire_pattern({"from": "%2", "from_port": "send", "send": true}) == "dashed", "Agent Send remains conditional")
-	expect(overlay.wire_pattern({"from": "%2", "from_port": "read", "read": true}) == "dashed", "Read remains dashed")
+	expect(overlay.wire_pattern({"from": "t2", "from_port": "send", "send": true}) == "dashed", "Agent Send remains conditional")
+	expect(overlay.wire_pattern({"from": "t2", "from_port": "read", "read": true}) == "dashed", "Read remains dashed")
 	edge.muted = true
 	expect(overlay.wire_pattern(edge) == "dotted", "Mute overrides direct output style")
 	edge.muted = false
@@ -30,18 +30,18 @@ func test_direct_output_style_survives_normalization_and_renaming() -> void:
 
 func test_drag_and_reconnect_resolve_the_new_output_style() -> void:
 	var graph := Graph.new()
-	graph.nodes = {"%1": {"manifest": {"inputs": [], "outputs": [{"id": "out", "line_style": "solid"}]}},
-		"%2": {"provider": "claude"}}
+	graph.nodes = {"t1": {"manifest": {"inputs": [], "outputs": [{"id": "out", "line_style": "solid"}]}},
+		"t2": {"provider": "claude"}}
 	var overlay := Overlay.new()
 	overlay.graph = graph
 	var points := PackedVector2Array([Vector2.ZERO, Vector2(100, 0)])
-	overlay.draw_preview_wire(points, "%1/out")
+	overlay.draw_preview_wire(points, "t1/out")
 	expect(overlay.rendered_pattern == "solid", "New manual-output drag previews its solid wire")
-	var previous := {"from": "%2", "from_port": "send", "send": true}
-	overlay.draw_preview_wire(points, "%1/out", previous)
+	var previous := {"from": "t2", "from_port": "send", "send": true}
+	overlay.draw_preview_wire(points, "t1/out", previous)
 	expect(overlay.rendered_pattern == "solid", "Reconnecting to direct output updates the pattern")
 	previous.muted = true
-	overlay.draw_preview_wire(points, "%1/out", previous)
+	overlay.draw_preview_wire(points, "t1/out", previous)
 	expect(overlay.rendered_pattern == "dotted", "Muted reconnection stays dotted")
 	overlay.graph = null
 	graph.free()

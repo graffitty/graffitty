@@ -20,6 +20,7 @@ var pulses: Array[Dictionary] = []
 var waiting: Dictionary = {}
 var queued_routes: Dictionary = {}
 var blink_time := 0.0
+const QueueInspector := preload("res://scenes/GraphQueueInspector.gd")
 const Geometry := preload("res://scenes/GraphLinkGeometry.gd")
 const MESSAGE_SPEED := 220.0 # Maximum screen pixels per second.
 const MIN_FLOW_DURATION := 1.2 # Short links must remain visible too.
@@ -261,7 +262,7 @@ func sync(rectangles: Dictionary, edges: Array, project: Callable, editable := f
 			routed = tools.route_points(key, a, b)
 			if not bundle.is_empty(): bundle_routes[bundle] = routed
 		var points: PackedVector2Array = routed.points
-		sheet_links.append({"points": points, "muted": edge.get("muted", false), "first_controls": routed.first, "controls": routed.last, "lengths": Geometry.distances(points), "a": a, "b": b, "both": false, "source": edge.from, "target": edge.to, "key": key, "from_socket": Ports.endpoint(edge, true), "to_socket": Ports.endpoint(edge, false)})
+		sheet_links.append({"points": points, "revision": edge.get("revision"), "muted": edge.get("muted", false), "first_controls": routed.first, "controls": routed.last, "lengths": Geometry.distances(points), "a": a, "b": b, "both": false, "source": edge.from, "target": edge.to, "key": key, "from_socket": Ports.endpoint(edge, true), "to_socket": Ports.endpoint(edge, false)})
 	sheet_geometry = false
 	_project_links(project)
 	_refresh_waiting()
@@ -456,8 +457,9 @@ func edge_tooltip(key: String) -> String:
 	var edge: Dictionary = graph.edges.get(key, {})
 	if edge.is_empty(): return ""
 	var text := _endpoint_description(edge, true) + "\n→ " + _endpoint_description(edge, false)
-	var queue: Dictionary = graph.queue_log.snapshot(key)
-	text += "\n" + tr("%d pending · %d recorded deliveries") % [queue.pending, queue.events.size()]
+	var created_revision := int(edge.get("created_revision", 0x7fffffffffffffff))
+	var queue: Dictionary = graph.queue_log.snapshot(key, created_revision)
+	text += "\n" + tr("%d pending · %d recorded deliveries") % [queue.pending, queue.events.size() + queue.omitted]
 	text += "\n" + tr("Click this wire for delivery history · Double-click to add a reroute.")
 	if edge.get("muted", false): text += "\n" + tr("Paused")
 	if graph.connection_expired(edge):
@@ -470,8 +472,8 @@ func edge_tooltip(key: String) -> String:
 	if not str(edge.get("outcome", "")).is_empty(): text += "\n" + tr("Outcome: %s") % tr(str(edge.outcome))
 	for i in range(graph.receipts.size() - 1, -1, -1):
 		var receipt: Dictionary = graph.receipts[i]
-		if receipt.get("edge", str(receipt.get("source")) + ">" + str(receipt.get("target"))) != key: continue
-		text += "\n" + tr("Last delivery: %s") % tr(str(receipt.get("status", "unknown")))
+		if receipt.get("edge") != key or int(receipt.get("edge_revision", -1)) < created_revision: continue
+		text += "\n" + tr("Last delivery: %s") % QueueInspector.status_label(str(receipt.get("status", "unknown")))
 		if not str(receipt.get("message", "")).is_empty(): text += "\n" + str(receipt.message)
 		break
 	return text
@@ -532,7 +534,7 @@ func _show_edge_hint() -> void:
 
 func queue_indicator_position(queued: Dictionary) -> Vector2:
 	var route := _route(queued.source, queued.target, queued.key)
-	if route.is_empty(): return Vector2.INF
+	if route.is_empty() or route.link.revision != queued.revision: return Vector2.INF
 	var link: Dictionary = route.link
 	var distance: float = minf(12.0, link.lengths[-1] * 0.2)
 	if queued.get("received", false): distance = link.lengths[-1] - distance
@@ -555,7 +557,7 @@ func open_queue_inspector(key: String) -> void:
 	if not is_instance_valid(graph): return
 	clear_edge_hover()
 	if not is_instance_valid(queue_inspector):
-		queue_inspector = preload("res://scenes/GraphQueueInspector.gd").new()
+		queue_inspector = QueueInspector.new()
 		add_child(queue_inspector)
 	queue_inspector.inspect(graph, key)
 
@@ -564,42 +566,60 @@ static func curve(a: Vector2, b: Vector2) -> PackedVector2Array:
 	return Geometry.curve(a, b)
 
 
-func _route(source: String, target: String, key := "") -> Dictionary:
+func _sheet_link(source: String, target: String, key: String) -> Dictionary:
 	for link in sheet_links:
 		if link.source == source and link.target == target and (key.is_empty() or link_key(link) == key):
-			return {"link": _screen_link(link), "reverse": false}
+			return link
 	return {}
+
+
+func _route(source: String, target: String, key := "") -> Dictionary:
+	var link := _sheet_link(source, target, key)
+	return {} if link.is_empty() else {"link": _screen_link(link), "reverse": false}
 
 
 func _message_transferred(source: String, target: String, event_id: String) -> void:
 	queued_routes.erase(event_id)
 	var key: String = graph.event_edges.get(event_id, source + ">" + target)
-	if not is_visible_in_tree() or _route(source, target, key).is_empty(): return
+	var revision = graph.queue_log.entries.get(event_id, {}).get("edge_revision")
+	var link := _sheet_link(source, target, key)
+	if not is_visible_in_tree() or link.is_empty() or link.revision != revision: return
 	# Flow means sent/received by the adapter, or dequeued by Codex, not model completion.
-	pulses.append({"source": source, "target": target, "event_id": event_id, "key": key, "distance": 0.0, "age": 0.0})
+	pulses.append({"source": source, "target": target, "event_id": event_id, "key": key, "revision": revision, "distance": 0.0, "age": 0.0})
 	if pulses.size() > 64: pulses.pop_front()
 	set_process(true)
 	marker_layer.queue_redraw()
 
 
 func _message_rejected(source: String, target: String, event_id: String, reason: String) -> void:
-	var route: Dictionary = queued_routes.get(event_id, _route(source, target, graph.event_edges.get(event_id, source + ">" + target)))
+	var key: String = graph.event_edges.get(event_id, source + ">" + target)
+	var revision = graph.queue_log.entries.get(event_id, {}).get("edge_revision")
+	var link := _sheet_link(source, target, key)
+	if link.is_empty() or link.revision != revision: link = queued_routes.get(event_id, {})
 	queued_routes.erase(event_id)
-	if not is_visible_in_tree() or route.is_empty(): return
+	if not is_visible_in_tree() or link.is_empty() or link.revision != revision: return
 	for pulse in pulses.duplicate():
 		if pulse.event_id == event_id:
 			if pulse.get("failed", false): return
 			pulses.erase(pulse)
 	# Preserve the last route so cancelling by disconnect still has a visible result.
 	pulses.append({"source": source, "target": target, "event_id": event_id,
-		"key": graph.event_edges.get(event_id, source + ">" + target), "distance": 0.0, "age": 0.0, "failed": true, "reason": reason, "route": route.duplicate(true)})
+		"key": link.key, "distance": 0.0, "age": 0.0, "failed": true, "reason": reason, "link": link,
+		"duration": maxf(MIN_FLOW_DURATION, link.lengths[-1] * _wire_screen_scale / MESSAGE_SPEED)})
 	if pulses.size() > 64: pulses.pop_front()
 	set_process(true)
 	marker_layer.queue_redraw()
 
 
 func _pulse_route(pulse: Dictionary) -> Dictionary:
-	return pulse.route if pulse.get("failed", false) else _route(pulse.source, pulse.target, pulse.get("key", ""))
+	var live := _sheet_link(pulse.source, pulse.target, pulse.key)
+	if not pulse.get("failed", false):
+		if live.is_empty() or live.revision != pulse.revision: return {}
+		return {"link": _screen_link(live), "reverse": false}
+	var fallback: Dictionary = pulse.link
+	var detached: bool = live.is_empty() or live.revision != fallback.revision
+	if not detached: pulse.link = live
+	return {"link": pulse.link, "reverse": false, "detached": detached}
 
 
 func _refresh_waiting() -> void:
@@ -619,15 +639,16 @@ func _refresh_waiting() -> void:
 func _add_waiting(event: Dictionary) -> void:
 	if not is_visible_in_tree(): return
 	var key: String = graph.event_edge(event)
-	if not graph.edges.has(key) or _edge_paused(graph.edges[key]): return
-	var route := _route(event.source, event.target, key)
-	if route.is_empty(): return
-	queued_routes[event.event_id] = route.duplicate(true)
+	var edge: Dictionary = graph.edges.get(key, {})
+	if edge.is_empty() or edge.revision != event.edge_revision or _edge_paused(edge): return
+	var link := _sheet_link(event.source, event.target, key)
+	if link.is_empty() or link.revision != event.edge_revision: return
+	queued_routes[event.event_id] = link
 	if queued_routes.size() > 256: queued_routes.erase(queued_routes.keys()[0])
 	var failed: bool = event.get("progress", {}).get("status", "") == "failed"
 	var received: bool = failed or event.get("progress", {}).get("status", "") == "pending"
 	var group := key + (":failed" if failed else (":received" if received else ""))
-	if not waiting.has(group): waiting[group] = {"source": event.source, "target": event.target, "key": key, "ids": {}, "received": received, "failed": failed}
+	if not waiting.has(group): waiting[group] = {"source": event.source, "target": event.target, "key": key, "revision": link.revision, "ids": {}, "received": received, "failed": failed}
 	waiting[group].ids[event.event_id] = true
 
 
@@ -645,7 +666,7 @@ func _process_body(dt: float) -> void:
 			pulses.erase(pulse)
 			continue
 		var total: float = route.link.lengths[-1]
-		var duration := maxf(MIN_FLOW_DURATION, total / MESSAGE_SPEED)
+		var duration: float = pulse.get("duration", maxf(MIN_FLOW_DURATION, total / MESSAGE_SPEED))
 		pulse.age += dt
 		# One traversal, without wrapping. Distance-based sampling keeps its speed
 		# steady through bends; short links move more slowly so the send is visible.
@@ -754,15 +775,13 @@ func draw_markers(painter: Node2D) -> void:
 		var link: Dictionary = route.link
 		var total: float = link.lengths[-1]
 		if pulse.get("failed", false):
-			var distance: float = minf(pulse.distance, total)
-			var point := Geometry.at_distance(link.points, link.lengths, total - distance if route.reverse else distance)
-			var color := Color("ff8585")
-			color.a = clampf((total + 24 - pulse.distance) / 24.0, 0.0, 1.0)
-			if not graph.edges.has(pulse.get("key", pulse.source + ">" + pulse.target)):
-				painter.polyline(link.points, Color(1.0, 0.45, 0.45, 0.15 * color.a), 1.0, true)
-			for diagonal in [Vector2(4, 4), Vector2(4, -4)]:
-				painter.line(point - diagonal, point + diagonal, Color("14212a"), 4.5, true)
-				painter.line(point - diagonal, point + diagonal, color, 2.0, true)
+			# Sample the same sheet polyline that the wire renderer paints. Even
+			# a disconnected route remains on that sheet throughout camera motion.
+			var progress := clampf(float(pulse.age) / pulse.duration, 0.0, 1.0)
+			var point := Geometry.at_distance(link.points, link.lengths, progress * total)
+			var alpha := clampf(1.0 - (float(pulse.age) - pulse.duration) / 0.12, 0.0, 1.0)
+			var unit: float = painter.local_width(_layout_project.call(point), 1.0)
+			if is_finite(unit): painter.sheet_failure(point, unit, alpha, link.points if route.detached else PackedVector2Array())
 			continue
 		var output := Ports.port_id(str(pulse.get("key", "")).get_slice(">", 0))
 		var spec := {}

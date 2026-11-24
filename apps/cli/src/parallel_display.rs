@@ -854,7 +854,7 @@ mod tests {
         let mut state = Round::default();
         for i in 0..20 {
             let wire = super::super::Wire {
-                source: format!("%{i}"),
+                source: format!("t{i}"),
                 output: "done".into(),
                 input: "join".into(),
                 revision: "1".into(),

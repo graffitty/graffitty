@@ -32,7 +32,7 @@ func test_navigation_crop_grows_only_when_more_content_is_needed() -> void:
 class Host extends Node:
 	var world: Node
 	var workspace_view: Control
-	var pane_focus := "%1"
+	var pane_focus := "t1"
 
 
 class StandaloneWorld extends "res://scenes/TerminalWorld.gd":

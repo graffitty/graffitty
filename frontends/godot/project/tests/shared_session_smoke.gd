@@ -1,4 +1,6 @@
 extends SceneTree
+
+const PaneAddress := preload("res://scenes/PaneAddress.gd")
 ## Real frontend attachment to a private owner, run by test_shared_godot_e2e.py.
 const Layout = preload("res://scenes/WorkspaceLayout.gd")
 var failures: Array[String] = []
@@ -23,7 +25,7 @@ func run() -> void:
 	var host: Node = wrapper.host
 	var id: int = host.active_session_id
 	var term: Node = host.sessions[id].term
-	var key := "%%%d" % id
+	var key := PaneAddress.key(id)
 	check(wrapper.connection.topology.get("authoritative_layout", false), "server owns canonical workspace")
 	check(term.get_shell_pid() > 0, "server shell PID reaches mirror")
 	var reconnect := OS.get_environment("GRAFFITTY_TEST_PHASE") == "reconnect"

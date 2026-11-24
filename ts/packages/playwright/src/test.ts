@@ -2,7 +2,7 @@ import { test as base, expect } from "@playwright/test";
 import { attach, launch, type Attachment, type LaunchOptions } from "./index.js";
 
 type Workers = {
-  /** Existing chromium (%N); empty launches a new pane for this worker. */
+  /** Existing chromium (cN); empty launches a new pane for this worker. */
   graffittyChromium: string;
   /** Where a launched pane goes, its URL and profile. */
   graffittyLaunch: LaunchOptions;

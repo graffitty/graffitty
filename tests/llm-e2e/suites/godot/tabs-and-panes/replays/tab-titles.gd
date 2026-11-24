@@ -1,4 +1,5 @@
 extends "../../../../replay/replay.gd"
+
 ## Replays tests/llm-e2e/suites/shared/tabs-and-panes/tab-titles.md
 ## The command line is the feature here, so the replay types it.
 
@@ -69,7 +70,7 @@ func play() -> void:
 	await keys("backslash")
 	await owner_at_rest()
 	var second: String = host.pane_focus
-	var second_id := int(second.substr(1))
+	var second_id := PaneAddress.id(second)
 	check(second != first, "Create a second pane in the same tab")
 	await type("printf '\\033]2;right-pane\\007'{enter}")
 	await hold(.4)
@@ -80,7 +81,7 @@ func play() -> void:
 	check(host.workspace_view.panes[second].handle.text == "right-pane", "Pane shows the same OSC title")
 	host.focus_pane(first)
 	await hold(.2)
-	check(await titled(2, "other"), "Focusing the first pane changes the automatic tab title (%s, focus %s, expected %s, first title %s)" % [titles(), host.pane_focus, first, host.session_model(int(first.substr(1))).title])
+	check(await titled(2, "other"), "Focusing the first pane changes the automatic tab title (%s, focus %s, expected %s, first title %s)" % [titles(), host.pane_focus, first, host.session_model(PaneAddress.id(first)).title])
 	host.focus_pane(second)
 	if OS.get_name() == "Windows":
 		# Let this fixture program own OSC 7; the next shell prompt must not

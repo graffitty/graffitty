@@ -1,5 +1,6 @@
 extends "../../../../tests/llm-e2e/replay/replay.gd"
 
+
 func _initialize() -> void:
 	super()
 	if "--user-config" in OS.get_cmdline_user_args():
@@ -24,7 +25,7 @@ func play() -> void:
 	await hold(1.0)
 	var original: Array = host.workspace_layout.tab(first).tree.windows.map(func(item): return item.pane)
 	for key in original:
-		host.sessions[int(key.substr(1))].term.send_text("printf 'TAB_RENDER_CHECK\\n'\r")
+		host.sessions[PaneAddress.id(key)].term.send_text("printf 'TAB_RENDER_CHECK\\n'\r")
 	await hold(2.0)
 	host.create_session()
 	await hold(2.0)

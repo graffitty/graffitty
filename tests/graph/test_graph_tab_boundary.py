@@ -18,6 +18,62 @@ from test_session_transfer import Peer
 
 
 class GraphTabBoundaryTests(unittest.TestCase):
+    def test_background_session_catalog_carries_connected_agents(self):
+        with tempfile.TemporaryDirectory(prefix="gft-away-agents-") as folder:
+            directory = Path(folder)
+            env = {k: v for k, v in os.environ.items() if not k.startswith("GRAFFITTY_")}
+            for kind in ("CONFIG", "STATE", "CACHE", "DATA"):
+                env[f"XDG_{kind}_HOME"] = str(directory / kind.lower())
+            with PrivateServer(env, directory, "/bin/sh") as owner:
+                local = json.loads(owner.descriptor.read_text())["local"]
+                source = Peer(local, "source", new=True)
+                viewer = Peer(local, "viewer", new=True)
+                try:
+                    first = source.topology["panes"][0]["id"]
+                    second = source.action("create", first, kind="pane")["created"]
+                    for pane in (first, second):
+                        reply = source.action("rpc", pane, method="agent.event", params={
+                            "provider": "codex", "event": "SessionStart", "session_id": f"fixture-{pane}"})
+                        self.assertNotIn("error", reply)
+                    link = {"from": f"t{first}", "to": f"t{second}"}
+                    reply = source.action("rpc", first, method="graph.connect", params={**link, "read": True})
+                    self.assertNotIn("error", reply)
+                    catalog_link = {**link, "kind": "graph"}
+                    catalog = viewer.until(lambda m: m.get("type") == "session_list" and any(
+                        catalog_link in session["agent_tree"]["edges"] for session in m["sessions"]))
+                    session = next(s for s in catalog["sessions"] if catalog_link in s["agent_tree"]["edges"])
+                    self.assertGreater(session["agent_tree"]["graph_revision"], 0)
+                    self.assertEqual({n["key"] for n in session["agent_tree"]["nodes"] if n["kind"] == "agent"},
+                                     set(link.values()))
+                    child = source.action("rpc", first, method="terminal.run", params={
+                        "command": r"printf '\033]2;Build logs\007'"})["result"]["pane"]
+                    catalog = viewer.until(lambda message: message.get("type") == "session_list" and any(
+                        node["key"] == child and node["title"] == "Build logs"
+                        for descriptor in message["sessions"] for node in descriptor["agent_tree"]["nodes"]))
+                    self.assertTrue(any(node["key"] == child and node["kind"] == "terminal"
+                                        for descriptor in catalog["sessions"] for node in descriptor["agent_tree"]["nodes"]))
+                    spawned = {"from": f"t{first}", "to": child, "kind": "spawned"}
+                    self.assertTrue(any(spawned in entry["agent_tree"]["edges"] for entry in catalog["sessions"]))
+                    prior_activity = next(agent["activity_revision"] for entry in catalog["sessions"]
+                                          for agent in entry["agents"] if agent["pane"] == second)
+                    self.assertLess(prior_activity, catalog["revision"])
+                    source.action("close", second)
+                    closed = viewer.until(lambda message: message.get("type") == "session_list"
+                        and all(agent["pane"] != second for entry in message["sessions"] for agent in entry["agents"]))
+                    self.assertGreater(closed["revision"], catalog["revision"])
+                    remaining = next(entry["agent_tree"] for entry in closed["sessions"] if entry["id"] == session["id"])
+                    self.assertGreater(remaining["graph_revision"], session["agent_tree"]["graph_revision"])
+                    self.assertNotIn(catalog_link, remaining["edges"])
+                    self.assertIn(spawned, remaining["edges"])
+                    source.action("rpc", first, method="agent.event", params={
+                        "provider":"codex", "event":"UserPromptSubmit", "session_id":f"fixture-{first}"})
+                    source.sync()
+                    active = next(node for node in source.topology["graph"]["nodes"] if node["node"] == f"t{first}")
+                    self.assertGreater(active["activity_revision"], closed["revision"])
+                finally:
+                    viewer.socket.close()
+                    source.socket.close()
+
     def test_reject_cross_tab_links_and_move_complete_component(self):
         with tempfile.TemporaryDirectory(prefix="gft-graph-tabs-") as folder:
             directory = Path(folder)
@@ -37,7 +93,7 @@ class GraphTabBoundaryTests(unittest.TestCase):
                         self.assertNotIn("error", rpc(pane, "agent.event", provider="adapter", event="SessionStart"))
                         self.assertNotIn("error", rpc(pane, "agent.register", name="Test", inputs=[{"id": "in"}], outputs=[{"id": "out"}]))
                     def connect(a, b, **flags):
-                        return rpc(first, "graph.connect", **{"from": f"%{a}", "to": f"%{b}", "from_port": "out", "to_port": "in", **flags})
+                        return rpc(first, "graph.connect", **{"from": f"t{a}", "to": f"t{b}", "from_port": "out", "to_port": "in", **flags})
                     before = rpc(first, "graph.list")["result"]
                     for a, b in ((first, other), (other, first), (second, other)):
                         rejected = connect(a, b)
@@ -59,9 +115,9 @@ class GraphTabBoundaryTests(unittest.TestCase):
                     before = peer.sync()
                     original = {p["id"]: p for p in before["panes"]}
                     # Reject bad targets without partially moving the graph.
-                    self.assertEqual(peer.action("regroup", surface=f"%{second}", tab=999999)["type"], "error")
+                    self.assertEqual(peer.action("regroup", pane=f"t{second}", tab=999999)["type"], "error")
                     self.assertEqual({p["id"]: p["tab"] for p in peer.sync()["panes"]}, {p: v["tab"] for p, v in original.items()})
-                    moved = peer.action("regroup", surface=f"%{second}", tab=other)
+                    moved = peer.action("regroup", pane=f"t{second}", tab=other)
                     self.assertNotEqual(moved["type"], "error", moved)
                     panes = {p["id"]: p for p in peer.sync()["panes"]}
                     for pane in (first, second, third):
@@ -72,7 +128,7 @@ class GraphTabBoundaryTests(unittest.TestCase):
                     self.assertEqual(rpc(first, "graph.list")["result"]["edges"], graph)
                     self.assertIn("error", connect(first, unrelated))
                     # Moving into a new tab carries the same complete component.
-                    new = peer.action("regroup", surface=f"%{third}")
+                    new = peer.action("regroup", pane=f"t{third}")
                     self.assertNotEqual(new["type"], "error", new)
                     panes = {p["id"]: p for p in peer.sync()["panes"]}
                     self.assertEqual(len({panes[p]["tab"] for p in (first, second, third)}), 1)

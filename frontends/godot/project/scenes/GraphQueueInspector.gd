@@ -5,6 +5,7 @@ const Ports := preload("res://scenes/GraphPorts.gd")
 const DEFAULT_SIZE := Vector2i(1100, 720)
 var graph: Node
 var edge_key := ""
+var _edge_created_revision := -1
 var summary := Label.new()
 var empty := Label.new()
 var events := Tree.new()
@@ -119,6 +120,7 @@ func _ready() -> void:
 func inspect(target_graph: Node, key: String) -> void:
 	_bind_graph(target_graph)
 	edge_key = key
+	_edge_created_revision = -1
 	stop_editor.bind_graph(graph, key)
 	selected = ""
 	selected_run = ""
@@ -163,7 +165,8 @@ func _journal_changed(edge: String) -> void:
 	if edge == edge_key: _queue_refresh()
 
 func _graph_changed() -> void:
-	# Connection removal/renaming changes the heading, not journal contents.
+	if is_instance_valid(graph) and graph.edges.has(edge_key) and graph.edges[edge_key].get("created_revision", 0x7fffffffffffffff) != _edge_created_revision:
+		_queue_refresh()
 	if visible and not last_snapshot.is_empty() and is_instance_valid(graph):
 		_update_summary(last_snapshot)
 	_sync_paused()
@@ -275,14 +278,16 @@ static func clock(value: Variant, full := false) -> String:
 static func status_text(row: Dictionary) -> String:
 	var status := str(row.status)
 	var label := status_label(status)
-	if status.begins_with("failed") or status.begins_with("cancel failed"): return "[!] " + label
+	if status.begins_with("failed") or status.begins_with("cancel failed") \
+			or status.begins_with("cancellation unconfirmed: ") or status.begins_with("delivery unconfirmed: "):
+		return "[!] " + label
 	if status.begins_with("cancelled"): return "[-] " + label
 	if row.pending: return ("[ ] " if status == "queued in Graffitty" else "[~] ") + label
 	if status in ["sent to receiver", "submitted", "delivered"]: return "[x] " + label
 	return "[?] " + label
 
 static func status_label(status: String) -> String:
-	for prefix in ["failed: ", "cancel failed: ", "cancelled: "]:
+	for prefix in ["failed: ", "cancel failed: ", "cancellation pending: ", "cancelled: "]:
 		if status.begins_with(prefix):
 			return String(TranslationServer.translate(prefix + "%s")) % String(TranslationServer.translate(status.trim_prefix(prefix)))
 	return String(TranslationServer.translate(status))
@@ -294,7 +299,9 @@ func refresh(force := false) -> void:
 		selected_run = ""
 		_update_run_budget(true)
 		return
-	var snapshot: Dictionary = graph.queue_log.snapshot(edge_key)
+	if graph.edges.has(edge_key):
+		_edge_created_revision = int(graph.edges[edge_key].get("created_revision", 0x7fffffffffffffff))
+	var snapshot: Dictionary = graph.queue_log.snapshot(edge_key, _edge_created_revision)
 	_update_summary(snapshot)
 	_update_run_budget()
 	if not force and snapshot == last_snapshot: return
@@ -339,7 +346,7 @@ func _update_summary(snapshot: Dictionary) -> void:
 	var connected: bool = graph.edges.has(edge_key)
 	var from := edge_key.get_slice(">", 0)
 	var to := edge_key.get_slice(">", 1)
-	summary.text = tr("%s / %s → %s / %s\n%d pending · %d recorded%s%s") % [Targets.label(Ports.node_id(from)), Ports.port_id(from), Targets.label(Ports.node_id(to)), Ports.port_id(to), snapshot.pending, snapshot.events.size(), tr(" · connection removed") if not connected else "", tr(" · %d omitted") % snapshot.omitted if snapshot.omitted > 0 else ""]
+	summary.text = tr("%s / %s → %s / %s\n%d pending · %d recorded%s%s") % [Targets.label(Ports.node_id(from)), Ports.port_id(from), Targets.label(Ports.node_id(to)), Ports.port_id(to), snapshot.pending, snapshot.events.size() + snapshot.omitted, tr(" · connection removed") if not connected else "", tr(" · %d omitted") % snapshot.omitted if snapshot.omitted > 0 else ""]
 
 func _select() -> void:
 	var item := events.get_selected()

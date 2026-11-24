@@ -1173,7 +1173,7 @@ mod tests {
     #[test]
     fn defaults_do_not_send_graph_metadata_and_content_replaces_fallback() {
         let s = settings(Service::Telegram);
-        let m = render(&s, &json!({"text":"Done", "sessions":[{"path":"/private/session"}], "payload":{"private":"data"}, "source":"%2"})).unwrap();
+        let m = render(&s, &json!({"text":"Done", "sessions":[{"path":"/private/session"}], "payload":{"private":"data"}, "source":"t2"})).unwrap();
         let p = plan(Service::Telegram, &s, &m).unwrap();
         assert_eq!(p[0].body, json!({"chat_id":"123","text":"Done"}));
         let p = plan(

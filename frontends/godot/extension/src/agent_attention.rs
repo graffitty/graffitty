@@ -1,4 +1,4 @@
-//! Godot values only. Unseen-outcome evidence and counting live in client-core.
+//! Godot values only. Server attention and pending receipts live in client-core.
 use crate::graph_client::{from_variant, to_variant};
 use godot::{
     classes::{IRefCounted, RefCounted},
@@ -46,5 +46,46 @@ impl AgentAttentionCore {
     fn marker(&self, panes: PackedStringArray) -> VarDictionary {
         let panes: Vec<String> = panes.as_slice().iter().map(|key| key.to_string()).collect();
         to_variant(&self.state.marker(panes.iter().map(String::as_str))).to()
+    }
+
+    /// Effective server attention, including a pending local read, or null.
+    #[func]
+    fn attention(&self, key: GString) -> Variant {
+        to_variant(&self.state.attention(&key.to_string()))
+    }
+
+    /// Apply existing pending receipts to a server attention field from any session.
+    #[func]
+    fn project_attention(&mut self, attention: Variant) -> Variant {
+        match from_variant(&attention) {
+            Ok(attention) => to_variant(&self.state.project_attention(&attention)),
+            Err(error) => {
+                godot_error!("Agent attention ignored an invalid attention field: {error}");
+                Variant::nil()
+            }
+        }
+    }
+
+    #[func]
+    fn has_pending(&self) -> bool {
+        self.state.has_pending()
+    }
+
+    #[func]
+    fn reconcile_inventory(&mut self, revision: i64, rows: VarDictionary) -> bool {
+        let Ok(revision) = u64::try_from(revision) else { return false };
+        match from_variant(&rows.to_variant()) {
+            Ok(rows) => self.state.reconcile_inventory(revision, &rows),
+            Err(error) => {
+                godot_error!("Agent attention ignored an invalid catalog: {error}");
+                false
+            }
+        }
+    }
+
+    /// Current matching receipts to retry until the server broadcasts seen.
+    #[func]
+    fn acknowledgements(&self) -> Variant {
+        to_variant(&self.state.acknowledgements())
     }
 }

@@ -1,4 +1,5 @@
 extends "res://tests/terminal_space_smoke.gd"
+
 const Background := preload("../../../../tests/llm-e2e/replay/background.gd")
 const ScreenSpace := preload("res://scenes/ScreenSpace.gd")
 var pointer_position := Vector2.INF
@@ -215,7 +216,7 @@ func run() -> void:
 	await settled(first)
 	check(first.get_tabs().size() == 2 and app.hosts.size() == 1, 'Dropping attaches the tab to the destination session and retires the empty source window')
 	check(first.sessions.has(tab) and first.sessions[tab].term.get_shell_pid() == detached_pid, 'Transferred shell keeps its PID')
-	check(first.workspace_layout.active == tab and first.pane_focus == "%%%d" % tab,
+	check(first.workspace_layout.active == tab and first.pane_focus == PaneAddress.key(tab),
 		"Completed tab-bar transfer selects and subscribes to the carried tab")
 	await input_roundtrip(first, tab, 'Tab-bar transfer routes input through the destination session')
 	await wrapper.connection.request_action('sync')

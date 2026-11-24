@@ -75,6 +75,35 @@ class RecordingPeer extends RefCounted:
 		sent.append(JSON.parse_string(text))
 		return OK
 
+func test_ready_binds_all_views_to_the_same_epoch_namespace() -> void:
+	var first := Connection.new()
+	var old := Connection.new()
+	var fresh := Connection.new()
+	for peer in [first, old, fresh]:
+		Engine.get_main_loop().root.add_child(peer)
+		peer.url = "test://epoch-namespace"
+		peer.namespace_ids = true
+		peer.socket = RecordingPeer.new()
+		peer.password_verified = true
+	var ready := func(peer: Node, epoch: String):
+		peer._receive({"type":"ready","version":Connection.Protocol.VERSION,"epoch":epoch})
+	ready.call(first, "original")
+	ready.call(old, "original")
+	var original := old.local_id(7)
+	expect(first.local_id(7) == original, "Original views share the wire binding")
+	first.subscriptions = [original]
+	ready.call(first, "original")
+	expect(first.subscriptions == [original] and first.local_id(7) == original, "Same-epoch handover retains subscriptions and bindings")
+	ready.call(first, "replacement")
+	ready.call(fresh, "replacement")
+	var graph: Dictionary = fresh.map_graph({"target":"t7"}, true)
+	var replacement := first.local_id(7)
+	expect(replacement != original and old.local_id(7) == original, "Old and replacement epochs use separate pane identities")
+	expect(first.subscriptions.is_empty(), "Replacement drops previous-epoch subscriptions")
+	expect(graph.target == "t%d" % replacement and fresh.local_id(7) == replacement, "Graph-first and pane-first bindings match on the replacement")
+	for peer in [first, old, fresh]: peer.free()
+
+
 func test_reauthenticated_socket_restores_the_previous_session() -> void:
 	var connection := Connection.new()
 	var peer := RecordingPeer.new()
@@ -85,7 +114,7 @@ func test_reauthenticated_socket_restores_the_previous_session() -> void:
 	connection.epoch = "same-server"
 	connection._receive({"type": "ready", "version": Connection.Protocol.VERSION, "epoch": "same-server"})
 	expect(connection.workspace.is_empty() and connection.preferred_session == "$4", "Authentication retains the destination without claiming the new socket is attached")
-	connection._receive({"type": "session_list", "sessions": [{"id": "$4"}], "stops_when_empty": false})
+	connection._receive({"type": "session_list", "revision": 1, "sessions": [{"id": "$4", "agents": []}], "stops_when_empty": false})
 	expect(peer.sent.any(func(message): return message.get("type") == "session_switch" and message.get("name") == "$4"), "Session discovery explicitly reattaches the previous session")
 	connection.free()
 
@@ -115,12 +144,12 @@ func test_session_close_prediction_uses_server_policy_and_inventory() -> void:
 	var connection := Connection.new()
 	connection.connected = true
 	expect(connection.session_close_stops_server("$4") == null, "An unpublished catalog gives no shutdown prediction")
-	connection._receive({"type": "session_list", "sessions": [{"id": "$4"}], "stops_when_empty": true})
+	connection._receive({"type": "session_list", "revision": 2, "sessions": [{"id": "$4", "agents": []}], "stops_when_empty": true})
 	expect(connection.session_close_stops_server("$4") == true, "The final private session stops the server")
 	expect(connection.session_close_stops_server("$5") == null, "An unknown target gives no shutdown prediction")
-	connection._receive({"type": "session_list", "sessions": [{"id": "$4"}, {"id": "$5"}], "stops_when_empty": true})
+	connection._receive({"type": "session_list", "revision": 3, "sessions": [{"id": "$4", "agents": []}, {"id": "$5", "agents": []}], "stops_when_empty": true})
 	expect(connection.session_close_stops_server("$4") == false, "A sibling session keeps the private server running")
-	connection._receive({"type": "session_list", "sessions": [{"id": "$4"}], "stops_when_empty": false})
+	connection._receive({"type": "session_list", "revision": 4, "sessions": [{"id": "$4", "agents": []}], "stops_when_empty": false})
 	expect(connection.session_close_stops_server("$4") == false, "Remote access keeps the server running without sessions")
 	connection.free()
 
@@ -164,7 +193,7 @@ func test_failed_input_and_actions_retry_without_replaying_or_discarding_workspa
 		else:
 			expect(connection.send_action("key", 7, {"unicode": 120}) == -1, "Failed key reports failure")
 		expect(connection.enabled and not connection.connected and connection.socket == null, "Write failure releases the socket but keeps automatic reconnection enabled")
-		expect(connection.retry_at > Time.get_ticks_msec() and connection.status_message.begins_with("Offline"), "Write failure reports offline and schedules a bounded retry")
+		expect(connection.retry_at <= Time.get_ticks_msec() and connection.status_message.begins_with("Offline"), "An established link gets an immediate redial after a write failure")
 		expect(connection.epoch == "same-server" and connection.topology.panes == [{"id": 7}] and connection.subscriptions == [7], "Reconnect retains the terminal identity and desired subscriptions")
 		connection.send_input(7, "later".to_utf8_buffer())
 		connection.send_action("key", 7, {"unicode": 121})
@@ -182,11 +211,11 @@ func test_regroup_maps_pane_destination_and_reply_between_namespaces() -> void:
 	connection.socket = peer
 	connection.connected = true
 	connection.namespace_ids = true
-	connection.local_ids = {0: 70, 8: 80}
-	connection.send_action("regroup", -1, {"surface": "%70", "tab": 80})
-	expect(peer.sent[0].surface == "%0" and int(peer.sent[0].tab) == 8,
-		"Regroup sends the server's pane and tab IDs, including pane zero")
-	connection.send_action("regroup", -1, {"surface": "%70", "tab": null})
+	connection.local_ids = {7: 70, 8: 80}
+	connection.send_action("regroup", -1, {"pane": "t70", "tab": 80})
+	expect(peer.sent[0].pane == "t7" and int(peer.sent[0].tab) == 8,
+		"Regroup sends the server's pane and tab IDs")
+	connection.send_action("regroup", -1, {"pane": "t70", "tab": null})
 	expect(peer.sent[1].tab == null, "Creating a tab preserves the null destination")
 	var replies := []
 	connection.acknowledged.connect(func(reply): replies.append(reply))
@@ -217,16 +246,16 @@ func test_tab_switch_discards_late_scene_and_gpu_fallback_requests() -> void:
 func test_graph_connections_map_canonical_pane_ids_and_keep_port_names() -> void:
 	var connection := Connection.new()
 	connection.namespace_ids = true
-	connection.local_ids = {0: 70, 8: 80}
-	var graph := {"nodes": [{"node": "%0", "pane": "%0"}, {"node": "%8"}],
-		"edges": [{"from": "%0", "to": "%8", "from_port": "out", "to_port": "in", "edge": "%0/out>%8/in"}],
-		"queues": {"%8": [{"source": "%0", "target": "%8", "edge": "%0/out>%8/in"}]},
-		"by_edge": {"%0/out>%8/in": {"count": 1}}}
+	connection.local_ids = {7: 70, 8: 80}
+	var graph := {"nodes": [{"node": "t7", "pane": "t7"}, {"node": "t8"}],
+		"edges": [{"from": "t7", "to": "t8", "from_port": "out", "to_port": "in", "edge": "t7/out>t8/in"}],
+		"queues": {"t8": [{"source": "t7", "target": "t8", "edge": "t7/out>t8/in"}]},
+		"by_edge": {"t7/out>t8/in": {"count": 1}}}
 	var mapped: Dictionary = connection.map_graph(graph, true)
-	expect(mapped.nodes[0].node == "%70" and mapped.nodes[0].pane == "%70", "Node and pane use one canonical ID, including pane zero")
-	expect(mapped.edges[0].from == "%70" and mapped.edges[0].to == "%80", "Connections use canonical pane endpoints")
-	expect(mapped.edges[0].edge == "%70/out>%80/in", "Socket IDs preserve their port suffixes")
-	expect(mapped.queues["%80"][0].source == "%70" and mapped.by_edge.has("%70/out>%80/in"), "Queue and edge map keys use the same namespace")
+	expect(mapped.nodes[0].node == "t70" and mapped.nodes[0].pane == "t70", "Node and pane use one canonical ID")
+	expect(mapped.edges[0].from == "t70" and mapped.edges[0].to == "t80", "Connections use canonical pane endpoints")
+	expect(mapped.edges[0].edge == "t70/out>t80/in", "Socket IDs preserve their port suffixes")
+	expect(mapped.queues["t80"][0].source == "t70" and mapped.by_edge.has("t70/out>t80/in"), "Queue and edge map keys use the same namespace")
 	expect(connection.map_graph(mapped, false) == graph, "Returning to the owner preserves the entire graph")
 	connection.free()
 
@@ -234,10 +263,10 @@ func test_terminal_targets_and_pid_rows_keep_server_namespaces() -> void:
 	var connection := Connection.new()
 	connection.namespace_ids = true
 	connection.local_ids = {7: 70, 8: 80}
-	expect(connection.map_graph({"target":"%70"}, false).target == "%7", "Pane aliases use the owner's IDs")
+	expect(connection.map_graph({"target":"t70"}, false).target == "t7", "Pane aliases use the owner's IDs")
 	expect(connection.map_graph({"target":"@80.1"}, false).target == "@8.1", "Tab aliases preserve pane numbers")
-	var row: Dictionary = connection.map_graph({"pane":"%7", "id":"%7", "tab":"@8", "root_pid":123}, true)
-	expect(row.pane == "%70" and row.id == "%70" and row.tab == "@80", "PID rows map identifiers back to the view")
+	var row: Dictionary = connection.map_graph({"pane":"t7", "id":"t7", "tab":"@8", "root_pid":123}, true)
+	expect(row.pane == "t70" and row.id == "t70" and row.tab == "@80", "PID rows map identifiers back to the view")
 	expect(row.root_pid == 123, "Operating system PIDs are never remapped")
 	connection.free()
 
@@ -273,6 +302,28 @@ func test_final_packets_before_eof_do_not_trigger_reconnection() -> void:
 class OpenPeer extends ClosingPeer:
 	func get_ready_state() -> int: return WebSocketPeer.STATE_OPEN
 
+
+class HandshakePeer extends OpenPeer:
+	var sent: Array = []
+	func send_text(text: String) -> int:
+		sent.append(JSON.parse_string(text))
+		return OK
+
+func test_reconnect_advertises_configured_stream_limits() -> void:
+	var connection := Connection.new()
+	connection.url = "ipc://test"
+	connection.enabled = true
+	var limits := {"max_height": 360.0, "fps": 30.0, "bitrate_kbps": 2000.0}
+	connection.stream_quality = limits.duplicate()
+	for epoch in ["initial", "initial", "replacement"]:
+		var socket := HandshakePeer.new()
+		socket.packets.clear()
+		connection.socket = socket
+		connection._process(0.0)
+		expect(socket.sent.front().chromium_stream == limits, "Every new socket advertises the configured stream budget: %s" % str(socket.sent.front().chromium_stream))
+		connection._receive({"type": "ready", "version": Connection.Protocol.VERSION, "epoch": epoch})
+		connection._network_failed("Connection lost")
+	connection.free()
 
 func test_local_session_close_stays_attached_while_another_session_lives() -> void:
 	var connection := Connection.new()

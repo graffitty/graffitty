@@ -1,6 +1,7 @@
 extends "main-area-tiling.gd"
 
 
+
 func verify_pwd(expected: String, tag: String) -> void:
 	var path := OS.get_environment("XDG_STATE_HOME").path_join("graffitty-cwd-%d-%s" % [OS.get_process_id(), tag])
 	if OS.get_name() == "Windows":
@@ -33,7 +34,7 @@ func play() -> void:
 			check(initial == arg.substr(6), "--cwd overrides the configured startup directory")
 	await verify_pwd(initial, "initial")
 	var alpha: String = host.pane_focus
-	var alpha_id := int(alpha.substr(1))
+	var alpha_id := PaneAddress.id(alpha)
 	var pid: int = host.sessions[alpha_id].term.get_shell_pid()
 	var base := OS.get_environment("XDG_STATE_HOME")
 	var directory := base.path_join("graffitty pane cwd %d" % OS.get_process_id())
@@ -65,4 +66,4 @@ func play() -> void:
 		return
 	await verify_pwd(initial, "fallback")
 	check(host.sessions[alpha_id].term.get_shell_pid() == pid, "Original shell survives every split")
-	check(host.sessions.has(int(beta.substr(1))), "Other pane survives")
+	check(host.sessions.has(PaneAddress.id(beta)), "Other pane survives")

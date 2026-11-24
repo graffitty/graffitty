@@ -8,8 +8,8 @@ func manifest() -> Dictionary:
 
 func test_reroute_stems_are_grouped_by_output_socket() -> void:
 	var edges := {
-		"%1/yes>%2": {"from": "%1", "from_port": "yes", "to": "%2"},
-		"%1/no>%2": {"from": "%1", "from_port": "no", "to": "%2"}}
+		"t1/yes>t2": {"from": "t1", "from_port": "yes", "to": "t2"},
+		"t1/no>t2": {"from": "t1", "from_port": "no", "to": "t2"}}
 	var data := {"routes": {}}
 	Topology.normalize(data)
 	var segments: Array = Topology.segments(data, edges)

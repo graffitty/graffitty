@@ -125,7 +125,7 @@ def main(out: Path):
                  {'type': 'tool', 'name': 'exec_command', 'input': 'npm run e2e', 'command': tools + ['e2e', str(build)],
                   'preview_lines': 8, 'ms': 300}]
         if passes < 6:
-            steps.append({'type': 'tool', 'name': 'exec_command', 'input': f"gft graph send --to %1 --text 'E2E on build {build}: {passes}/6 passed. Please fix: …'",
+            steps.append({'type': 'tool', 'name': 'exec_command', 'input': f"gft graph send --to t1 --text 'E2E on build {build}: {passes}/6 passed. Please fix: …'",
                           'command': tools + ['send', str(build)], 'ms': 300})
             response = f'Build {build}: {passes}/6 passed. Sent the failures to Claude.'
         else:

@@ -3,7 +3,7 @@
 //! See NOTICE for the upstream revision and attribution.
 use crate::{Error, api};
 use base64::{Engine as _, engine::general_purpose::STANDARD};
-use graffitty_protocol::file_transfer::{CHUNK_BYTES, Chunk, MAX_BYTES, Receipt};
+use graffitty_protocol::file_transfer::{MAX_CHUNK_BYTES, Chunk, MAX_BYTES, Receipt};
 use std::{collections::HashMap, fs, io::Write, path::{Path, PathBuf}, time::{Duration, Instant}};
 
 const TIMEOUT: Duration = Duration::from_secs(120);
@@ -46,12 +46,12 @@ impl Store {
         let invalid = || api::error("invalid_params", "Invalid file upload chunk");
         if uuid::Uuid::parse_str(&chunk.id).is_err() || chunk.id.len() != 36
             || chunk.name.is_empty() || chunk.name.len() > 255 || chunk.name.chars().any(char::is_control)
-            || chunk.size > MAX_BYTES || chunk.data.len() > CHUNK_BYTES.div_ceil(3) * 4 {
+            || chunk.size > MAX_BYTES || chunk.data.len() > MAX_CHUNK_BYTES.div_ceil(3) * 4 {
             return Err(invalid());
         }
         let data = STANDARD.decode(&chunk.data).map_err(|_| invalid())?;
         let end = chunk.offset.checked_add(data.len()).ok_or_else(invalid)?;
-        if data.len() > CHUNK_BYTES || end > chunk.size || (data.is_empty() && chunk.size != 0) { return Err(invalid()); }
+        if data.len() > MAX_CHUNK_BYTES || end > chunk.size || (data.is_empty() && chunk.size != 0) { return Err(invalid()); }
         let key = (pane, chunk.id.clone());
         if !self.pending.contains_key(&key) {
             if chunk.offset != 0 { return Err(api::error("upload_expired", "Upload expired or belongs to another terminal")); }
@@ -78,7 +78,7 @@ impl Store {
         pending.file.write_all(&data)?;
         pending.received = end;
         pending.touched = Instant::now();
-        let mut receipt = Receipt { id: chunk.id, pane: format!("%{pane}"), received: end, path: None };
+        let mut receipt = Receipt { id: chunk.id, pane: format!("t{pane}"), received: end, path: None };
         if end != chunk.size { return Ok((receipt, false)); }
         let pending = self.pending.remove(&key).unwrap();
         pending.file.sync_all()?;
@@ -88,6 +88,18 @@ impl Store {
         receipt.path = Some(path.to_string_lossy().into_owned());
         Ok((receipt, pending.paste))
     }
+}
+
+/// Reserve a private destination on the shared filesystem of a local frontend.
+pub fn local_destination(root: &Path, pane: u64, name: &str) -> Result<PathBuf, Error> {
+    if name.is_empty() || name.len() > 255 || name.chars().any(char::is_control) {
+        return Err(api::error("invalid_params", "Invalid attachment name"));
+    }
+    let parent = root.join(pane.to_string());
+    private_directory(&parent)?;
+    let directory = parent.join(uuid::Uuid::new_v4().to_string());
+    fs::create_dir(&directory)?;
+    Ok(directory.join(clean(name)))
 }
 
 fn private_directory(path: &Path) -> Result<(), Error> {

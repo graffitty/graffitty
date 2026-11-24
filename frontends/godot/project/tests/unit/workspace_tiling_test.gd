@@ -382,3 +382,14 @@ func test_tiling_startup_default_round_trip() -> void:
 	var disabled := PackedStringArray([client_toml("tiling", "[tiling]\nenabled = false\n")])
 	expect(not Loader.tiling_config(disabled).enabled, "client.toml sets the startup default")
 	expect(Loader.tiling_config(PackedStringArray()).enabled, "New tabs tile by default")
+
+func test_manual_return_to_a_floating_tab_tiles_only_the_dragged_pane() -> void:
+	var tree := {"tiling": false, "windows": [
+		{"pane":"t1", "rect":Rect2(1200, 0, 320, 200), "stashed":true},
+		{"pane":"t2", "rect":Rect2(1600, 0, 320, 200)},
+		{"pane":"t3", "rect":Rect2(2000, 0, 320, 200), "stashed":true}]}
+	var area := Rect2(0, 0, 1000, 700)
+	var plan := Layout.preview_placement(tree, tree.windows[0], area, area, area.get_center(), {}, true)
+	expect(plan.tree.tiling and Layout.main_keys(plan.tree) == ["t1"], "Returning t1 restores just its tile")
+	expect(Layout.find(plan.tree, "t2").graph_floating and Layout.find(plan.tree, "t3").stashed, "Overview panes retain their layers")
+	expect(not tree.tiling and tree.windows[0].stashed, "A hover preview can still be cancelled")

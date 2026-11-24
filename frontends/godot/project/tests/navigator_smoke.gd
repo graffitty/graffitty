@@ -1,4 +1,5 @@
 extends "../../../../tests/llm-e2e/replay/replay.gd"
+
 const Layout := preload("res://scenes/WorkspaceLayout.gd")
 var navigation_strokes := 0
 
@@ -43,7 +44,7 @@ func play() -> void:
 			break
 	check(ready,"Real Fyler calls gft at its editor edge without a bridge")
 	if not ready: return
-	var tree_terminal: Control = host.sessions[int(tree.substr(1))].term
+	var tree_terminal: Control = host.sessions[PaneAddress.id(tree)].term
 	tree_terminal.keystroke.connect(func(_cell, _unicode): navigation_strokes += 1)
 	group = host.workspace_layout.tab(host.workspace_layout.active)
 	group.tree.tiling = false

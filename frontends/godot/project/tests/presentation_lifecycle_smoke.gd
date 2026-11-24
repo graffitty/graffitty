@@ -123,13 +123,36 @@ func run() -> void:
 	var capture_pixels := 0
 	for i in 10:
 		var capture := SubViewport.new()
-		capture.size = Vector2i(4000, 4000)
-		budget.fit(capture)
+		budget.fit(capture, Vector2i(4000, 4000))
 		captures.append(capture)
 	for capture in captures: capture_pixels += capture.size.x * capture.size.y
 	check(capture_pixels <= budget.limit() + 40, "Concurrent effect captures share a bounded pixel budget")
 	check(captures.all(func(capture): return capture.size == captures[0].size and capture.size.x > 512), "Later glyph captures retain the same detail as earlier backing captures")
 	for capture in captures: capture.free()
+	for logical in [Vector2i(100000, 8), Vector2i(8, 100000), Vector2i(90000, 60000)]:
+		var capture := SubViewport.new()
+		var allocations: Array[Vector2i] = []
+		capture.size_changed.connect(func(): allocations.append(capture.size))
+		capture.size_2d_override = logical
+		budget.fit(capture, logical)
+		check(allocations.all(func(size): return maxi(size.x, size.y) <= budget.texture_limit() and size.x * size.y <= budget.limit() / 3), "Every intermediate capture allocation respects texture and pixel limits")
+		check(capture.size.x <= budget.texture_limit() and capture.size.y <= budget.texture_limit(), "Oversized captures fit both device axes")
+		check(capture.size.x * capture.size.y <= budget.limit() / 3 and capture.size_2d_override == logical, "Oversized captures retain logical dimensions within the frame allowance")
+		if DisplayServer.get_name() != "headless":
+			capture.disable_3d = true
+			capture.size_2d_override_stretch = true
+			capture.render_target_update_mode = SubViewport.UPDATE_ONCE
+			var marker := ColorRect.new()
+			marker.color = Color.RED
+			marker.position = Vector2(logical) * 0.5
+			marker.size = Vector2(logical) * 0.5
+			capture.add_child(marker)
+			root.add_child(capture)
+			await RenderingServer.frame_post_draw
+			var rendered := capture.get_texture().get_image()
+			var corner := rendered.get_pixelv(rendered.get_size() - Vector2i.ONE)
+			check(rendered.get_size() == capture.size and corner.r > 0.9 and corner.g < 0.1, "The GPU draws the far logical corner of the bounded capture")
+		capture.free()
 	for script in [preload("res://scenes/TerminalEffects2D.gd"), preload("res://scenes/TerminalEffects.gd")]:
 		var effects: Node = script.new()
 		effects.automatic = false
@@ -137,7 +160,7 @@ func run() -> void:
 		var particles: Node = effects.particles
 		for preset in particles.PROFILES:
 			particles.configure(preset, 64, 1.0)
-			for i in 100: particles.burst(Vector3.ZERO, Vector3.UP, Vector3.FORWARD, 4.0)
+			for i in 100: particles.burst(Vector3.ZERO, Vector3.UP, Vector3.FORWARD)
 			check(particles.sparks.size() <= particles.CAPACITY, "%s particle bursts stay bounded" % preset)
 			for i in 20: particles._process(0.25)
 			check(particles.sparks.is_empty() and particles.mesh.multimesh.visible_instance_count == 0 and not particles.is_processing(), "%s particles clear CPU/GPU state and stop processing" % preset)

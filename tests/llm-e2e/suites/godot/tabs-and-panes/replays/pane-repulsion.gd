@@ -1,4 +1,5 @@
 extends "main-area-tiling.gd"
+
 ## Godot's native View menu is the equivalent of the shared Effects checkbox.
 var evidence: String
 var samples: Array = []
@@ -38,7 +39,7 @@ func play() -> void:
 	# Layout acknowledgements do not wait for the independent terminal-scene
 	# stream. Establish the requested floating grid before measuring motion.
 	for key in keys:
-		var term = host.sessions[int(key.substr(1))].term
+		var term = host.sessions[PaneAddress.id(key)].term
 		var insets: Array = term.get_meta("server_content_insets")
 		var pixels := size - Vector2(insets[0] + insets[2], insets[1] + insets[3])
 		var cell: Vector2 = term.get_cell_size()
@@ -50,7 +51,7 @@ func play() -> void:
 	var pids := {}
 	var grids := {}
 	for key in keys:
-		var term = host.sessions[int(key.substr(1))].term
+		var term = host.sessions[PaneAddress.id(key)].term
 		pids[key] = term.get_shell_pid()
 		grids[key] = term.get_grid_size()
 	var frozen: Dictionary = view.pane_rects.duplicate()
@@ -66,7 +67,7 @@ func play() -> void:
 	check(view.pane_rects[distant] == frozen[distant], "The distant pane stays fixed")
 	for key in keys:
 		check(view.panes[key].position.is_equal_approx(view.pane_rects[key].position), "Header and content follow %s" % key)
-		var term = host.sessions[int(key.substr(1))].term
+		var term = host.sessions[PaneAddress.id(key)].term
 		check(term.get_shell_pid() == pids[key] and term.get_grid_size() == grids[key], "Motion preserves the real PID and grid: %s (pid %s -> %s; grid %s -> %s)" % [key, pids[key], term.get_shell_pid(), grids[key], term.get_grid_size()])
 	group.tree["physics_anchor"] = second
 	Layout.find(group.tree, first)["rect"] = frozen[first]

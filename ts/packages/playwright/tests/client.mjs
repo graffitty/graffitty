@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import { attach } from "@graffitty/playwright";
 
-await assert.rejects(attach({ chromium: "%999999" }), /invalid_target/);
+await assert.rejects(attach({ chromium: "c999999" }), /invalid_target/);
 await assert.rejects(attach({ token: "invalid" }), /unauthorized/);
 await assert.rejects(attach({ token: process.env.GRAFFITTY_FOREIGN_TEST_TOKEN }), /forbidden/);
 const connection = await attach();

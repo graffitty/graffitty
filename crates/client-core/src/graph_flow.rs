@@ -185,10 +185,10 @@ mod tests {
     use super::*;
     use serde_json::json;
     fn graph() -> Value {
-        json!({"edges":[{"from":"%1","to":"%2","from_port":"answer","to_port":"prompt"}],"queues":{},"journal":{"events":[]}})
+        json!({"edges":[{"from":"t1","to":"t2","from_port":"answer","to_port":"prompt"}],"queues":{},"journal":{"events":[]}})
     }
     fn event(status: &str, pending: bool) -> Value {
-        json!({"event_id":"e1","source":"%1","target":"%2","source_port":"answer","target_port":"prompt","edge":"%1/answer>%2/prompt","status":status,"pending":pending})
+        json!({"event_id":"e1","source":"t1","target":"t2","source_port":"answer","target_port":"prompt","edge":"t1/answer>t2/prompt","status":status,"pending":pending})
     }
 
     #[test]
@@ -215,17 +215,17 @@ mod tests {
         let first = event("queued", true);
         let mut second = first.clone();
         second["event_id"] = json!("e2");
-        graph["queues"]["%2"] = json!([first, second]);
+        graph["queues"]["t2"] = json!([first, second]);
         flow.update(&graph, 0., 100.);
         assert_eq!(flow.waiting.len(), 1);
         assert_eq!(flow.waiting[0].ids.len(), 2);
         assert!(!flow.waiting[0].received);
         assert!(flow.pulses.is_empty());
-        graph["queues"]["%2"][0]["progress"] = json!({"status":"pending"});
+        graph["queues"]["t2"][0]["progress"] = json!({"status":"pending"});
         flow.update(&graph, 0., 100.);
         assert_eq!(flow.waiting.len(), 2);
         assert_eq!(flow.waiting.iter().filter(|g| g.received).count(), 1);
-        graph["queues"]["%2"][0]["progress"] = json!({"status":"failed"});
+        graph["queues"]["t2"][0]["progress"] = json!({"status":"failed"});
         flow.update(&graph, 0., 100.);
         assert!(flow.waiting.iter().any(|g| g.failed && g.received));
         graph["edges"][0]["muted"] = json!(true);

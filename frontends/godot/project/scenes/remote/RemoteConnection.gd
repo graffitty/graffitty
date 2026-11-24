@@ -1,4 +1,6 @@
 extends Node
+
+const PaneAddress := preload("res://scenes/PaneAddress.gd")
 signal chromium_received(session: int, data: PackedByteArray)
 signal chromium_video_received(session: int, header: Dictionary, data: PackedByteArray)
 signal chromium_gpu_state_received(session: int, active: bool)
@@ -51,6 +53,8 @@ var shared_options: Dictionary = {}
 var authentication: RefCounted
 var password_verified := false
 var socket: RefCounted
+## A request belongs to one transport, even if reconnect finishes before it resumes.
+var transport_generation := 0
 var workspace := ""
 ## Device-local view preference, never part of server authentication.
 var preferred_session := ""
@@ -64,6 +68,7 @@ var _shown_session := ""
 ## The session viewed before the current one, for LastSession.
 var last_session := ""
 var available_sessions: Array = []
+var catalog_revision := -1
 var sessions_known := false
 var stops_when_empty := false
 var _selecting_session := -1
@@ -104,14 +109,13 @@ var chromium_viewports: Dictionary = {}
 ## The demand the owner holds: wire IDs last sent, limited to subscribed panes.
 var sent_chromium_viewports: Dictionary = {}
 const CONNECT_TIMEOUT_MSEC := 10000
-const RETRY_DELAY_MSEC := 3000
+var _failed_dials := 0
 var connect_deadline := 0
 var status_message := "Disconnected"
 var status_source := "Disconnected"
 var status_args: Array = []
 var retry_at := 0
-## Returning to the app: the first reconnect is immediate, not RETRY_DELAY_MSEC
-## later. A link that fails again backs off as usual.
+## Returning to the app bypasses any pending redial delay once.
 const RESUME_GRACE_MSEC := 5000
 var _resumed_at := -RESUME_GRACE_MSEC
 var _resume_retry := false
@@ -146,6 +150,7 @@ func connect_shared(options: Dictionary) -> void:
 
 
 func _open() -> void:
+	transport_generation += 1
 	_subscribed.clear()
 	_core.controller_stop()
 	_stop_video_datagrams()
@@ -186,6 +191,8 @@ func _open() -> void:
 
 
 func disconnect_remote() -> void:
+	_failed_dials = 0
+	transport_generation += 1
 	_subscribed.clear()
 	_core.controller_stop()
 	server_fonts.cancel_download()
@@ -218,6 +225,8 @@ func _set_state(message: String, args: Array = []) -> void:
 
 
 func _network_failed(reason: String) -> void:
+	var was_connected := connected
+	transport_generation += 1
 	_core.controller_stop()
 	connected = false
 	_stop_video_datagrams()
@@ -232,7 +241,12 @@ func _network_failed(reason: String) -> void:
 	# return, when the server is reachable again straight away.
 	var resuming := _resume_retry and now - _resumed_at < RESUME_GRACE_MSEC
 	_resume_retry = false
-	retry_at = now if resuming else now + RETRY_DELAY_MSEC
+	if was_connected or resuming:
+		_failed_dials = 0
+		retry_at = now
+	else:
+		retry_at = now + _core.reconnect_delay_msec(_failed_dials)
+		_failed_dials = mini(_failed_dials + 1, 7)
 	_set_state("Offline — %s. Check the server and network/VPN. Retrying automatically…", [last_error])
 
 
@@ -241,7 +255,9 @@ func _notification(what: int) -> void:
 		_resumed_at = Time.get_ticks_msec()
 		_resume_retry = true
 		# Already waiting out a retry delay from before the pause: connect now.
-		if enabled and socket == null: retry_at = 0
+		if enabled and socket == null:
+			_failed_dials = 0
+			retry_at = 0
 
 
 func _process(_dt: float) -> void:
@@ -515,6 +531,39 @@ func _clear_resources() -> void:
 		resources_received.emit(int(pane.id), {"status": "disconnected"}, 1.0)
 
 
+static func _valid_session_id(id: String) -> bool:
+	if not id.begins_with("$"): return false
+	var digits := id.substr(1)
+	if digits.is_empty() or not digits.lstrip("0123456789").is_empty(): return false
+	if digits.length() > 1 and digits.begins_with("0"): return false
+	return digits.length() < 20 or (digits.length() == 20 and digits <= "18446744073709551615")
+
+
+## A catalog can settle unconfirmed reads, so its agent membership must be complete.
+static func _valid_session_list(message: Dictionary) -> bool:
+	if not message.get("revision") is int or message.revision < 0: return false
+	if not message.get("sessions") is Array or not message.get("stops_when_empty") is bool: return false
+	var sessions := {}
+	var panes := {}
+	for session in message.sessions:
+		if not session is Dictionary or not session.get("id") is String or not session.get("agents") is Array: return false
+		var id: String = session.id
+		if not _valid_session_id(id) or sessions.has(id): return false
+		sessions[id] = true
+		for agent in session.agents:
+			if not agent is Dictionary or not agent.get("pane") is int: return false
+			var pane: int = agent.pane
+			if pane <= 0 or pane >= PaneAddress.CHROMIUM_BASE or panes.has(pane): return false
+			if not agent.get("activity_revision") is int or agent.activity_revision < 0 or not agent.has("attention"): return false
+			var attention: Variant = agent.attention
+			if attention != null:
+				if not attention is Dictionary or attention.size() != 3: return false
+				if not attention.get("event") is String or attention.event.is_empty(): return false
+				if attention.get("kind") not in ["completed","waiting"] or not attention.get("seen") is bool: return false
+			panes[pane] = true
+	return true
+
+
 func _receive(message: Dictionary) -> void:
 	if not connected and message.get("type") not in ["auth_challenge", "auth_wait", "auth_code_required", "ready"]:
 		_auth_error("Unexpected message before authentication")
@@ -545,6 +594,12 @@ func _receive(message: Dictionary) -> void:
 				_connection_error(tr("Server protocol %s is incompatible with app protocol %s. Update Graffitty on both devices.") % [str(message.get("version", "?")), str(Protocol.VERSION)])
 				return
 			if epoch != message.epoch:
+				local_ids = {}
+				subscriptions.clear()
+				_subscribed.clear()
+				chromium_viewports.clear()
+				_shown_session = ""
+				topology_received_revision = -1
 				frames.clear()
 				topology = { "tabs": [], "panes": [], "edges": [] }
 			epoch = message.epoch
@@ -555,9 +610,11 @@ func _receive(message: Dictionary) -> void:
 			# Retain the destination, not the previous socket's attachment.
 			if not workspace.is_empty(): preferred_session = workspace
 			workspace = str(message.get("workspace", ""))
-			available_sessions.clear()
+			available_sessions = []
+			catalog_revision = -1
 			sessions_known = false
 			_selecting_session = -1
+			_failed_dials = 0
 			connected = true
 			if is_inside_tree():
 				get_node("/root/Localization").set_server_language(self, str(message.get("localization", {}).get("language", "auto")))
@@ -581,6 +638,8 @@ func _receive(message: Dictionary) -> void:
 				frontend_generation += 1
 				socket.send_text(JSON.stringify({"type": "frontend_register", "generation": frontend_generation}))
 		"session_list":
+			if not _valid_session_list(message) or message.revision < catalog_revision: return
+			catalog_revision = int(message.revision)
 			available_sessions = message.sessions
 			stops_when_empty = message.stops_when_empty == true
 			sessions_known = true
@@ -728,8 +787,8 @@ func send_action(kind: String, id: int, values: Dictionary = { }) -> int:
 		message.tabs = message.tabs.map(func(tab): return wire_id(int(tab)))
 	if message.has("destination_tab"):
 		message.destination_tab = wire_id(int(message.destination_tab))
-	if message.get("surface") is String and preload("res://scenes/PaneTargets.gd").valid(message.surface):
-		message.surface = "%%%d" % wire_id(int(message.surface.substr(1)))
+	if message.get("pane") is String and preload("res://scenes/PaneTargets.gd").valid(message.pane):
+		message.pane = PaneAddress.key(wire_id(PaneAddress.id(message.pane)))
 	var error: int = socket.send_text(JSON.stringify(message))
 	if error != OK:
 		_network_failed(error_string(error))
@@ -775,16 +834,15 @@ func local_id(id: int) -> int:
 		return id
 	var allocated: int = _core.local_id(id)
 	if allocated < 0:
-		var application: Node = get_node("/root/TerminalApplication")
-		var identity := JSON.stringify([url, epoch])
-		var mapping: Dictionary = application.remote_identity_maps.get_or_add(identity, {})
-		if not mapping.has(id): mapping[id] = _allocate_id()
-		allocated = mapping[id]
+		allocated = _allocate_id(id)
 		_core.bind_id(id, allocated)
 	return allocated
 
-func _allocate_id() -> int:
-	return get_node("/root/TerminalApplication").allocate_id()
+func _allocate_id(wire: int) -> int:
+	var application: Node = Engine.get_main_loop().root.get_node("TerminalApplication")
+	var mapping: Dictionary = application.remote_identity_maps.get_or_add(JSON.stringify([url, epoch]), {})
+	if not mapping.has(wire): mapping[wire] = application.allocate_id(wire > PaneAddress.CHROMIUM_BASE)
+	return mapping[wire]
 
 func wire_id(id: int) -> int:
 	return _core.wire_id(id) if namespace_ids else id
@@ -948,23 +1006,29 @@ func _restore_session() -> void:
 
 
 func request_action(kind: String, values: Dictionary = {}, timeout_msec: int = 10000) -> Dictionary:
+	var generation := transport_generation
+	var unavailable := {"type": "error", "code": "owner_unavailable", "message": "Session owner disconnected or timed out"}
 	# Carried controls can be displayed before the destination session attaches.
 	# Keep their explicit UI actions pending until discovery/selection completes.
-	if url.begins_with("ws") and workspace.is_empty() and kind not in ["session_new", "session_switch", "session_rename", "session_kill", "resource_subscription", "font_asset"]:
+	if url.begins_with("ws") and workspace.is_empty() and kind not in ["session_new", "session_switch", "session_rename", "session_kill", "resource_subscription", "font_asset", "controller_rpc"]:
 		var selection_deadline := Time.get_ticks_msec() + timeout_msec
-		while connected and workspace.is_empty() and (not sessions_known or _selecting_session >= 0) and Time.get_ticks_msec() < selection_deadline:
+		while generation == transport_generation and connected and workspace.is_empty() and (not sessions_known or _selecting_session >= 0) and Time.get_ticks_msec() < selection_deadline:
 			await get_tree().process_frame
+		if generation != transport_generation or not connected: return unavailable
 		if connected and workspace.is_empty(): return {"type": "error", "code": "no_session", "message": "No session is selected"}
+	if generation != transport_generation or not connected: return unavailable
 	var replies := {}
 	var receive := func(message):
-		replies[int(message.get("request", -1))] = message
+		if generation == transport_generation:
+			replies[int(message.get("request", -1))] = message
 	acknowledged.connect(receive)
 	var request := send_action(kind, int(values.get("session", -1)), values)
 	var deadline := Time.get_ticks_msec() + timeout_msec
-	while request >= 0 and connected and not replies.has(request) and Time.get_ticks_msec() < deadline:
+	while request >= 0 and generation == transport_generation and connected and not replies.has(request) and Time.get_ticks_msec() < deadline:
 		await get_tree().process_frame
 	acknowledged.disconnect(receive)
-	return replies.get(request, {"type": "error", "code": "owner_unavailable", "message": "Session owner disconnected or timed out"})
+	# Closing a session can disconnect after its acknowledgement was received.
+	return replies.get(request, unavailable)
 
 
 func _handle_frontend_request(message: Dictionary) -> void:
@@ -988,6 +1052,12 @@ func _handle_frontend_request(message: Dictionary) -> void:
 		frontend_inflight -= 1
 	if connected and generation == frontend_generation:
 		socket.send_text(JSON.stringify({"type": "frontend_reply", "ticket": int(message.ticket), "response": map_graph(response, false)}))
+
+
+## A read belongs to the server pane even after this view switches sessions.
+func acknowledge_agent(id: int, event: String) -> Dictionary:
+	return await request_action("controller_rpc", {"call": {"version": Protocol.VERSION,
+		"method": "agent.seen", "params": {"target": PaneAddress.key(wire_id(id)), "event": event}}})
 
 
 func remote_call(id: int, method: String, params: Dictionary, canceled: Callable = Callable()) -> Dictionary:

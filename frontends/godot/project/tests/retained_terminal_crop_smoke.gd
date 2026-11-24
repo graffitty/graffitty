@@ -1,4 +1,6 @@
 extends SceneTree
+
+const PaneAddress := preload("res://scenes/PaneAddress.gd")
 ## Retained owner layout must not be cropped to the smaller client canvas.
 var evidence_dir: String
 
@@ -42,7 +44,7 @@ func run() -> void:
 		RenderingServer.force_draw(false)
 	var id: int = host.active_session_id
 	var pair: Dictionary = host.sessions[id]
-	var pane: Control = host.workspace_view.panes["%%%d" % id]
+	var pane: Control = host.workspace_view.panes[PaneAddress.key(id)]
 	print("METRICS ", {"grid": pair.term.get_grid_size(), "cell":pair.term.get_cell_size(), "term_size":pair.term.size,"pane_size":pane.size,"body_size":pane.body.size,"vp_size":pair.vp.size,"vp_logical":pair.vp.size_2d_override,"transform":pair.vp.canvas_transform,"font":pair.term.get_live_font_size(),"region":host.workspace_view.raster_region})
 	if OS.get_name() == "Windows":
 		windows_output(pair.term, "\u001b[2J\u001b[1;1HLEFT_TOP\u001b[1;199HRIGHT_TOP\u001b[49;1HLEFT_BOTTOM\u001b[49;197HRIGHT_BOTTOM")
@@ -53,7 +55,7 @@ func run() -> void:
 		RenderingServer.force_draw(false)
 	root.get_texture().get_image().save_png(evidence_dir.path_join("window.png"))
 	pair.vp.get_texture().get_image().save_png(evidence_dir.path_join("terminal.png"))
-	var rect: Rect2 = host.workspace_view.pane_rects["%%%d" % id]
+	var rect: Rect2 = host.workspace_view.pane_rects[PaneAddress.key(id)]
 	var passed: bool = host.workspace_view.raster_region.encloses(rect)
 	# Fill every retained tab, then inspect every rendered handoff frame. A
 	# settled-only screenshot misses the old crop exposed for a single frame.
@@ -99,7 +101,7 @@ func run() -> void:
 			# The whole title strip (pane top to body top), in capture pixels, so a
 			# sub-pixel settle cannot move glyphs out of a fixed sample band.
 			var to_pixels := Vector2(picture.get_size()) / root.get_visible_rect().size
-			var shown: Control = host.workspace_view.panes["%%%d" % host.active_session_id]
+			var shown: Control = host.workspace_view.panes[PaneAddress.key(host.active_session_id)]
 			var pane_box: Rect2 = shown.get_global_transform_with_canvas() * Rect2(Vector2.ZERO, shown.size)
 			var body_top: float = (shown.body.get_global_transform_with_canvas() * Vector2.ZERO).y
 			var title_rows := Vector2i(int(pane_box.position.y * to_pixels.y), int(body_top * to_pixels.y))

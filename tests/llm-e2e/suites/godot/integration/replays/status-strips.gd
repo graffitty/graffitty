@@ -1,4 +1,5 @@
 extends "terminal-tools.gd"
+
 var status_trace: Array = []
 
 func inspect_strips(name: String, keys: Array[String]) -> void:
@@ -20,7 +21,7 @@ func inspect_strips(name: String, keys: Array[String]) -> void:
 					var anchor: Vector2 = port.get_meta("sheet_anchor")
 					var offset: Vector2 = port.get_meta("anchor_offset")
 					check(not rect.intersects(Rect2(mapping*anchor+offset,port.size)),"Status avoids advertised port")
-		var sample: Dictionary = host.resource_monitor_for(int(key.substr(1))).snapshot()
+		var sample: Dictionary = host.resource_monitor_for(PaneAddress.id(key)).snapshot()
 		var status: Dictionary = view.pane_status[key]
 		strip.render_now()
 		check(status.cpu==("%.0f%%" % float(sample.cpu_percent)) and status.memory!="—" and status.cpu in strip.texts(),"Displayed resources match actual owner sample")
@@ -34,13 +35,13 @@ func play() -> void:
 	directory = OS.get_environment("GRAFFITTY_INPUT_EVIDENCE")
 	terminal = host.active_terminal()
 	var first: int = host.active_session_id
-	await host.set_pane_title("%%%d" % first,"Status Alpha")
+	await host.set_pane_title(PaneAddress.key(first),"Status Alpha")
 	host.create_terminal_window("","h")
 	var deadline := Time.get_ticks_msec()+10000
 	while host.sessions.size()<2 and Time.get_ticks_msec()<deadline:await process_frame
 	var second: int = host.active_session_id
-	await host.set_pane_title("%%%d" % second,"Status Beta")
-	var keys: Array[String] = ["%%%d" % first,"%%%d" % second]
+	await host.set_pane_title(PaneAddress.key(second),"Status Beta")
+	var keys: Array[String] = [PaneAddress.key(first),PaneAddress.key(second)]
 	check(host.sessions[first].term.get_shell_pid()!=host.sessions[second].term.get_shell_pid(),"Status panes own independent real shells")
 	await app.agent_api.dispatch(first,"agent.event",{"provider":"adapter","event":"SessionStart"})
 	await app.agent_api.dispatch(first,"agent.register",{"name":"Status Adapter","inputs":[{"id":"in"}],"outputs":[{"id":"out"}]})

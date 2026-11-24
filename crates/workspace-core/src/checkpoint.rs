@@ -1,6 +1,7 @@
 //! Shared version-1 checkpoint document validation, independent of any frontend.
 use serde_json::Value;
 use std::collections::HashSet;
+use graffitty_protocol::pane_id::CHROMIUM_BASE;
 type Result<T> = std::result::Result<T, Box<dyn std::error::Error>>;
 fn canonical_id(v: &Value) -> Option<String> {
     let s = v.as_str()?;
@@ -140,12 +141,12 @@ pub fn validate(v: &Value) -> Result<()> {
         for p in panes {
             let id = p["id"]
                 .as_i64()
-                .filter(|id| *id >= 0)
+                .filter(|id| (1..CHROMIUM_BASE as i64).contains(id))
                 .ok_or("invalid pane ID")?;
             if !ids.insert(id) {
                 return Err("duplicate pane ID".into());
             }
-            keys.insert(format!("%{id}"));
+            keys.insert(format!("t{id}"));
             if !p["cwd"].is_string() {
                 return Err("invalid cwd".into());
             }
@@ -211,11 +212,11 @@ pub fn validate(v: &Value) -> Result<()> {
             .filter(|a| a.len() <= 100)
             .ok_or("invalid chromiums")?;
         for c in chromiums {
-            let id = c["id"].as_i64().filter(|id| *id >= 0).ok_or("invalid chromium ID")?;
+            let id = c["id"].as_i64().filter(|id| (CHROMIUM_BASE as i64 + 1..2 * CHROMIUM_BASE as i64).contains(id)).ok_or("invalid chromium ID")?;
             if !ids.insert(id) {
                 return Err("duplicate pane ID".into());
             }
-            keys.insert(format!("%{id}"));
+            keys.insert(crate::pane_id::address(id as u64));
             let urls = c["urls"]
                 .as_array()
                 .filter(|a| !a.is_empty() && a.len() <= 32)
@@ -283,8 +284,8 @@ pub fn validate(v: &Value) -> Result<()> {
                 return Err("invalid focused pane".into());
             }
             for pane in panes.iter().filter(|p| p.get("filetree").is_some()) {
-                if tab_keys.contains(&format!("%{}", pane["id"]))
-                    && !tab_keys.contains(&format!("%{}", pane["filetree"]["owner"])) {
+                if tab_keys.contains(&format!("t{}", pane["id"]))
+                    && !tab_keys.contains(&format!("t{}", pane["filetree"]["owner"])) {
                     return Err("filetree and owner must be in the same tab".into());
                 }
             }
@@ -294,7 +295,7 @@ pub fn validate(v: &Value) -> Result<()> {
         }
     }
     let mapping: std::collections::HashMap<_, _> = ids.iter().map(|id| {
-        let key = format!("%{id}");
+        let key = crate::pane_id::address(*id as u64);
         (key.clone(), key)
     }).collect();
     for window in windows {
@@ -309,7 +310,7 @@ pub fn validate(v: &Value) -> Result<()> {
 
 #[cfg(test)]
 mod tests {
-    use super::validate;
+    use super::{CHROMIUM_BASE, validate};
     use serde_json::{Value, json};
 
     /// A terminal and its chromium side by side, and a window whose
@@ -317,13 +318,13 @@ mod tests {
     fn fixture() -> Value {
         json!({"version":1,"windows":[
             {"active":1,"position":[0,0],"size":[900,700],
-             "tabs":[{"id":1,"focused":"%1","tree":{"windows":[{"pane":"%1"},{"pane":"%2"}]}}],
+             "tabs":[{"id":1,"focused":"t1","tree":{"windows":[{"pane":"t1"},{"pane":"c2"}]}}],
              "panes":[{"id":1,"pid":-1,"cwd":"/tmp"}],
-             "chromiums":[{"id":2,"owner":1,"urls":["https://example.com/a","about:blank"],"profile":""}]},
+             "chromiums":[{"id":(CHROMIUM_BASE + 2),"owner":1,"urls":["https://example.com/a","about:blank"],"profile":""}]},
             {"active":4,"position":[40,40],"size":[900,700],
-             "tabs":[{"id":4,"focused":"%4","tree":{"pane":"%4"}},{"id":5,"focused":"%3","tree":{"windows":[{"pane":"%3"}]}}],
+             "tabs":[{"id":4,"focused":"t4","tree":{"pane":"t4"}},{"id":5,"focused":"c3","tree":{"windows":[{"pane":"c3"}]}}],
              "panes":[{"id":4,"pid":-1,"cwd":"/tmp"}],
-             "chromiums":[{"id":3,"owner":null,"urls":["http://127.0.0.1:8000/"],"profile_template":"/tmp/template"}]}]})
+             "chromiums":[{"id":(CHROMIUM_BASE + 3),"owner":null,"urls":["http://127.0.0.1:8000/"],"profile_template":"/tmp/template"}]}]})
     }
     fn rejected(change: impl FnOnce(&mut Value)) -> String {
         let mut v = fixture();
@@ -368,7 +369,7 @@ mod tests {
         // A filetree is not an owner: closing it must not close the browser.
         let message = rejected(|v| {
             v["windows"][0]["panes"].as_array_mut().unwrap().push(json!({"id":4,"pid":-1,"cwd":"/tmp","filetree":{"owner":1,"root":"/tmp"}}));
-            v["windows"][0]["tabs"][0]["tree"]["windows"].as_array_mut().unwrap().push(json!({"pane":"%4"}));
+            v["windows"][0]["tabs"][0]["tree"]["windows"].as_array_mut().unwrap().push(json!({"pane":"t4"}));
             v["windows"][0]["chromiums"][0]["owner"] = json!(4);
         });
         assert_eq!(message, "chromium owner must be an ordinary pane in its window");

@@ -1,5 +1,6 @@
 //! One bounded, leased CDP endpoint per server-owned chromium. The UI never owns
 //! a DevTools listener or forwards page contents through its rendering loop.
+use graffitty_protocol::pane_id::address as pane_address;
 use serde_json::{Value, json};
 use std::{
     collections::{HashMap, HashSet, VecDeque},
@@ -112,7 +113,7 @@ impl Broker {
             uuid::Uuid::new_v4().simple()
         );
         let result = json!({"endpoint":format!("ws://127.0.0.1:{port}/{token}"), "lease":token,
-            "target_id":target, "expires_in_ms":30000, "chromium":format!("%{chromium}")});
+            "target_id":target, "expires_in_ms":30000, "chromium":pane_address(chromium)});
         self.lease = Some(Lease {
             token,
             listener: Some(listener),

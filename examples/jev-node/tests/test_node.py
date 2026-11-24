@@ -28,7 +28,7 @@ def event_file(tmp_path, provider="codex"):
     with path.open("a") as file:
         file.write(json.dumps(record(provider, "FUTURE")) + "\n")
     return {"event_id": "input-1", "run_id": "run-1", "type": "turn.completed",
-            "source": "%1", "text": "Approved.",
+            "source": "t1", "text": "Approved.",
             "sessions": [{"provider": provider, "id": "session-1", "path": str(path),
                           "checkpoint": {"byte_offset": checkpoint}}]}
 

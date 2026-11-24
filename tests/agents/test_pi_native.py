@@ -45,8 +45,8 @@ class NativePi(unittest.TestCase):
                 used = sum(m["role"] == "tool" for m in body.get("messages", []))
                 delta, finish = {"content": "Native Pi integration works."}, "stop"
                 if used < 2:
-                    params = {"method": "graph.read", "params": {"node": "%2"}} if used == 0 else {
-                        "method": "graph.send", "params": {"to": "%2", "text": "Native Pi tool reply"}}
+                    params = {"method": "graph.read", "params": {"node": "t2"}} if used == 0 else {
+                        "method": "graph.send", "params": {"to": "t2", "text": "Native Pi tool reply"}}
                     delta = {"tool_calls": [{"index": 0, "id": f"call_graph{used}", "type": "function", "function": {
                         "name": "graffitty", "arguments": json.dumps(params)}}]}
                     finish = "tool_calls"
@@ -83,7 +83,7 @@ class NativePi(unittest.TestCase):
         self.wait(lambda: fixture.lifecycle("SessionStart"), "Pi extension startup", capture)
         self.assertEqual(fixture.lifecycle("SessionStart")[0]["provider"], "pi")
         tmux("send-keys", "-t", "test", "-l", "UNSENT_DRAFT")
-        event = {"event_id": "native-pi", "source": "%2", "target": "%1", "run_id": "native-run", "text": "Check the integration", "sessions": []}
+        event = {"event_id": "native-pi", "source": "t2", "target": "t1", "run_id": "native-run", "text": "Check the integration", "sessions": []}
         fixture.queue = [event]
         fixture.publish()
         self.wait(entered.is_set, "Pi model request", capture)
@@ -111,7 +111,7 @@ class NativePi(unittest.TestCase):
         pane_pid = int(tmux("display-message", "-pt", "test", "#{pane_pid}").strip())
         layout = root / "layout.json"
         layout.write_text(json.dumps({"version": 1, "windows": [{"position": [0, 0], "size": [900, 700], "active": 1,
-            "tabs": [{"id": 1, "focused": "%1", "tree": {"pane": "%1"}}],
+            "tabs": [{"id": 1, "focused": "t1", "tree": {"pane": "t1"}}],
             "panes": [{"id": 1, "pid": pane_pid, "cwd": str(root), "node": {**start["restore"], "pid": start["pid"]}}],
             "chromiums": []}]}))
         saved = subprocess.run([bridge_tests.BIN, "checkpoint", "save", "--input", str(layout)],

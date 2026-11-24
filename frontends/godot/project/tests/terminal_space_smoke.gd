@@ -1,4 +1,6 @@
 extends SceneTree
+
+const PaneAddress := preload("res://scenes/PaneAddress.gd")
 const Layout := preload("res://scenes/WorkspaceLayout.gd")
 const Commands := preload("res://scenes/TilingCommands.gd")
 var failures: Array[String] = []
@@ -75,7 +77,7 @@ func run() -> void:
 		if not entry.label.begins_with("View::"): continue
 		check(entry.enabled.call(host), "View action enabled for TerminalSpace")
 	var first: String = host.pane_focus
-	var terminal_id := int(first.substr(1))
+	var terminal_id := PaneAddress.id(first)
 	var pid: int = host.sessions[terminal_id].term.get_shell_pid()
 	var response := Commands.dispatch(
 		host,

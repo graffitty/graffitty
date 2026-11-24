@@ -1,4 +1,6 @@
 extends Node2D
+
+const PaneAddress := preload("res://scenes/PaneAddress.gd")
 ## Live terminal textures for whole-pane transitions; retained drawing state
 ## for glyph transitions, and copied UI rasterized at projected density.
 const Core := preload("res://scenes/TerminalEffects.gd")
@@ -80,10 +82,9 @@ func build(world: Node) -> void:
 		still.disable_3d = true
 		still.transparent_bg = true
 		still.use_hdr_2d = true
-		still.size = Vector2i(rect.size.ceil()).max(Vector2i.ONE)
-		still.size_2d_override = still.size
+		still.size_2d_override = Vector2i(rect.size.ceil()).max(Vector2i.ONE)
 		still.size_2d_override_stretch = true
-		preload("res://scenes/EffectCaptureBudget.gd").fit(still)
+		preload("res://scenes/EffectCaptureBudget.gd").fit(still, still.size_2d_override)
 		still.render_target_update_mode = SubViewport.UPDATE_ONCE
 		still.add_child(border.drawing)
 		view.canvas.add_child(still)
@@ -144,15 +145,14 @@ func build(world: Node) -> void:
 		still.use_hdr_2d = true
 		still.size_2d_override = Vector2i(pane.size.ceil()).max(Vector2i.ONE)
 		still.size_2d_override_stretch = true
-		still.size = Vector2i((pane.size * minf(maxf(view.canvas_scale(), 1.0), 8192.0 / maxf(pane.size.x, pane.size.y))).ceil()).max(Vector2i.ONE)
-		preload("res://scenes/EffectCaptureBudget.gd").fit(still)
+		preload("res://scenes/EffectCaptureBudget.gd").fit(still, Vector2i((pane.size * minf(maxf(view.canvas_scale(), 1.0), 8192.0 / maxf(pane.size.x, pane.size.y))).ceil()).max(Vector2i.ONE))
 		still.render_target_update_mode = SubViewport.UPDATE_ONCE
 		still.add_child(pane.still_copy())
 		view.canvas.add_child(still)
 		captures.append(still)
 		panel(still.get_texture(), Rect2(-pane.size * 0.5, pane.size), group)
 		if not world.host.is_terminal_pane(key): continue
-		var pair: Dictionary = world.host.sessions.get(int(key.substr(1)), {})
+		var pair: Dictionary = world.host.sessions.get(PaneAddress.id(key), {})
 		if pair.is_empty(): continue
 		var layout := Vector2(Core.layout_size(pair.vp))
 		var origin: Vector2 = (view.terminal_origin(key) - group.position) / pane.scale

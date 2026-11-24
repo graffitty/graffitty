@@ -139,7 +139,7 @@ func click_right(pane: String) -> String:
 	if not await until(func(): return host.sessions.size()==before.size()+1,"Pointer clicks right-split to create one pane"): return ""
 	contacts.pointer=Vector2(-100,-100); contacts.queue_redraw()
 	for id in host.sessions:
-		if id not in before: return "%%%d" % id
+		if id not in before: return PaneAddress.key(id)
 	return ""
 
 func beat(label: String) -> void:
@@ -324,7 +324,7 @@ func establish_overview(bounds: Rect2, seconds := .4) -> void:
 func diagnostics(label: String) -> void:
 	var data := {"label":label,"nodes":host.agent_api.graph.nodes,"tabs":host.workspace_layout.tabs,"text":{},"rects":{}}
 	for id in host.sessions:
-		var k := "%%%d" % id
+		var k := PaneAddress.key(id)
 		data.text[k] = text_in(k)
 		data.rects[k] = str(view.pane_rects.get(k))
 	FileAccess.open(data_path("demo-debug.json"),FileAccess.WRITE).store_string(JSON.stringify(data))

@@ -65,7 +65,7 @@ class ParallelIntegration(unittest.TestCase):
                         stdin=subprocess.DEVNULL, stdout=node_log, stderr=node_log)
                     def manifest():
                         nodes = rpc(endpoint, 1, "graph.list", {})["nodes"]
-                        return next((n.get("manifest") for n in nodes if n["node"] == "%3" and n.get("manifest", {}).get("name") == "Review join"), None)
+                        return next((n.get("manifest") for n in nodes if n["node"] == "t3" and n.get("manifest", {}).get("name") == "Review join"), None)
                     registration = wait(manifest)
                     self.assertEqual(registration["inputs"][0]["id"], "join")
                     self.assertEqual(registration["outputs"][0]["id"], "combined")
@@ -75,7 +75,7 @@ class ParallelIntegration(unittest.TestCase):
                         path.write_text('{"custom":"preserve this file; do not normalize"}\n')
                         paths.append(str(path))
                         rpc(endpoint, source, "agent.event", dict(provider=provider, event="SessionStart", session_id=f"session-{source}", transcript_path=str(path)))
-                        rpc(endpoint, source, "graph.connect", {"from":f"%{source}", "from_port":"turn_completed", "to":"%3", "to_port":"join"})
+                        rpc(endpoint, source, "graph.connect", {"from":f"t{source}", "from_port":"turn_completed", "to":"t3", "to_port":"join"})
                     def notify(source, text):
                         return rpc(endpoint, source, "agent.event", {"provider":"codex" if source == 1 else "claude", "event":"Stop", "text":text})
                     def inbox(token):
@@ -86,7 +86,7 @@ class ParallelIntegration(unittest.TestCase):
                     log = (folder / "node.log").read_text()
                     self.assertIn("[x] Worker 1 / turn_completed", log)
                     self.assertIn("[ ] Worker 2 / turn_completed", log)
-                    self.assertNotIn("%1", log)
+                    self.assertNotIn("t1", log)
                     pending = wait(lambda: next((r for r in rpc(endpoint, 1, "graph.list", {})["receipts"] if r["status"] == "pending"), None))
                     self.assertEqual(pending["details"]["received"], 1)
                     self.assertEqual(pending["details"]["total"], 2)
@@ -96,7 +96,7 @@ class ParallelIntegration(unittest.TestCase):
                     notify(2, "B first")
                     wait(lambda: "All arrived. Connect Combined" in (folder / "node.log").read_text())
                     self.assertEqual(inbox(4), [])
-                    rpc(endpoint, 3, "graph.connect", {"from":"%3", "from_port":"combined", "to":"%4", "to_port":"in"})
+                    rpc(endpoint, 3, "graph.connect", {"from":"t3", "from_port":"combined", "to":"t4", "to_port":"in"})
                     wait(lambda: len(inbox(4)) == 1)
                     first = inbox(4)[0]
                     self.assertEqual(first["source_port"], "combined")
@@ -124,7 +124,7 @@ class ParallelIntegration(unittest.TestCase):
                     stop(node)
                     self.assertEqual(node.returncode, 0)
                     nodes = rpc(endpoint, 1, "graph.list", {})["nodes"]
-                    self.assertEqual(next(n for n in nodes if n["node"] == "%3")["status"], "offline")
+                    self.assertEqual(next(n for n in nodes if n["node"] == "t3")["status"], "offline")
                     # A fresh CLI process must not clear an incomplete host inbox.
                     notify(1, "A after restart")
                     self.assertEqual(len(inbox(3)), 1)

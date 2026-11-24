@@ -1,4 +1,6 @@
 extends "res://tests/unit/test_case.gd"
+
+const PaneAddress := preload("res://scenes/PaneAddress.gd")
 const World := preload("res://scenes/TerminalWorld.gd")
 
 class HostProbe extends "res://scenes/TerminalHost.gd":
@@ -40,7 +42,7 @@ func key_event(code: int, echo := false) -> InputEventKey:
 func host_with_tabs(count: int) -> HostProbe:
 	var host := HostProbe.new()
 	for i in count:
-		host.workspace_layout.add(100 + i, {"pane": "%%%d" % (100 + i)})
+		host.workspace_layout.add(100 + i, {"pane": PaneAddress.key((100 + i))})
 	return host
 
 func test_host_digits_select_by_position_and_nine_selects_last() -> void:

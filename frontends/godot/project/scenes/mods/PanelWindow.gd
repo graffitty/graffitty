@@ -19,7 +19,7 @@ static func open(terminal_host: Node, name: String, extra_props := {}) -> Window
 		return null
 	var existing := find(terminal_host, name)
 	if existing != null:
-		existing.source = terminal_host
+		existing.bind_source(terminal_host)
 		existing.raise_panel()
 		return existing
 	var window: Window = load("res://scenes/mods/PanelWindow.gd").new()
@@ -29,6 +29,13 @@ static func open(terminal_host: Node, name: String, extra_props := {}) -> Window
 	terminal_host.get_window().add_child(window)
 	window.present()
 	return window
+
+
+func bind_source(terminal_host: Node) -> void:
+	var id := terminal_host.get_instance_id() if is_instance_valid(terminal_host) else 0
+	if _published_source == id: return
+	source = terminal_host
+	_publish_props()
 
 
 static func find(terminal_host: Node, name: String) -> Window:
@@ -192,10 +199,13 @@ func _reload() -> void:
 
 func _publish_props() -> void:
 	if view != null and view.has_method("set_props") and view.copy_id() >= 0:
-		view.set_props(JSON.stringify(_props()))
+		var properties := _props()
+		view.set_props(JSON.stringify(properties))
+		_published_source = properties.window
 		_published_width = roundi(view.size.x)
 
 
+var _published_source := -1
 var _published_width := -1
 ## Width changes reach the mod as props; whole pixels only, so drags stay cheap.
 func _view_resized() -> void:

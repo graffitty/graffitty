@@ -1,4 +1,5 @@
 extends "../../../../tests/llm-e2e/replay/replay.gd"
+
 ## Exercise real chromium panes and camera projection without launching Chromium.
 const Layout := preload("res://scenes/WorkspaceLayout.gd")
 
@@ -7,7 +8,7 @@ func play() -> void:
 	await camera_at_rest()
 	var view: Control = host.workspace_view
 	var terminal: String = host.pane_focus
-	var owner := int(terminal.substr(1))
+	var owner := PaneAddress.id(terminal)
 	var group: Dictionary = host.workspace_layout.tab(host.workspace_layout.active)
 	group.tree["physics"] = false
 	group.tree["tiling"] = false
@@ -23,7 +24,7 @@ func play() -> void:
 		app.add_child(chromium)
 		host.chromiums[id] = chromium
 		host.workspaces[owner].chromiums.append(id)
-		var item := Layout.leaf("%%%d" % id)
+		var item := Layout.leaf(PaneAddress.key(id))
 		item["rect"] = Rect2(center + Vector2(100, -270 + i * 300), Vector2(280, 220))
 		host.workspace_layout.merge(group.id, item, terminal)
 	view.refresh()
@@ -42,7 +43,7 @@ func play() -> void:
 	view.navigation_zoom = 1.0
 	var rect := Rect2(Vector2(view.content_rect().get_center().x - 180, view.content_rect().position.y + 2), Vector2(360, 260))
 	Layout.find(group.tree, terminal)["rect"] = rect
-	var chromium_key := "%%%d" % host.workspaces[owner].chromiums[0]
+	var chromium_key := PaneAddress.key(host.workspaces[owner].chromiums[0])
 	Layout.find(group.tree, chromium_key)["rect"] = Rect2(rect.position + Vector2(80, 20), rect.size)
 	view.navigation_center = view.size * 0.5
 	view.refresh()

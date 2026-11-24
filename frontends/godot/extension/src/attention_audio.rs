@@ -8,8 +8,8 @@ mod output;
 #[class(base=RefCounted)]
 struct AttentionAudio {
     base: Base<RefCounted>,
-    tx: Sender<Result<(), String>>,
-    rx: Receiver<Result<(), String>>,
+    tx: Sender<Result<output::Playback, String>>,
+    rx: Receiver<Result<output::Playback, String>>,
     active: usize,
     completed: usize,
 }
@@ -41,11 +41,17 @@ impl AttentionAudio {
     #[func]
     fn poll(&mut self) -> VarDictionary {
         let mut error = String::new();
+        let mut skipped = 0;
         while let Ok(result) = self.rx.try_recv() {
             self.active = self.active.saturating_sub(1);
-            match result { Ok(()) => self.completed += 1, Err(e) => error = e }
+            match result {
+                Ok(output::Playback::Complete) => self.completed += 1,
+                Ok(output::Playback::Skipped) => skipped += 1,
+                Err(e) => error = e,
+            }
         }
         let mut result = VarDictionary::new();
+        result.set("skipped", skipped);
         result.set("active", self.active as i64);
         result.set("completed", self.completed as i64);
         result.set("error", error);

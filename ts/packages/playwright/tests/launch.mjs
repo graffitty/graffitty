@@ -5,7 +5,7 @@ import { attach, launch } from "@graffitty/playwright";
 // covered against a real session server separately. Hidden skips placement.
 const launched = await launch({ url: process.env.GRAFFITTY_PLAYWRIGHT_TEST_URL + "?launched=1", hidden: true });
 try {
-  assert.match(launched.handle, /^%\d+$/);
+  assert.match(launched.handle, /^c\d+$/);
   assert.notEqual(launched.handle, process.env.GRAFFITTY_CHROMIUM);
   const { page } = launched;
   await page.waitForURL(/launched=1/);

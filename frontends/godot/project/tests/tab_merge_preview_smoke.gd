@@ -1,4 +1,5 @@
 extends "../../../../tests/llm-e2e/suites/godot/tabs-and-panes/replays/main-area-tiling.gd"
+
 ## Whole-tab merge previews must stay visible and preserve untiled pane sizes.
 
 func drag_into(target: int, point: Vector2) -> void:
@@ -28,9 +29,9 @@ func play() -> void:
 	await owner_at_rest()
 	var source: int = host.workspace_layout.active
 	var incoming: String = host.pane_focus
-	var created: Dictionary = await host.session_backend.connection.request_action("create", {"kind": "pane", "session": int(incoming.substr(1))})
+	var created: Dictionary = await host.session_backend.connection.request_action("create", {"kind": "pane", "session": PaneAddress.id(incoming)})
 	await owner_at_rest()
-	var companion := "%%%d" % int(created.created)
+	var companion := PaneAddress.key(int(created.created))
 	var source_tree: Dictionary = host.workspace_layout.tab(source).tree
 	source_tree.tiling = false
 	source_tree.physics = false
@@ -97,7 +98,7 @@ func play() -> void:
 			check(view.pane_rects[existing].is_equal_approx(destination_before), "Stash drop preserves the destination pane")
 			for key in expected:
 				check(view.pane_rects[key].is_equal_approx(expected[key]), "Drop matches the preview for " + key)
-			var terminal: Node = host.sessions[int(incoming.substr(1))].term
+			var terminal: Node = host.sessions[PaneAddress.id(incoming)].term
 			check(terminal.get_grid_size() == source_grid, "Stash transfer preserves the source PTY grid")
 			check(terminal.get_shell_pid() == source_pid, "Transfer preserves the running shell")
 			await screenshot("stash-committed")

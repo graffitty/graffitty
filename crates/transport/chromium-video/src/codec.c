@@ -5,6 +5,10 @@
 #include <libavutil/opt.h>
 #include <libavutil/hwcontext.h>
 #include <libswscale/swscale.h>
+#include "codec_probe.h"
+#ifdef __linux__
+#include "cuda_probe.h"
+#endif
 #ifdef _WIN32
 #include <libavutil/hwcontext_d3d11va.h>
 int gw_video_decoder_supported(void *device, int codec);
@@ -19,6 +23,10 @@ int graffitty_va_load(void);
 // Encoder and decoder capability probes can run in either order. Load the
 // system VA dispatch table before allowing FFmpeg to call any of its entries.
 static int create_video_device(AVBufferRef **device, enum AVHWDeviceType type) {
+#ifdef __linux__
+    if (type == AV_HWDEVICE_TYPE_CUDA && !gv_cuda_available())
+        return AVERROR(ENOSYS);
+#endif
 #ifdef GRAFFITTY_VA_LOADER
     if (type == AV_HWDEVICE_TYPE_VAAPI && !graffitty_va_load())
         return AVERROR(ENOSYS);
@@ -72,7 +80,7 @@ static Video *allocate(const AVCodec *codec) {
     }
     return v;
 }
-static Video *encoder_create(int codec, int width, int height, int surface, int bitrate, int fps) {
+static Video *encoder_create(int codec, int width, int height, int surface, int bitrate, int fps, int probe) {
     if (width < 16 || height < 16 || width > 4096 || height > 4096 || (width|height)&1)
         return NULL;
 #ifdef __APPLE__
@@ -84,6 +92,9 @@ static Video *encoder_create(int codec, int width, int height, int surface, int 
 #endif
     const char *prefix = codec == 0 ? "h264" : codec == 1 ? "hevc" : "av1";
     for (int i = 0; suffixes[i]; ++i) {
+#ifdef __linux__
+        if (!strcmp(suffixes[i], "nvenc") && !gv_cuda_available()) continue;
+#endif
         char name[64];
         snprintf(name, sizeof(name), "%s_%s", prefix, suffixes[i]);
         Video *v = allocate(avcodec_find_encoder_by_name(name));
@@ -166,7 +177,7 @@ static Video *encoder_create(int codec, int width, int height, int surface, int 
                 av_dict_free(&options); gv_free(v); continue;
             }
         }
-        int result = avcodec_open2(c, c->codec, &options);
+        int result = gv_open_codec(c, c->codec, &options, probe);
         av_dict_free(&options);
         if (result < 0) { gv_free(v); continue; }
         v->frame->format = AV_PIX_FMT_NV12; v->frame->width = width; v->frame->height = height;
@@ -181,12 +192,12 @@ static Video *encoder_create(int codec, int width, int height, int surface, int 
 void gv_set_bitrate(Video *v, int bitrate) {
     if (v && v->context && bitrate > 0) v->context->bit_rate = bitrate;
 }
-Video *gv_encoder(int codec, int width, int height, int bitrate, int fps) {
-    return encoder_create(codec, width, height, 0, bitrate, fps);
+Video *gv_encoder(int codec, int width, int height, int bitrate, int fps, int probe) {
+    return encoder_create(codec, width, height, 0, bitrate, fps, probe);
 }
 #ifdef __APPLE__
 Video *gv_surface_encoder(int codec, int width, int height, int bitrate, int fps) {
-    return encoder_create(codec, width, height, 1, bitrate, fps);
+    return encoder_create(codec, width, height, 1, bitrate, fps, 0);
 }
 // The immutable IOSurface is owned by the caller. VideoToolbox retains the
 // CVPixelBuffer for asynchronous encoding; no readback, PNG, or swscale here.
@@ -260,7 +271,7 @@ static enum AVPixelFormat hardware_format(AVCodecContext *context, const enum AV
         if (*formats == v->hardware) return *formats;
     return AV_PIX_FMT_NONE; // Never silently fall back to a software decoder.
 }
-Video *gv_decoder(int codec) {
+Video *gv_decoder(int codec, int probe) {
 #ifdef __APPLE__
     CMVideoCodecType type = codec == 0 ? kCMVideoCodecType_H264 : codec == 1 ? kCMVideoCodecType_HEVC : 'av01';
     if (!VTIsHardwareDecodeSupported(type)) return NULL;
@@ -293,7 +304,7 @@ Video *gv_decoder(int codec) {
         v->context->get_format = hardware_format;
         v->context->flags |= AV_CODEC_FLAG_LOW_DELAY;
         v->context->thread_count = 1;
-        if (avcodec_open2(v->context, implementation, NULL) == 0) return v;
+        if (gv_open_codec(v->context, implementation, NULL, probe) == 0) return v;
         gv_free(v);
     }
     return NULL;
@@ -340,4 +351,4 @@ int gv_decode(Video *v, const uint8_t *bytes, int length, int format, const uint
     return (int)size;
 }
 
-Video *gv_decoder_named(int codec, const char *name, int width, int height) { (void)name; (void)width; (void)height; return gv_decoder(codec); }
+Video *gv_decoder_named(int codec, const char *name, int width, int height) { (void)name; (void)width; (void)height; return gv_decoder(codec, 0); }

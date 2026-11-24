@@ -4,9 +4,27 @@ use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use std::{error::Error, fmt};
 pub mod clipboard;
+pub mod agent_attention;
 pub mod file_transfer;
 pub mod controller;
 pub mod osc;
+
+/// Terminal outcomes of the owner's Codex cancellation worker. Worker errors
+/// leave the provider outcome unresolved and eligible for retry.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(tag = "outcome", rename_all = "snake_case")]
+pub enum CodexCancelOutcome {
+    Deleted,
+    Absent,
+    ProcessEnded,
+}
+
+#[derive(Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(tag = "outcome", rename_all = "snake_case")]
+pub enum CodexQueueStatus {
+    Listed { queued_ids: Vec<String> },
+    ProcessEnded,
+}
 
 pub const VERSION: u64 = 1;
 
@@ -218,3 +236,4 @@ mod chromium_video_header_tests {
 }
 
 pub mod graph;
+pub mod pane_id;

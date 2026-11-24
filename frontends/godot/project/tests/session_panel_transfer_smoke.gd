@@ -1,4 +1,6 @@
 extends SceneTree
+
+const PaneAddress := preload("res://scenes/PaneAddress.gd")
 ## Isolated live-server routing test; test_session_transfer.py owns the server.
 const SessionDrag := preload("res://scenes/session/SessionPanelDrag.gd")
 var failures: Array[String] = []
@@ -45,11 +47,13 @@ func run() -> void:
 	var first: int = source.active_session_id
 	var created: Dictionary = await wrapper.connection.request_action("create", {"kind": "tab"})
 	var tab: int = int(created.created)
-	if not await wait_for(func(): return source.sessions.has(tab) and source.workspace_layout.containing("%%%d" % tab) >= 0):
+	if not await wait_for(func(): return source.sessions.has(tab) and source.workspace_layout.containing(PaneAddress.key(tab)) >= 0):
 		check(false, "new tab is presented")
 		quit(1)
 		return
 	var pid: int = source.sessions[tab].term.get_shell_pid()
+	var agents_panel: Window = preload("res://scenes/mods/PanelWindow.gd").open(source, "agents")
+	var agents_copy: int = agents_panel.view.copy_id()
 	var state := {"source": source, "id": tab, "kind": "tab", "session_drop": {"session": ""}}
 	await SessionDrag.commit(app, state, null)
 	var target: Node
@@ -60,6 +64,8 @@ func run() -> void:
 		quit(1)
 		return
 	check(await wait_for(func(): return target.get_parent().connection.connected and target.sessions.has(tab)), "Destination attaches")
+	check(await wait_for(func(): return agents_panel.source == target and agents_panel._props().window == target.get_instance_id()),
+		"The docked Agents panel follows the destination presentation")
 	var session: String = target.session_backend.connection.workspace
 	check(target.get_window() == root, "New-session drop reuses the current window")
 	check(session != original, "New-session drop allocates another server session")
@@ -73,13 +79,16 @@ func run() -> void:
 	if not returned:
 		quit(1)
 		return
+	check(await wait_for(func(): return agents_panel.source == source and agents_panel.view.copy_id() == agents_copy),
+		"Returning restores the same Agents panel to its original host")
+	agents_panel._close_panel()
 	check(source.workspace_layout.tab(first).size() > 0 and source.workspace_layout.tab(tab).size() > 0, "Both tabs remain distinct")
 	check(source.sessions[tab].term.get_shell_pid() == pid, "Return transfer retains PID")
 	# A pane drop splits only the carried group before transferring the new tab.
 	var split: Dictionary = await wrapper.connection.request_action("create", {"kind": "pane", "session": first})
 	var pane: int = int(split.created)
 	check(await wait_for(func(): return source.sessions.has(pane)), "Split pane is presented")
-	var pane_key := "%%%d" % pane
+	var pane_key := PaneAddress.key(pane)
 	var pane_pid: int = source.sessions[pane].term.get_shell_pid()
 	# Exercise routing before commit: the docked panel shares the source's
 	# native window and must not be mistaken for ordinary pane movement.
@@ -165,7 +174,7 @@ func run() -> void:
 	# the hold already took the source view off screen.
 	split = await wrapper.connection.request_action("create", {"kind": "pane", "session": first})
 	var carried: int = int(split.created)
-	var carried_key := "%%%d" % carried
+	var carried_key := PaneAddress.key(carried)
 	check(await wait_for(func(): return source.sessions.has(carried) and source.workspace_view.panes.has(carried_key)), "Second split pane is presented")
 	var carried_pid: int = source.sessions[carried].term.get_shell_pid()
 	source.select_workspace(source.workspace_layout.containing(carried_key), true)

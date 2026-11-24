@@ -66,7 +66,7 @@ pub fn dispatch(server: &mut Server, value: &Value) -> Result<api::Reply, Error>
     }
     let target = target
         .filter(|s| !s.is_empty())
-        .ok_or_else(|| api::error("invalid_target", "Specify %ID or session:tab.pane"))?;
+        .ok_or_else(|| api::error("invalid_target", "Specify tN or cN or session:tab.pane"))?;
     let id = if let Some(id) = graffitty_workspace_core::pane_id::parse(target) {
         id
     } else {
@@ -76,7 +76,7 @@ pub fn dispatch(server: &mut Server, value: &Value) -> Result<api::Reply, Error>
             .ok_or_else(|| {
                 api::error(
                     "invalid_target",
-                    "Remote targets require %ID or session:tab.pane",
+                    "Remote targets require tN or cN or session:tab.pane",
                 )
             })?;
         let key = server
@@ -100,9 +100,72 @@ pub fn dispatch(server: &mut Server, value: &Value) -> Result<api::Reply, Error>
     if !server.sessions.contains_key(&id) {
         return Err(api::error("invalid_target", "Unknown terminal pane"));
     }
+    dispatch_target(id, request, |id, method, params| server.request(id, method, params))
+}
+
+fn dispatch_target(
+    id: u64,
+    request: Request,
+    dispatch: impl FnOnce(u64, &str, &Value) -> Result<api::Reply, Error>,
+) -> Result<api::Reply, Error> {
     let mut params = request.params;
-    params["target"] = json!(format!("%{id}"));
+    if request.method == "agent.seen" {
+        // The graph API takes only the event; pane authority comes from the
+        // controller's resolved target, even after the viewer switches sessions.
+        params.as_object_mut().unwrap().remove("target");
+    } else {
+        params["target"] = json!(format!("t{id}"));
+    }
     // The viewer selected a terminal with its server capability; reuse all
     // input validation, pacing, mode encoding and completion handling.
-    server.request(id, &request.method, &params)
+    dispatch(id, &request.method, &params)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use graffitty_workspace_core::graph::Graph;
+    use std::collections::HashMap;
+
+    #[test]
+    fn agent_seen_routes_across_workspaces_and_rejects_stale_or_malformed_receipts() {
+        let mut graphs = HashMap::new();
+        for (id, workspace) in [(1, "shown"), (2, "previous")] {
+            let mut graph = Graph::default();
+            graph.add(id, "Task".into());
+            for event in ["SessionStart", "UserPromptSubmit", "Stop"] {
+                graph.dispatch(id, "agent.event", &json!({"provider":"pi","event":event})).unwrap();
+            }
+            graphs.insert(workspace, graph);
+        }
+        let source = graphs["shown"].snapshot();
+        let first = graphs["previous"].nodes["t2"]["attention"].clone();
+        let send = |graphs: &mut HashMap<&str, Graph>, id, params: Value| {
+            let request = Request { version: 1, method: "agent.seen".into(), params };
+            request.validate().unwrap();
+            dispatch_target(id, request, |id, method, params| {
+                let workspace = match id { 1 => "shown", 2 => "previous", _ => return Err("Unknown terminal pane".into()) };
+                let result = graphs.get_mut(workspace).unwrap().dispatch(id, method, params)?;
+                Ok(api::Reply::Ready(json!({"result":result})))
+            })
+        };
+        let api::Reply::Ready(reply) = send(&mut graphs, 2, json!({"target":"t2","event":first["event"]})).unwrap() else { panic!("Receipt is immediate") };
+        assert_eq!(reply["result"]["attention"]["seen"], true);
+        assert_eq!(graphs["shown"].snapshot(), source, "Current viewer workspace cannot redirect a receipt");
+        let before = graphs["previous"].notification_revision();
+        send(&mut graphs, 2, json!({"target":"t2","event":first["event"]})).unwrap();
+        assert_eq!(graphs["previous"].notification_revision(), before);
+        for event in ["UserPromptSubmit", "Stop"] {
+            graphs.get_mut("previous").unwrap().dispatch(2, "agent.event", &json!({"event":event})).unwrap();
+        }
+        let current = graphs["previous"].snapshot();
+        send(&mut graphs, 2, json!({"target":"t2","event":first["event"]})).unwrap();
+        assert_eq!(graphs["previous"].snapshot(), current);
+        for params in [json!({"target":"t2"}), json!({"target":"t2","event":7}),
+            json!({"target":"t2","event":first["event"],"pane":1})] {
+            assert!(send(&mut graphs, 2, params).is_err());
+            assert_eq!(graphs["previous"].snapshot(), current);
+        }
+        assert!(send(&mut graphs, 99, json!({"target":"t99","event":first["event"]})).is_err());
+    }
 }

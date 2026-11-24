@@ -35,13 +35,13 @@ class PayloadInspectorIntegration(unittest.TestCase):
                         return [json.loads(line) for line in (folder / "events.jsonl").read_text().splitlines()]
                     node = launch("--json")
                     manifest = wait(lambda: next((n.get("manifest") for n in call(1, "graph.list")["nodes"]
-                        if n["node"] == "%3" and n.get("manifest", {}).get("name") == "Payload Inspector"), None))
+                        if n["node"] == "t3" and n.get("manifest", {}).get("name") == "Payload Inspector"), None))
                     self.assertEqual(manifest["inputs"][0]["id"], "payload")
                     self.assertEqual(manifest["outputs"], [])
                     call(1, "agent.event", kind="custom", event="SessionStart")
                     call(1, "agent.register", name="Source", inputs=[], outputs=[{"id": "result"}])
                     for target, port in [(3, "payload"), (4, "in")]:
-                        call(1, "graph.connect", **{"from":"%1", "from_port":"result", "to":f"%{target}", "to_port":port})
+                        call(1, "graph.connect", **{"from":"t1", "from_port":"result", "to":f"t{target}", "to_port":port})
                     payload = {"text":"hello\nsecond line", "nested":{"arbitrary":[None, False, 42, "한글"]}}
                     call(1, "graph.emit", output="result", payload=payload)
                     wait(lambda: not call(3, "graph.take")["events"] and bool((folder / "events.jsonl").read_text()))
@@ -72,7 +72,7 @@ class PayloadInspectorIntegration(unittest.TestCase):
                     session = folder / "claude.jsonl"
                     session.write_text('{"custom":"not normalized"}\n')
                     call(2, "agent.event", provider="claude", event="SessionStart", session_id="claude-session", transcript_path=str(session))
-                    call(2, "graph.connect", **{"from":"%2", "from_port":"turn_completed", "to":"%3", "to_port":"payload"})
+                    call(2, "graph.connect", **{"from":"t2", "from_port":"turn_completed", "to":"t3", "to_port":"payload"})
                     call(2, "agent.event", provider="claude", event="Stop", text="Finished review")
                     node = launch("--json", "--once")
                     node.wait(timeout=10)

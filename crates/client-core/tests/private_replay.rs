@@ -347,14 +347,14 @@ fn graph_reception_is_typed_and_atomic_for_every_frontend() {
         ipc::connect(&format!("ipc://{}", socket.display())).unwrap(),
     )));
     let mut server = Peer::new(ipc::accept(&listener).unwrap());
-    send(&mut server,json!({"type":"topology","graph":{"nodes":[{"node":"%1","kind":"custom","manifest":{
+    send(&mut server,json!({"type":"topology","graph":{"nodes":[{"node":"t1","kind":"custom","manifest":{
         "name":"Manual Prompt","inputs":[],"outputs":[{"id":"out","line_style":"solid"}]}}]}}));
     let events = client.poll().unwrap();
     assert!(matches!(&events[0],Event::Topology(_)));
     let graph=client.graph().unwrap().clone();
     assert_eq!(graph.nodes[0].kind,Some(graffitty_protocol::graph::NodeKind::Custom));
     assert!(graph.nodes[0].provider.is_none() && graph.nodes[0].session_id.is_none());
-    send(&mut server,json!({"type":"topology","graph":{"nodes":[{"node":"%1","provider":false}]}}));
+    send(&mut server,json!({"type":"topology","graph":{"nodes":[{"node":"t1","provider":false}]}}));
     assert!(client.poll().is_err());
     assert_eq!(client.graph(),Some(&graph));
     send(&mut server,json!({"type":"session_switched","workspace":"next"}));

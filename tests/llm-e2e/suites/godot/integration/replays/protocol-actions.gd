@@ -1,5 +1,6 @@
 extends "rich-clipboard.gd"
 
+
 func start_probe(path: String) -> bool:
 	var python := OS.get_environment("GRAFFITTY_INPUT_PYTHON")
 	var probe := ProjectSettings.globalize_path("res://../../../tests/fixtures/windows_input_receipt.py")
@@ -33,7 +34,7 @@ func play() -> void:
 		return
 	var original_id: int = host.active_session_id
 	var original_pid: int = terminal.get_shell_pid()
-	check(await host.set_pane_title("%%%d" % original_id, "OSC52 acceptance"), "Owner names the requesting terminal")
+	check(await host.set_pane_title(PaneAddress.key(original_id), "OSC52 acceptance"), "Owner names the requesting terminal")
 	for child in terminal.get_children():
 		if child is IntegrationUI: integration = child
 	terminal.set("clipboard_read", 2)

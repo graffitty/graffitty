@@ -1,4 +1,6 @@
 extends PanelContainer
+
+const PaneAddress := preload("res://scenes/PaneAddress.gd")
 ## Terminal accessory keys. Modifiers cycle off -> next key -> locked -> off.
 const DesktopText := preload("res://scenes/DesktopText.gd")
 signal modifiers_changed
@@ -338,7 +340,7 @@ func key_target() -> Node:
 	if not is_instance_valid(host): return null
 	if host.command_line_open(): return host.command_line
 	if host.has_method("is_chromium_pane") and host.is_chromium_pane(host.pane_focus):
-		return host.chromiums.get(int(host.pane_focus.substr(1)))
+		return host.chromiums.get(PaneAddress.id(host.pane_focus))
 	if not host.is_terminal_pane(host.pane_focus): return null
 	var id: int = host.active_session_id
 	return host.sessions[id].term if host.sessions.has(id) else null

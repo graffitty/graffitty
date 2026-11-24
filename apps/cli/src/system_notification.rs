@@ -404,18 +404,18 @@ mod tests {
     }
     #[test]
     fn original_source_survives_forwarding_and_unicode_is_bounded() {
-        let event = json!({"source":"%2","origin":{"source":"%1"},
+        let event = json!({"source":"t2","origin":{"source":"t1"},
             "text":"한".repeat(3000),"payload":{"title":"Done"}});
         let (title, body, source) = content(&event, "Graffitty");
         assert_eq!(title, "Done");
-        assert_eq!(source, "%1");
+        assert_eq!(source, "t1");
         assert_eq!(body.chars().count(), 2048);
     }
     #[test]
     fn body_fallbacks_do_not_open_session_files() {
         assert_eq!(
             content(
-                &json!({"source":"%1","payload":{"body":"Ready"}}),
+                &json!({"source":"t1","payload":{"body":"Ready"}}),
                 "G"
             )
             .1,
@@ -423,11 +423,11 @@ mod tests {
         );
         assert_eq!(
             content(
-                &json!({"source":"%1","sessions":[{"path":"/private"}]}),
+                &json!({"source":"t1","sessions":[{"path":"/private"}]}),
                 "G"
             )
             .1,
-            "New event from pane %1"
+            "New event from pane t1"
         );
     }
 }

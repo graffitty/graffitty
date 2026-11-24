@@ -29,7 +29,7 @@ class NativeGpu:
         self.source_sha256 = hashlib.sha256(source.read_bytes()).hexdigest()
         self.lib = c.CDLL(str(output))
         signatures = {
-            "gv_decoder": (c.c_void_p,[c.c_int]),
+            "gv_decoder": (c.c_void_p,[c.c_int,c.c_int]),
             "gv_decode": (c.c_int,[c.c_void_p,c.c_void_p,c.c_int,c.c_int,c.POINTER(c.c_void_p),c.POINTER(c.c_int),c.POINTER(c.c_int)]),
             "gv_free": (None,[c.c_void_p]),
             "gg_receiver_new": (c.c_void_p, [c.c_void_p, c.c_size_t]),
@@ -51,7 +51,7 @@ class NativeGpu:
         self.receivers=[]
 
     def decode_video(self, header, payload):
-        decoder=self.lib.gv_decoder({"h264":0,"hevc":1,"av1":2}[header["format"]])
+        decoder=self.lib.gv_decoder({"h264":0,"hevc":1,"av1":2}[header["format"]],0)
         assert decoder, "No hardware video decoder for delivered fallback"
         import time
         try:

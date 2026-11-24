@@ -1,5 +1,6 @@
 extends "../../tabs-and-panes/replays/stash-outside-main-area.gd"
 
+
 func play() -> void:
 	root.content_scale_size = Vector2i(1280, 800)
 	await hold(.3)
@@ -19,7 +20,7 @@ func play() -> void:
 	var keys := [first, second, third]
 	var pids := {}
 	for key in keys:
-		var id := int(key.substr(1))
+		var id := PaneAddress.id(key)
 		pids[key] = host.sessions[id].term.get_shell_pid()
 		var style: StyleBoxFlat = view.panes[key].get_theme_stylebox("panel")
 		check(is_equal_approx(style.bg_color.a, .85), "Pane %s has an 85%% opaque backdrop" % key)
@@ -44,7 +45,7 @@ func play() -> void:
 	while overlay.clock < until:
 		var ready := true
 		for key in keys:
-			var data: Dictionary = host.resource_monitor_for(int(key.substr(1))).snapshot()
+			var data: Dictionary = host.resource_monitor_for(PaneAddress.id(key)).snapshot()
 			ready = ready and data.get("cpu_valid", false) and data.get("memory_current", 0) > 0
 		if ready: break
 		await process_frame
@@ -61,7 +62,7 @@ func play() -> void:
 		var status: Dictionary = view.pane_status[key]
 		caption.render_now()
 		var texts: PackedStringArray = caption.texts()
-		check(str(status.label).begins_with(".%d (%%%s)" % [keys.find(key) + 1, key.substr(1)]) and status.label in texts and str(status.cpu).ends_with("%") and status.cpu in texts and str(status.memory).ends_with("M") and status.memory in texts, "%s shows its pane UID, live CPU and RAM" % key)
+		check(str(status.label).begins_with(".%d (%s)" % [keys.find(key) + 1, key]) and status.label in texts and str(status.cpu).ends_with("%") and status.cpu in texts and str(status.memory).ends_with("M") and status.memory in texts, "%s shows its pane UID, live CPU and RAM" % key)
 		# A narrow card sized to its content: label, CPU row, RAM row.
 		check(caption.size.x <= 140 and caption.size.y >= 56 and caption.size.y <= 76, "%s uses a narrow multiline stats panel (size %s)" % [key, caption.size])
 		var rect := func(id: String) -> Rect2: return caption.hit_rect(id)
@@ -78,7 +79,7 @@ func play() -> void:
 			if other != key and view.status_strips.has(other):
 				check(not view.control_screen_rect(caption).intersects(view.control_screen_rect(view.status_strips[other])), "Captions %s and %s do not overlap" % [key, other])
 	await say("An unfocused pane's live CPU rises during a short workload")
-	var first_id := int(first.substr(1))
+	var first_id := PaneAddress.id(first)
 	# Type only once the shell has drawn its prompt and gone quiet: startup
 	# scripts that query the terminal can swallow input typed before that.
 	var settled_text := ""
@@ -108,7 +109,7 @@ func play() -> void:
 	var running: Array = host.resource_monitor_for(first_id).snapshot().get("processes", []).map(func(process): return process.get("name"))
 	check(busy, "The unfocused pane reports real CPU activity (processes %s, screen %s)" % [running, terminal_text(first_id).strip_edges().right(300)])
 	await hold(.3)
-	check(str(view.pane_status[first].cpu).to_float() > 5 and str(view.pane_status[first].label).begins_with(".1 (%%%s)" % first.substr(1)), "The visible caption updates CPU for the correct unfocused pane (cpu %s, label %s)" % [view.pane_status[first].cpu, view.pane_status[first].label])
+	check(str(view.pane_status[first].cpu).to_float() > 5 and str(view.pane_status[first].label).begins_with(".1 (%s)" % first), "The visible caption updates CPU for the correct unfocused pane (cpu %s, label %s)" % [view.pane_status[first].cpu, view.pane_status[first].label])
 	DirAccess.make_dir_recursive_absolute(ProjectSettings.globalize_path("res://.cache/bistro-overview"))
 	(await screen_image()).save_png("res://.cache/bistro-overview/overview.png")
 	await say("Zoom back in: restore pane controls")
@@ -116,7 +117,7 @@ func play() -> void:
 	await hold(.5)
 	for key in keys:
 		check(not view.panes[key].compact_header and not view.status_strips[key].visible, "%s restores its toolbar and hides overview stats" % key)
-		check(view.pane_rects[key] == before[key] and host.sessions[int(key.substr(1))].term.get_shell_pid() == pids[key], "%s preserves its shell and layout" % key)
+		check(view.pane_rects[key] == before[key] and host.sessions[PaneAddress.id(key)].term.get_shell_pid() == pids[key], "%s preserves its shell and layout" % key)
 	(await screen_image()).save_png("res://.cache/bistro-overview/detail.png")
 	await pinch(.4)
 	await hold(.5)

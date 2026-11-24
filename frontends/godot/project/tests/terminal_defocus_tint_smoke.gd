@@ -5,7 +5,7 @@ const InkShader := preload("res://scenes/terminal_composite.gdshader")
 var failures := 0
 
 class Host extends Node:
-	func is_terminal_pane(key: String) -> bool: return key in ["%0", "%1"]
+	func is_terminal_pane(key: String) -> bool: return key in ["t0", "t1"]
 	var workspace_view: Control
 
 class View extends Control:
@@ -14,7 +14,7 @@ class View extends Control:
 	var panes := {}
 
 class Pane extends Control:
-	var key := "%0"
+	var key := "t0"
 	var texture := TextureRect.new()
 
 func check(ok: bool, label: String) -> void:
@@ -51,11 +51,11 @@ func run() -> void:
 	view.canvas.size = Vector2i(1000, 500)
 	view.add_child(view.canvas)
 	view.canvas.add_child(view.canvas_root)
-	for key in ["%0", "%1", "%2"]:
+	for key in ["t0", "t1", "t2"]:
 		var pane := Pane.new()
 		pane.key = key
 		view.canvas_root.add_child(pane)
-		pane.position = Vector2(100 if key == "%0" else 500, 50)
+		pane.position = Vector2(100 if key == "t0" else 500, 50)
 		pane.add_child(pane.texture)
 		pane.texture.position = Vector2(8, 40)
 		pane.texture.size = Vector2(300, 200)
@@ -73,18 +73,18 @@ func run() -> void:
 	sheet.set_shader_parameter("tex_size", Vector2(1000, 500))
 	sheet.set_shader_parameter("curvature_rad", 0.12)
 	world._sync_terminal_defocus_tint()
-	var mat: ShaderMaterial = view.panes["%0"].texture.material
+	var mat: ShaderMaterial = view.panes["t0"].texture.material
 	check(mat.get_shader_parameter("ink_sheet_rect").is_equal_approx(Vector4(0.108, 0.18, 0.3, 0.4)), "Tint depth mapping includes terminal position and header/padding inset")
 	check(mat.get_shader_parameter("ink_depth_plane").is_equal_approx(Vector3(2, 1, 0.5)), "Tint derives fragment depth from the actual camera and sheet plane")
 	check(is_equal_approx(mat.get_shader_parameter("curvature_rad"), 0.12), "Tint shares the sheet's surface warp")
-	check(is_equal_approx(view.panes["%1"].texture.material.get_shader_parameter("defocus_weight"), 0.4), "Every visible terminal receives current lens state")
-	check(view.panes["%2"].texture.material.get_shader_parameter("defocus_weight") == null or is_zero_approx(view.panes["%2"].texture.material.get_shader_parameter("defocus_weight")), "Chromium content is not assigned terminal tint")
+	check(is_equal_approx(view.panes["t1"].texture.material.get_shader_parameter("defocus_weight"), 0.4), "Every visible terminal receives current lens state")
+	check(view.panes["t2"].texture.material.get_shader_parameter("defocus_weight") == null or is_zero_approx(view.panes["t2"].texture.material.get_shader_parameter("defocus_weight")), "Chromium content is not assigned terminal tint")
 	effects.enabled = false
 	effects.update_lens(camera, Vector3(0, 0, -2), 1, -1, 1)
 	world._sync_terminal_defocus_tint()
 	check(is_zero_approx(mat.get_shader_parameter("defocus_weight")), "Disabling effects clears terminal tint")
 	sheet.set_shader_parameter("curvature_rad", 0.25)
-	view.panes["%0"].position.x += 50
+	view.panes["t0"].position.x += 50
 	effects.enabled = true
 	effects.update_lens(camera, Vector3(0, 0, -2), 1.1, 2.3, 0.4)
 	world._sync_terminal_defocus_tint()

@@ -77,19 +77,27 @@ its own filesystem; remote directories belong to the remote server.
 
 | Target | Meaning |
 | --- | --- |
-| `%12` | Stable pane ID |
+| `t12` | Stable pane ID |
 | `@7` | Stable tab ID |
 | `:2.1` | First pane of the second tab in the caller's window |
 | `@7.1` | First pane of stable tab `@7` |
 
-On a fresh server, session IDs start at `$1` and pane IDs start at `%1`.
+On a fresh server, session IDs start at `$1` and pane IDs start at `t1`.
 Stable tab and pane IDs survive moves. Positional targets start at 1 and change with layout.
 Main panes come first in reading order; stashed and hidden panes follow in stored
 order. Camera movement and physics do not renumber them.
 
 `list-panes` returns stable and positional targets. Graph permissions and browser
-ownership still apply after resolution. `GRAFFITTY_PANE` and
-`GRAFFITTY_SURFACE_ID` use the canonical `%N` ID.
+ownership still apply after resolution. `GRAFFITTY_PANE` is the terminal address (for example, `t1`).
+Chromium panes use an independent sequence starting at `c1`.
+`GRAFFITTY_SURFACE_ID` is an internal integer. Agent-created terminals
+receive the next terminal address and record their creator in `spawned_by`.
+Letter suffixes such as `t1a` are reserved.
+
+During the first month after 0.0.4 ships, the server adopts live terminals
+from 0.0.3 holders. A running process keeps its PID, pane capability, and
+inherited environment. Its old self-address works for pane-scoped calls.
+New terminals receive typed addresses immediately.
 
 ## CLI
 
@@ -122,7 +130,7 @@ Use `gft pane select` to include floating panes.
 
 ```sh
 gft pane pid
-gft pane pid %12
+gft pane pid t12
 gft pane pid :2.1 --details
 gft pane pid @7 --details
 ```

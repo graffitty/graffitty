@@ -25,6 +25,29 @@ class GraffittyWaylandFrame : public Object {
         return DisplayServer::get_singleton()->window_get_scale(window_id);
     }
 
+    static int64_t get_output_pixel_count(int window_id) {
+        auto *state = window_state(window_id);
+        if (!state) {
+            return 0;
+        }
+        MutexLock lock(state->wayland_thread->mutex);
+        int64_t pixels = 0;
+        // A surface may straddle outputs. Use the largest entered output's
+        // mode area; wl_output.mode is already in pixels, including HiDPI.
+        // Godot can remove an output before its surface-leave event. Only
+        // dereference live registry entries while holding the Wayland mutex.
+        for (auto *output : state->registry->wl_outputs) {
+            if (!state->wl_outputs.has(output)) {
+                continue;
+            }
+            auto *screen = WaylandThread::wl_output_get_screen_state(output);
+            if (screen && screen->data.size.x > 0 && screen->data.size.y > 0) {
+                pixels = MAX(pixels, int64_t(screen->data.size.x) * screen->data.size.y);
+            }
+        }
+        return pixels; // Zero means no output has been reported yet.
+    }
+
     static bool is_tiled(int window_id) {
         auto *state = window_state(window_id);
         if (!state) {
@@ -69,6 +92,7 @@ class GraffittyWaylandFrame : public Object {
 protected:
     static void _bind_methods() {
         ClassDB::bind_static_method("GraffittyWaylandFrame", D_METHOD("get_scale", "window_id"), &GraffittyWaylandFrame::get_scale);
+        ClassDB::bind_static_method("GraffittyWaylandFrame", D_METHOD("get_output_pixel_count", "window_id"), &GraffittyWaylandFrame::get_output_pixel_count);
         ClassDB::bind_static_method("GraffittyWaylandFrame", D_METHOD("set_input_shape", "window_id", "radius_px", "passthrough"), &GraffittyWaylandFrame::set_input_shape);
         ClassDB::bind_static_method("GraffittyWaylandFrame", D_METHOD("is_tiled", "window_id"), &GraffittyWaylandFrame::is_tiled);
     }

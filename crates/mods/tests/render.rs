@@ -345,8 +345,8 @@ fn pane_status_draws_icon_rows_that_scroll_instead_of_squashing() {
     let mut mods = Mods::new(Options { state_dir: None, log: Box::new(|level, message| panic!("{level}: {message}")), translate: Box::new(str::to_owned) }).unwrap();
     mods.set_theme(json!({"foreground": "#e4e4e7", "dim": "#8b93a1"}));
     let metrics: Vec<_> = (0..8).map(|i| json!({"id": format!("m{i}"), "icon": "cpu.svg", "value": format!("{i}%"), "tooltip": format!("Reading {i}")})).collect();
-    mods.publish("resources", json!({"pane": "%1", "kind": "terminal", "label": "Pane %1", "status": "running", "status_label": "running", "message": "",
-        "cpu": "1%", "memory": "1M", "metrics": metrics, "tooltip": "Pane %1 · running", "agent": {}}));
+    mods.publish("resources", json!({"pane": "t1", "kind": "terminal", "label": "Pane t1", "status": "running", "status_label": "running", "message": "",
+        "cpu": "1%", "memory": "1M", "metrics": metrics, "tooltip": "Pane t1 · running", "agent": {}}));
     let folder = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../../frontends/godot/project/mods/pane-status");
     let id = mods.load(&folder, json!({})).unwrap();
     let frame = mods.frame(id, (300.0, 120.0), &mut MonospaceMeasure).unwrap();
@@ -364,7 +364,7 @@ fn pane_status_draws_icon_rows_that_scroll_instead_of_squashing() {
     assert_eq!(mods.tooltip(id, x, y).as_deref(), Some("Reading 0"));
     assert!(!mods.texts(id).iter().any(|t| t.contains("Reading")));
     // A starting monitor and an agent: icons with tooltips, the queue count as text.
-    mods.publish("resources", json!({"pane": "%2", "kind": "chromium", "label": "Chromium 2", "status": "starting", "status_label": "starting", "message": "Waiting",
+    mods.publish("resources", json!({"pane": "t2", "kind": "chromium", "label": "Chromium 2", "status": "starting", "status_label": "starting", "message": "Waiting",
         "cpu": "—", "memory": "—", "metrics": [], "tooltip": "Chromium 2 · starting\nWaiting",
         "agent": {"provider": "codex", "status": "idle", "name": "", "label": "Idle", "since": -1, "session": "Session abc", "queued": 3, "queued_label": "3 messages awaiting delivery", "detail": "note"}}));
     let frame = mods.frame(id, (300.0, 200.0), &mut MonospaceMeasure).unwrap();
@@ -474,8 +474,8 @@ export default class List extends View {
 fn compact_pane_status_drops_its_metric_icons_when_short_of_room() {
     let mut mods = Mods::new(Options { state_dir: None, log: Box::new(|level, message| panic!("{level}: {message}")), translate: Box::new(str::to_owned) }).unwrap();
     mods.set_theme(json!({"foreground": "#e4e4e7", "dim": "#8b93a1"}));
-    mods.publish("resources", json!({"pane": "%12", "kind": "terminal", "label": "Pane %12", "status": "running", "status_label": "running", "message": "",
-        "cpu": "100.0%", "memory": "12.5G", "metrics": [], "tooltip": "Pane %12 · CPU 100.0% · Memory 12.5G",
+    mods.publish("resources", json!({"pane": "t12", "kind": "terminal", "label": "Pane t12", "status": "running", "status_label": "running", "message": "",
+        "cpu": "100.0%", "memory": "12.5G", "metrics": [], "tooltip": "Pane t12 · CPU 100.0% · Memory 12.5G",
         "agent": {"provider": "codex", "status": "idle", "name": "", "label": "Idle", "since": -1, "session": "", "queued": 0, "queued_label": "", "detail": ""}}));
     let folder = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../../frontends/godot/project/mods/pane-status");
     for (row, roomy, tight) in [(true, (400.0, 28.0), (150.0, 28.0)), (false, (48.0, 300.0), (48.0, 110.0))] {

@@ -61,7 +61,7 @@ class AgentBridgeTests(unittest.TestCase):
                     (home / "sessions").mkdir(parents=True)
                     session = str(uuid.uuid4())
                     (home / "sessions" / f"{pid}.json").write_text(json.dumps({"pid": pid, "sessionId": session, "status": "idle", "messagingSocketPath": str(home / "socket")}))
-                    node = f"%{index}"
+                    node = f"t{index}"
                     roots.append({"node": node, "pid": float(pid), "agent_pid": float(pid), "provider_home": str(home)})
                     expected[node] = (home, session)
                 for _ in range(30):
@@ -95,12 +95,12 @@ class AgentBridgeTests(unittest.TestCase):
                 os.execv(str(executable), [str(executable), "30"])
             try:
                 for _ in range(30):
-                    result, value = self.worker(directory, {"op": "scan", "roots": [{"node": "%1", "pid": float(pid)}]})
-                    if "%1" in value:
+                    result, value = self.worker(directory, {"op": "scan", "roots": [{"node": "t1", "pid": float(pid)}]})
+                    if "t1" in value:
                         break
                     time.sleep(.1)
-                self.assertEqual(value["%1"]["status"], "unknown")
-                self.assertEqual(value["%1"]["provider"], "codex")
+                self.assertEqual(value["t1"]["status"], "unknown")
+                self.assertEqual(value["t1"]["provider"], "codex")
             finally:
                 os.kill(pid, signal.SIGTERM)
                 os.waitpid(pid, 0)
@@ -109,11 +109,11 @@ class AgentBridgeTests(unittest.TestCase):
     def test_exited_agent_is_reported_offline(self):
         with tempfile.TemporaryDirectory() as tmp:
             result, value = self.worker(Path(tmp), {"op": "scan", "roots": [
-                {"node": "%2", "pid": -1, "agent_pid": 2147483647.0},
-                {"node": "%3", "pid": -1}
+                {"node": "t2", "pid": -1, "agent_pid": 2147483647.0},
+                {"node": "t3", "pid": -1}
             ]})
             self.assertEqual(result.returncode, 0, result.stderr)
-            self.assertEqual(value, {"%2": {"status": "offline"}})
+            self.assertEqual(value, {"t2": {"status": "offline"}})
 
     @unittest.skipUnless(os.uname().sysname == "Darwin", "macOS peer PID verification")
     def test_claude_authenticated_wire_and_stale_pid_rejection(self):

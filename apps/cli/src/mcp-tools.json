@@ -125,7 +125,7 @@
               },
               "chromium": {
                 "type": "string",
-                "description": "Required for every existing-chromium operation; accepts %N or a positional pane target. Returned by create."
+                "description": "Required for every existing-chromium operation; accepts cN or a positional pane target. Returned by create."
               },
               "url": {
                 "type": "string",

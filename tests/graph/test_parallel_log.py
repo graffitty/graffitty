@@ -79,8 +79,8 @@ class ParallelLogIntegration(unittest.TestCase):
         self.call(2, "agent.event", provider="adapter", event="SessionStart", session_id="second")
         self.call(2, "agent.register", name="Second", inputs=[], outputs=[{"id": "result"}])
         for source in (1, 2):
-            self.call(source, "graph.connect", **{"from": f"%{source}", "from_port": "result", "to": "%3", "to_port": "join"})
-        self.call(3, "graph.connect", **{"from": "%3", "from_port": "combined", "to": "%4", "to_port": "in"})
+            self.call(source, "graph.connect", **{"from": f"t{source}", "from_port": "result", "to": "t3", "to_port": "join"})
+        self.call(3, "graph.connect", **{"from": "t3", "from_port": "combined", "to": "t4", "to_port": "in"})
         first_payload = {"text": "first payload", "custom": {"nested": [True, None, "café"]}}
         self.call(1, "graph.emit", output="result", payload=first_payload)
         wait(lambda: "1/2  50%" in self.drain())
@@ -140,7 +140,7 @@ class ParallelLogIntegration(unittest.TestCase):
         self.assertEqual(node.returncode, 0)
         self.assertEqual(termios.tcgetattr(slave), original_modes)
         nodes = self.call(1, "graph.list")["nodes"]
-        self.assertEqual(next(n for n in nodes if n["node"] == "%3")["status"], "offline")
+        self.assertEqual(next(n for n in nodes if n["node"] == "t3")["status"], "offline")
 
 
 if __name__ == "__main__":

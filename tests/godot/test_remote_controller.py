@@ -4,6 +4,8 @@ import json
 import os
 from pathlib import Path
 import shutil
+import shlex
+import signal
 import subprocess
 import tempfile
 import textwrap
@@ -23,6 +25,38 @@ class RemoteControllerTests(unittest.TestCase):
     @unittest.skipUnless(shutil.which("godot"), "Godot is required for the real attachment")
     def test_app_assigns_hostname_aliases_without_manual_configuration(self):
         self.run_attachments(automatic=True)
+
+    @unittest.skipUnless(shutil.which("godot"), "Godot is required")
+    def test_phone_claim_refits_idle_desktop(self):
+        with tempfile.TemporaryDirectory(prefix="gft-handoff-") as tmp:
+            directory = Path(tmp)
+            ready = directory / "ready"
+            env = {k: v for k, v in os.environ.items() if not k.startswith("GRAFFITTY_")}
+            for kind in ("CONFIG", "STATE", "CACHE", "DATA"):
+                env[f"XDG_{kind}_HOME"] = str(directory / kind.lower())
+            env["GRAFFITTY_TEST_READY"] = str(ready)
+            with PrivateServer(env, directory, None) as owner, contextlib.ExitStack() as cleanup:
+                proc = subprocess.Popen([
+                    "godot", "--headless", "--path", str(ROOT / "frontends/godot/project"),
+                    "--script", "res://tests/remote_area_handoff_smoke.gd", "--", "--no-plugin", "--no-fx",
+                ], env=env, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True)
+                cleanup.callback(proc.wait)
+                cleanup.callback(proc.kill)
+                deadline = time.monotonic() + 20
+                while not ready.exists() and proc.poll() is None and time.monotonic() < deadline:
+                    time.sleep(.05)
+                self.assertTrue(ready.exists(), "Desktop did not attach")
+                phone = Peer(json.loads(owner.descriptor.read_text())["local"], "$1")
+                cleanup.callback(phone.socket.close)
+                tab = phone.topology["tabs"][0]["id"]
+                state = phone.action("workspace_get")["workspace_state"]
+                reply = phone.action("workspace_edit", expected_revision=state["revision"], claim=True,
+                                    edit={"op": "tab", "tab": tab, "layout": state["layout"]["tabs"][str(tab)],
+                                          "settings": {"area": [0, 35, 412, 290]}})
+                self.assertEqual(reply["type"], "ack", reply)
+                output, _ = proc.communicate(timeout=20)
+                self.assertEqual(proc.returncode, 0, output)
+                self.assertIn("REMOTE_AREA_HANDOFF_PASS", output)
 
     def run_attachments(self, automatic=False):
         with contextlib.ExitStack() as stack:
@@ -75,13 +109,21 @@ class RemoteControllerTests(unittest.TestCase):
                     import os, sys, socket, threading, pathlib
                     if "-L" not in sys.argv:
                         if sys.argv[-1] == "uname -s; uname -m": print("Linux\\naarch64")
-                        else: print(pathlib.Path(os.environ["CONTROLLER_TEST_DESCRIPTOR"]).read_text())
+                        else:
+                            print("running")
+                            print(pathlib.Path(os.environ["CONTROLLER_TEST_DESCRIPTOR"]).read_text())
                         sys.exit(0)
                     host, port, remote_host, remote_port = sys.argv[sys.argv.index("-L") + 1].split(":")
                     listener = socket.create_server((host, int(port)))
-                    def forward(a, b):
+                    controls = pathlib.Path(os.environ["CONTROLLER_TEST_LINK"])
+                    controls.joinpath("forwarder").write_text(str(os.getpid()))
+                    def forward(a, b, replies=False):
                         try:
-                            while data := a.recv(65536): b.sendall(data)
+                            while data := a.recv(65536):
+                                if replies and controls.joinpath("blackhole").exists(): continue
+                                if replies and controls.joinpath("hold-replies").exists():
+                                    threading.Event().wait()
+                                b.sendall(data)
                         except OSError: pass
                         finally:
                             try: b.shutdown(socket.SHUT_WR)
@@ -90,14 +132,15 @@ class RemoteControllerTests(unittest.TestCase):
                         with client, socket.create_connection((remote_host, int(remote_port))) as remote:
                             worker = threading.Thread(target=forward, args=(client,remote), daemon=True)
                             worker.start()
-                            forward(remote,client)
+                            forward(remote,client,True)
                             worker.join()
                     while True:
                         client, _ = listener.accept()
-                        threading.Thread(target=connect, args=(client,), daemon=True).start()
+                        if controls.joinpath("offline").exists(): client.close()
+                        else: threading.Thread(target=connect, args=(client,), daemon=True).start()
                 '''))
                 ssh.chmod(0o700)
-                env.update(PATH=str(directory) + os.pathsep + env["PATH"], CONTROLLER_TEST_DESCRIPTOR=str(owner.descriptor))
+                env.update(PATH=str(directory) + os.pathsep + env["PATH"], CONTROLLER_TEST_DESCRIPTOR=str(owner.descriptor), CONTROLLER_TEST_LINK=str(directory))
                 with (directory / "attachment.log").open("w+") as log:
                     attachment = subprocess.Popen([str(owner.binary), "remote", "connect", "fixture", "--alias", "build", "--no-gui"],
                                                   env=env, stdin=subprocess.DEVNULL, stdout=log, stderr=log)
@@ -113,20 +156,70 @@ class RemoteControllerTests(unittest.TestCase):
                                 self.fail(listed.stdout + listed.stderr + log.read())
                             time.sleep(.05)
                         target = json.loads(listed.stdout)["result"]["panes"][0]["target"]
-                        self.assertEqual(target, f"build/%{pane['id']}")
+                        self.assertEqual(target, f"build/t{pane['id']}")
                         sent = command("terminal", "type", "-t", target, "--text", "printf 'HEADLESS_MARKER\\n'\n", "--interval-ms", "0")
                         self.assertEqual(sent.returncode, 0, sent.stdout + sent.stderr)
                         read = command("terminal", "get-text", "-t", target, "--json")
                         self.assertEqual(read.returncode, 0, read.stdout + read.stderr)
                         self.assertIn("HEADLESS_MARKER", json.loads(read.stdout)["result"]["text"])
+                        # Deliver a mutation, withhold its reply, then lose the SSH
+                        # process. A fresh login must never replay that mutation.
+                        applied = directory / "applied"
+                        (directory / "hold-replies").touch()
+                        mutation = subprocess.Popen([str(owner.binary), "terminal", "type", "-t", target,
+                            "--text", "echo applied >> " + shlex.quote(str(applied)) + "\n", "--interval-ms", "0"],
+                            env=env, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
+                        try:
+                            deadline = time.monotonic() + 10
+                            while not applied.exists() and time.monotonic() < deadline: time.sleep(.02)
+                            self.assertTrue(applied.exists(), "Remote shell never received the mutation")
+                            (directory / "offline").touch()
+                            os.kill(int((directory / "forwarder").read_text()), signal.SIGTERM)
+                            mutation.communicate(timeout=10)
+                            self.assertNotEqual(mutation.returncode, 0, "Lost acknowledgment cannot report success")
+                        finally:
+                            if mutation.poll() is None: mutation.kill()
+                            mutation.wait(timeout=5)
+                        self.assertNotEqual(command("pane", "list", "-t", "build/").returncode, 0)
+                        # Allow at least one redial to hit the interrupted connection.
+                        deadline = time.monotonic() + 10
+                        while "Retrying in" not in (directory / "attachment.log").read_text() and time.monotonic() < deadline:
+                            time.sleep(.02)
+                        self.assertIn("Retrying in", (directory / "attachment.log").read_text())
+                        (directory / "hold-replies").unlink()
+                        (directory / "offline").unlink()
+                        deadline = time.monotonic() + 15
+                        while command("pane", "list", "-t", "build/").returncode != 0:
+                            self.assertIsNone(attachment.poll(), (directory / "attachment.log").read_text())
+                            self.assertLess(time.monotonic(), deadline, (directory / "attachment.log").read_text())
+                            time.sleep(.05)
+                        self.assertEqual(applied.read_text().splitlines(), ["applied"])
+                        # Keep TCP and the SSH process alive, silently losing only
+                        # downstream bytes. No command is needed to detect the outage.
+                        (directory / "blackhole").touch()
+                        deadline = time.monotonic() + 25
+                        while "heartbeat timed out" not in (directory / "attachment.log").read_text():
+                            self.assertLess(time.monotonic(), deadline, (directory / "attachment.log").read_text())
+                            time.sleep(.05)
+                        # Keep dropping the reply to the first WebSocket upgrade
+                        # as well. A timed-out redial must not terminate the CLI.
+                        deadline = time.monotonic() + 20
+                        while "WebSocket upgrade timed out" not in (directory / "attachment.log").read_text():
+                            self.assertLess(time.monotonic(), deadline, (directory / "attachment.log").read_text())
+                            time.sleep(.05)
+                        (directory / "blackhole").unlink()
+                        deadline = time.monotonic() + 35
+                        while command("pane", "list", "-t", "build/").returncode != 0:
+                            self.assertIsNone(attachment.poll(), (directory / "attachment.log").read_text())
+                            self.assertLess(time.monotonic(), deadline, (directory / "attachment.log").read_text())
+                            time.sleep(.05)
                         # The real encrypted controller carries files larger than a
                         # command packet. The remote process receives only the final
                         # quoted path in one bracketed paste, with no Enter.
-                        import shlex
-                        data = bytes(range(256)) * 1025
+                        data = bytes(range(256)) * 12289
                         source = directory / "image fixture.png"
                         source.write_bytes(data)
-                        local = command("terminal", "put", "--target", f"%{pane['id']}", "--json", str(source))
+                        local = command("terminal", "put", "--target", f"t{pane['id']}", "--json", str(source))
                         self.assertEqual(local.returncode, 0, local.stdout + local.stderr)
                         self.assertEqual(Path(json.loads(local.stdout)["path"]).read_bytes(), data)
                         uploaded = command("terminal", "put", "--target", target, "--json", str(source))

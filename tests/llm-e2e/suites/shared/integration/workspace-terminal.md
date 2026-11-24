@@ -36,12 +36,13 @@ not an expected string inserted into the UI model.
 3. Open a chromium beside a terminal and type into its page. Drag the terminal's
    title onto another tab using the visible tab bar. Inspect the arriving
    terminal and chromium: the page's existing state and terminal output remain.
-4. Move the chromium alone into a new tab. Inspect the recognizable page in
-   `surface-chromium-only-tab.png`; its content remains proportional. Undo/redo
-   must restore the same tab identity, not recreate the Chromium document.
-5. Create and close a terminal in that chromium-only tab. The page stays alive.
-   Then close its original owner from another tab; the chromium and newly empty
-   presentation tab disappear while an unrelated shell remains usable.
+4. Keep Chromium with its owner. Create and select an unrelated terminal tab,
+   then request a new terminal with the Chromium pane as its explicit source.
+   Verify the temporary terminal starts in the owner's tab with its own shell.
+5. Close the temporary terminal and verify its shell exits. The original
+   Chromium process and owner shell survive in their tab, and the unrelated tab
+   retains its original shell. The [browser pane replay](../../godot/integration/replays/browser-pane-create.gd)
+   checks the tab identities and process IDs.
 
 ## Navigate independent tabs
 

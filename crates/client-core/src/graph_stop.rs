@@ -163,7 +163,7 @@ mod tests {
     #[test]
     fn owner_refresh_and_reapply_preserve_edge_flags_and_drafts() {
         let mut model=Editor {offset:0,..Default::default()};
-        let mut edge=json!({"from":"%1","to":"%2","muted":true,"read":true,"events":["answer"],"revision":7,"stop_at":0.});
+        let mut edge=json!({"from":"t1","to":"t2","muted":true,"read":true,"events":["answer"],"revision":7,"stop_at":0.});
         model.refresh(Some(&edge));model.command(Some(&edge),"stop-mode","after",100.);
         model.command(Some(&edge),"stop-duration","5m",100.);
         model.refresh(Some(&edge));let request=model.command(Some(&edge),"stop-apply","",100.).unwrap();

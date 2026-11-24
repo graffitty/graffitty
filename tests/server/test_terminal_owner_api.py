@@ -130,21 +130,21 @@ class TerminalOwnerApiTests(unittest.TestCase):
         target_file = self.directory / f"{pane['pid']}.input"
         self.eventually(lambda: target_file.exists() and target_file.read_bytes() == "한🙂".encode())
         self.assertEqual(self.received(), b"")
-        self.assertEqual(control("terminal.press", dict(target=f"%{pane['id']}", key="Enter"))["result"]["keys_sent"], 1)
+        self.assertEqual(control("terminal.press", dict(target=f"t{pane['id']}", key="Enter"))["result"]["keys_sent"], 1)
         self.eventually(lambda: target_file.read_bytes() == "한🙂".encode() + b"\r")
         self.assertEqual(self.peer.sync()["workspace"], original_workspace)
         listed = control("pane.list", {"target": "project"})["result"]["panes"]
-        self.assertEqual([p["id"] for p in listed], [f"%{pane['id']}"])
+        self.assertEqual([p["id"] for p in listed], [f"t{pane['id']}"])
         # The same address on a pane capability still cannot cross its scope.
-        self.assertIn("error", self.api("terminal.type", {"target":f"%{pane['id']}", "text":"denied"}))
+        self.assertIn("error", self.api("terminal.type", {"target":f"t{pane['id']}", "text":"denied"}))
         self.assertIn("error", control("terminal.type", {"target":":1.1", "text":"no implicit GUI focus"}))
 
     def test_controller_rejects_versions_methods_and_invalid_targets_before_input(self):
         for version, method, params in [
-            (2, "terminal.type", {"target":f"%{self.id}", "text":"denied"}),
+            (2, "terminal.type", {"target":f"t{self.id}", "text":"denied"}),
             (1, "server.restart", {}),
             (1, "terminal.type", {"target":"missing:1.1", "text":"denied"}),
-            (1, "terminal.type", {"target":f"%{self.id}", "text":"denied", "unknown":True}),
+            (1, "terminal.type", {"target":f"t{self.id}", "text":"denied", "unknown":True}),
         ]:
             reply = self.peer.action("controller_rpc", call=dict(version=version, method=method, params=params))
             self.assertEqual(reply["type"], "error", reply)
@@ -200,8 +200,8 @@ class TerminalOwnerApiTests(unittest.TestCase):
             ("terminal.type", {"text":"ab", "interval_ms":1001}, "invalid_params"),
             ("terminal.get_text", {"scrollback":1}, "invalid_params"),
             ("terminal.get_text", {"unknown":True}, "invalid_params"),
-            ("terminal.get_text", {"target":f"%{sibling}"}, "forbidden"),
-            ("terminal.get_text", {"target":f"%{foreign}"}, "invalid_target"),
+            ("terminal.get_text", {"target":f"t{sibling}"}, "forbidden"),
+            ("terminal.get_text", {"target":f"t{foreign}"}, "invalid_target"),
             ("terminal.press", {"key":"a", "tab_id":sibling}, "forbidden"),
         ]:
             self.assertEqual(self.api(method, params)["error"]["code"], code)
@@ -212,14 +212,14 @@ class TerminalOwnerApiTests(unittest.TestCase):
         self.assertEqual(zero["code"], "invalid_target")
         self.assertIn("pane numbers start at 1", zero["message"])
         pids = self.api("terminal.pid", {"details":True})["result"]["terminals"]
-        self.assertEqual({p["pane"] for p in pids}, {f"%{self.id}", f"%{sibling}"})
+        self.assertEqual({p["pane"] for p in pids}, {f"t{self.id}", f"t{sibling}"})
         for row in pids:
             self.assertGreater(row["root_pid"], 0)
             self.assertIn("sample_age_seconds", row)
             for process in row["processes"]:
                 self.assertEqual(set(process), {"pid", "parent_pid", "start_identity", "name", "memory_current"})
         self.assertEqual(len(self.api("terminal.pid", {"target":":1"})["result"]["terminals"]), 2)
-        self.assertEqual(self.cli("pane", "pid", f"%{self.id}")["terminals"][0]["root_pid"], self.pane["pid"])
+        self.assertEqual(self.cli("pane", "pid", f"t{self.id}")["terminals"][0]["root_pid"], self.pane["pid"])
 
     def test_paced_input_does_not_block_owner_and_closure_completes_request(self):
         observer = self.connect()

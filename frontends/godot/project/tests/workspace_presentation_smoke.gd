@@ -1,4 +1,6 @@
 extends "res://tests/workspace_render_updates_smoke.gd"
+
+const PaneAddress := preload("res://scenes/PaneAddress.gd")
 ## Run with --flat-2d on Android's renderer and without it for desktop Flat.
 const Updates := preload("res://scenes/TerminalViewportUpdates.gd")
 
@@ -75,7 +77,7 @@ func inactive_output_checks(first: int) -> void:
 	var capture_budget := preload("res://scenes/EffectCaptureBudget.gd")
 	check(capture_budget._targets.all(func(reference): return not is_instance_valid(reference.get_ref()) or reference.get_ref().is_queued_for_deletion()), "Completed transitions retain no capture targets")
 	var target: int = hidden[0]
-	host.select_workspace(host.workspace_layout.containing("%%%d" % target))
+	host.select_workspace(host.workspace_layout.containing(PaneAddress.key(target)))
 	await wait(2.5)
 	check(connection.subscriptions == [target] and ("HIDDEN_OUTPUT_%d_19" % target) in str(host.active_terminal().get_text(false).get("text", "")), "Selecting a previously busy hidden tab restores the latest owner snapshot")
 	host.select_workspace(first)

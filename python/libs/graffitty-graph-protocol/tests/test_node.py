@@ -5,7 +5,7 @@ from pydantic import ValidationError
 
 from graffitty_graph_protocol import Checkpoint, Event, InputPort, Node, Output, OutputPort, SessionReference
 
-EVENT = dict(type="message", event_id="event-1", run_id="run-1", source="%1", target="%2",
+EVENT = dict(type="message", event_id="event-1", run_id="run-1", source="t1", target="t2",
              source_port="out", target_port="in", text="hello", sessions=[dict(provider="codex", id="s")])
 
 

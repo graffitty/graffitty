@@ -12,7 +12,7 @@ func run() -> void:
 	check(dialog.load_error.is_empty() and dialog.view.last_error().is_empty(), "Pane Status mod loads: " + dialog.view.last_error())
 	check(dialog.is_embedded() == mobile and dialog.force_native != mobile, "Pane Status uses the shared platform window policy")
 	check(MonitorDialog.open(host) == dialog and MonitorDialog.find(host) == dialog, "Reopening raises the same window-owned inspector")
-	check(has_text(dialog, "12.0%") and has_text(dialog, "%1") and "PID 123" in dialog.view.get_tooltip(dialog.view.hit_rect("metric-processes").get_center()),
+	check(has_text(dialog, "12.0%") and has_text(dialog, "t1") and "PID 123" in dialog.view.get_tooltip(dialog.view.hit_rect("metric-processes").get_center()),
 		"Inspector renders the selected pane's sample, details in row tooltips: %s" % [texts(dialog)])
 	check(dialog.footer.get_child_count() == 2, "Inspector has no selection action buttons")
 	host.sample.cpu = 37.0
@@ -35,7 +35,7 @@ func run() -> void:
 	check(dock.size.x == 40 and dialog._body.size.x <= 40, "Monitor supports the same compact sidebar width")
 	check(dialog.compact and not dialog.compact_row, "Narrow sidebar switches to the compact rail")
 	var shown := texts(dialog)
-	check("48%" in shown and "1M" in shown and "%1" in shown and not has_text(dialog, "PID"), "Compact rail shows the pane and icon metrics, details move to the tooltip: %s" % [shown])
+	check("48%" in shown and "1M" in shown and "t1" in shown and not has_text(dialog, "PID"), "Compact rail shows the pane and icon metrics, details move to the tooltip: %s" % [shown])
 	var pane_rect: Rect2 = dialog.view.hit_rect("pane")
 	check(pane_rect.position.x >= 6, "Compact metrics retain six-pixel side padding")
 	check("PID 123" in dialog.view.get_tooltip(pane_rect.get_center()), "Full details remain in the tooltip")

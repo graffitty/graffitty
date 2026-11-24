@@ -1,4 +1,5 @@
 extends "../../../../replay/replay.gd"
+
 ## Replays tests/llm-e2e/suites/shared/tabs-and-panes/new-terminal-window.md
 
 
@@ -61,7 +62,7 @@ func play() -> void:
 	if second.is_empty():
 		return
 	check(host.chromiums.is_empty(), "No chromium opens")
-	var second_id := int(second.substr(1))
+	var second_id := PaneAddress.id(second)
 	await say("Type in the new window")
 	await type("echo NEWWINDOW $$ {enter}")
 	var output_deadline := Time.get_ticks_msec() + 15000
@@ -85,7 +86,7 @@ func play() -> void:
 	if third.is_empty():
 		return
 	await say("Close the third window")
-	host.request_close_terminal(int(third.substr(1)))
+	host.request_close_terminal(PaneAddress.id(third))
 	# Restricted process inspection conservatively prompts even for an idle shell.
 	if is_instance_valid(host.close_dialog):
 		host.close_dialog.confirmed.emit()

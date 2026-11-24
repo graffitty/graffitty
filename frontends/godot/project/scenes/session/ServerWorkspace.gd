@@ -1,4 +1,6 @@
 extends RefCounted
+
+const PaneAddress := preload("res://scenes/PaneAddress.gd")
 ## Canonical server layout conversion. Rect2 and pane keys are presentation
 ## types; the wire representation is shared with every other frontend.
 const Layout := preload("res://scenes/WorkspaceLayout.gd")
@@ -58,11 +60,19 @@ static func map_route(key: String, map_id: Callable) -> String:
 
 static func map_value(value: Variant, map_id: Callable) -> Variant:
 	if value is String and preload("res://scenes/PaneTargets.gd").valid(value):
-		return "%%%d" % int(map_id.call(int(value.substr(1))))
+		return PaneAddress.key(int(map_id.call(PaneAddress.id(value))))
 	if value is Dictionary:
 		var output := {}
 		for key in value:
-			output[map_route(str(key), map_id)] = map_value(value[key], map_id)
+			if key == "routes":
+				var routes := {}
+				for edge in value.routes:
+					routes[map_route(edge, map_id)] = value.routes[edge].duplicate()
+				output.routes = routes
+			elif key == "reroutes":
+				output.reroutes = value.reroutes.duplicate(true)
+			else:
+				output[key] = map_value(value[key], map_id)
 		return output
 	if value is Array: return value.map(func(item): return map_value(item, map_id))
 	return value

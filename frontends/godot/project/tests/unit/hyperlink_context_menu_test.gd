@@ -21,7 +21,7 @@ func test_browser_and_chromium_are_explicit_separate_actions() -> void:
 	var host := Host.new()
 	var pane := Pane.new()
 	pane.host = host
-	pane.key = "%42"
+	pane.key = "t42"
 	menu.show_in_chromium_requested.connect(pane._show_link_in_chromium)
 	var uri := "HTTPS://example.test/CaseSensitive?q=Mixed#Anchor"
 	menu.target = uri

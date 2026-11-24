@@ -33,12 +33,12 @@ fn row(id: &str, key: &str, title: &str, cpu: Option<f64>, memory: Option<u64>, 
 fn publish(mods: &mut Mods) {
     mods.publish("pane_resources", json!([
         {"server": "", "local": true, "session": "main", "rows": [
-            row("a", "%1", "editor", Some(10.0), Some(100 << 20), Some(2), 300),
-            row("b", "%2", "build", Some(30.0), Some(2 << 30), Some(9), 100),
+            row("a", "t1", "editor", Some(10.0), Some(100 << 20), Some(2), 300),
+            row("b", "t2", "build", Some(30.0), Some(2 << 30), Some(9), 100),
         ]},
         {"server": "box", "local": false, "session": "work", "rows": [
-            row("c", "%3", "agent", Some(50.0), Some(50 << 20), Some(1), 200),
-            row("d", "%4", "idle", None, None, None, 400),
+            row("c", "t3", "agent", Some(50.0), Some(50 << 20), Some(1), 200),
+            row("d", "t4", "idle", None, None, None, 400),
         ]},
     ]));
 }
@@ -177,7 +177,7 @@ fn lists_panes_with_captions_and_totals() {
 
     press(&mut mods, copy, center(&hit(&hits, "row-c")), center(&hit(&hits, "row-c")));
     let requests = mods.take_requests();
-    assert!(matches!(&requests[..], [Request::Run { name, args, .. }] if name == "FocusPane" && *args == json!({"host": 7, "key": "%3"})), "{requests:?}");
+    assert!(matches!(&requests[..], [Request::Run { name, args, .. }] if name == "FocusPane" && *args == json!({"host": 7, "key": "t3"})), "{requests:?}");
 }
 
 #[test]
@@ -383,8 +383,8 @@ fn title_drag_scrolls_at_edges_until_hidden_columns_are_reachable() {
 #[test]
 fn connection_summary_folds_without_focusing_or_double_counting() {
     let mut mods = host();
-    let members = vec![row("a", "%1", "agent", Some(10.0), Some(100 << 20), Some(2), 300),
-        row("b", "%2", "filetree", Some(20.0), Some(200 << 20), Some(3), 301)];
+    let members = vec![row("a", "t1", "agent", Some(10.0), Some(100 << 20), Some(2), 300),
+        row("b", "t2", "filetree", Some(20.0), Some(200 << 20), Some(3), 301)];
     let mut summary = row("group", "", "", Some(30.0), Some(300 << 20), Some(5), 0);
     summary["pid"] = json!(null);
     summary["members"] = json!(members);
@@ -403,7 +403,7 @@ fn connection_summary_folds_without_focusing_or_double_counting() {
     assert_eq!(order(&hits), ["group", "a", "b"]);
     let child = center(&hit(&hits, "row-b"));
     press(&mut mods, copy, child, child);
-    assert!(matches!(&mods.take_requests()[..], [Request::Run { name, args, .. }] if name == "FocusPane" && args["key"] == "%2"));
+    assert!(matches!(&mods.take_requests()[..], [Request::Run { name, args, .. }] if name == "FocusPane" && args["key"] == "t2"));
 }
 
 #[test]
@@ -415,22 +415,22 @@ fn compact_rail_lists_every_pane_and_focuses() {
     assert_eq!(order(&hits), ["a", "b", "c", "d"]);
     assert!(!hits.iter().any(|h| h.key == "header" || h.key == "totals"));
     press(&mut mods, copy, center(&hit(&hits, "row-b")), center(&hit(&hits, "row-b")));
-    assert!(matches!(&mods.take_requests()[..], [Request::Run { name, args, .. }] if name == "FocusPane" && args["key"] == "%2"));
+    assert!(matches!(&mods.take_requests()[..], [Request::Run { name, args, .. }] if name == "FocusPane" && args["key"] == "t2"));
 }
 
 #[test]
 fn shows_the_pane_and_sorts_it_by_number() {
     let mut mods = host();
     mods.publish("pane_resources", json!([{"server": "", "local": true, "session": "main", "rows": [
-        row("a", "%10", "ten", None, None, None, 1),
-        row("b", "%2", "two", None, None, None, 2),
+        row("a", "t10", "ten", None, None, None, 1),
+        row("b", "t2", "two", None, None, None, 2),
     ]}]));
     let copy = mods.load(&folder(), json!({})).unwrap();
     let hits = frame(&mut mods, copy);
-    assert!(texts(&mods, copy).contains("|%10|"), "{}", texts(&mods, copy));
+    assert!(texts(&mods, copy).contains("|t10|"), "{}", texts(&mods, copy));
     let pane = center(&hit(&hits, "col-pane"));
     press(&mut mods, copy, pane, pane);
-    assert_eq!(order(&frame(&mut mods, copy)), ["b", "a"], "%2 before %10");
+    assert_eq!(order(&frame(&mut mods, copy)), ["b", "a"], "t2 before t10");
 }
 
 /// A phone's panel is narrower than the columns: they slide sideways, and a
@@ -533,7 +533,7 @@ fn phased_sideways_gesture_stretches_and_springs_back_at_both_ends() {
 #[test]
 fn rows_scroll_vertically_under_the_header() {
     let mut mods = host();
-    let rows: Vec<_> = (0..30).map(|i| row(&format!("r{i}"), &format!("%{i}"), "pane", Some(1.0), Some(1 << 20), Some(1), i)).collect();
+    let rows: Vec<_> = (0..30).map(|i| row(&format!("r{i}"), &format!("t{i}"), "pane", Some(1.0), Some(1 << 20), Some(1), i)).collect();
     mods.publish("pane_resources", json!([{"server": "", "local": true, "session": "main", "rows": rows}]));
     let copy = mods.load(&folder(), json!({})).unwrap();
     let hits = frame(&mut mods, copy);
@@ -556,7 +556,7 @@ fn rows_scroll_vertically_under_the_header() {
 fn sideways_gestures_over_a_scrolling_list_move_the_columns() {
     const NARROW: (f32, f32) = (360.0, 300.0);
     let mut mods = host();
-    let rows: Vec<_> = (0..30).map(|i| row(&format!("r{i}"), &format!("%{i}"), "pane", Some(1.0), Some(1 << 20), Some(1), i)).collect();
+    let rows: Vec<_> = (0..30).map(|i| row(&format!("r{i}"), &format!("t{i}"), "pane", Some(1.0), Some(1 << 20), Some(1), i)).collect();
     mods.publish("pane_resources", json!([{"server": "", "local": true, "session": "main", "rows": rows}]));
     let copy = mods.load(&folder(), json!({})).unwrap();
     let hits = frame_at(&mut mods, copy, NARROW);

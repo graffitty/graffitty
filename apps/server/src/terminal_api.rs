@@ -1,4 +1,5 @@
 //! Terminal RPC is resolved and authorized against owner state, never a view.
+use graffitty_protocol::pane_id::address as pane_address;
 use crate::{Error, Server, api, terminal_input, workspace};
 use graffitty_workspace_core::state::Snapshot;
 use serde_json::{Value, json};
@@ -62,7 +63,7 @@ pub fn dispatch(
     if let Some(target) = target {
         let key = resolve_in_workspace(&state, &name, target)
             .ok_or_else(|| unknown_target(target, "Unknown pane target"))?;
-        if key != format!("%{caller}") {
+        if key != pane_address(caller) {
             return Err(api::error(
                 "forbidden",
                 "Terminal access is scoped to the calling terminal",
@@ -126,7 +127,7 @@ pub(crate) fn resolve_in_workspace(
     workspace: &str,
     value: &str,
 ) -> Option<String> {
-    if !value.starts_with(['%', ':', '@']) {
+    if !value.starts_with([':', '@']) && graffitty_protocol::pane_id::parse(value).is_none() {
         let (session, rest) = value.rsplit_once(':')?;
         if session != workspace {
             return None;
@@ -137,13 +138,13 @@ pub(crate) fn resolve_in_workspace(
 }
 
 pub(crate) fn resolve(state: &Snapshot, value: &str) -> Option<String> {
-    let key = if let Some(id) = value.strip_prefix('%').and_then(number) {
+    let key = if let Some(id) = graffitty_protocol::pane_id::parse(value) {
         state
             .layout
             .tabs
             .values()
             .flat_map(|tab| &tab.windows)
-            .find(|w| w.key == format!("%{id}"))?
+            .find(|w| w.key == pane_address(id))?
             .key
             .clone()
     } else if let Some((group, index)) = value.split_once('.') {
@@ -195,7 +196,7 @@ fn pids(
         })
         .transpose()?;
     if selected_pane.as_ref().is_some_and(|key| {
-        key.strip_prefix('%')
+        key.strip_prefix('t')
             .and_then(number)
             .is_none_or(|id| !server.sessions.contains_key(&id))
     }) {
@@ -213,13 +214,13 @@ fn pids(
             if selected_pane.as_ref().is_some_and(|selected| selected != key) {
                 continue;
             }
-            let Some(pane) = key.strip_prefix('%').and_then(number) else {
+            let Some(pane) = key.strip_prefix('t').and_then(number) else {
                 continue;
             };
             let Some(session) = server.sessions.get(&pane).filter(|s| s.workspace == name) else {
                 continue;
             };
-            let mut row = json!({"pane":format!("%{pane}"),"id":key,"type":"terminal", "tab":format!("@{id}"),
+            let mut row = json!({"pane":pane_address(pane),"id":key,"type":"terminal", "tab":format!("@{id}"),
                 "target":format!(":{}.{}",position+1,index+1),"root_pid":session.pid()});
             if details {
                 let snapshot = server
@@ -250,11 +251,11 @@ mod tests {
         let mut state = Snapshot::default();
         state.layout.tabs.insert(
             7,
-            TabLayout { windows: vec![pane("%3"), pane("%8")], ..Default::default() },
+            TabLayout { windows: vec![pane("t3"), pane("t8")], ..Default::default() },
         );
         state.layout.tabs.insert(
             9,
-            TabLayout { windows: vec![pane("%9")], ..Default::default() },
+            TabLayout { windows: vec![pane("t9")], ..Default::default() },
         );
         state.order = vec![7, 9];
         state
@@ -263,11 +264,11 @@ mod tests {
     #[test]
     fn positional_panes_start_at_one() {
         let state = state();
-        assert_eq!(resolve(&state, ":1.1").as_deref(), Some("%3"));
-        assert_eq!(resolve(&state, ":1.2").as_deref(), Some("%8"));
-        assert_eq!(resolve(&state, ":2.1").as_deref(), Some("%9"));
-        assert_eq!(resolve(&state, "@7.2").as_deref(), Some("%8"));
-        assert_eq!(resolve(&state, "%8").as_deref(), Some("%8"));
+        assert_eq!(resolve(&state, ":1.1").as_deref(), Some("t3"));
+        assert_eq!(resolve(&state, ":1.2").as_deref(), Some("t8"));
+        assert_eq!(resolve(&state, ":2.1").as_deref(), Some("t9"));
+        assert_eq!(resolve(&state, "@7.2").as_deref(), Some("t8"));
+        assert_eq!(resolve(&state, "t8").as_deref(), Some("t8"));
         assert_eq!(resolve(&state, ":1.0"), None);
         assert_eq!(resolve(&state, ":1.3"), None);
     }
@@ -286,8 +287,8 @@ mod tests {
         assert_eq!(resolve_in_workspace(&state, "main", "other:1.2"), None);
         assert_eq!(resolve_in_workspace(&state, "main", "main:1.0"), None);
         assert_eq!(
-            resolve_in_workspace(&state, "main", "%8"),
-            resolve(&state, "%8")
+            resolve_in_workspace(&state, "main", "t8"),
+            resolve(&state, "t8")
         );
     }
 
@@ -307,15 +308,15 @@ mod tests {
         let mut state = state();
         let layout = state.layout.tabs.get_mut(&7).unwrap();
         layout.enabled = true;
-        layout.windows.push(Window::new("%12", [0., 0., 100., 100.]));
+        layout.windows.push(Window::new("t12", [0., 0., 100., 100.]));
         layout.windows[0].stashed = true;
-        layout.tiles = Some(Node::branch(Axis::Horizontal, vec![Node::leaf("%12"), Node::leaf("%8")]));
-        assert_eq!(resolve(&state, ":1.1").as_deref(), Some("%12"));
-        assert_eq!(resolve(&state, "@7.2").as_deref(), Some("%8"));
-        assert_eq!(resolve(&state, ":1.3").as_deref(), Some("%3"));
-        assert_eq!(resolve(&state, "%3").as_deref(), Some("%3"));
-        state.layout.tabs.get_mut(&7).unwrap().remove("%12");
-        assert_eq!(resolve(&state, ":1.1").as_deref(), Some("%8"));
-        assert_eq!(resolve(&state, ":1.2").as_deref(), Some("%3"));
+        layout.tiles = Some(Node::branch(Axis::Horizontal, vec![Node::leaf("t12"), Node::leaf("t8")]));
+        assert_eq!(resolve(&state, ":1.1").as_deref(), Some("t12"));
+        assert_eq!(resolve(&state, "@7.2").as_deref(), Some("t8"));
+        assert_eq!(resolve(&state, ":1.3").as_deref(), Some("t3"));
+        assert_eq!(resolve(&state, "t3").as_deref(), Some("t3"));
+        state.layout.tabs.get_mut(&7).unwrap().remove("t12");
+        assert_eq!(resolve(&state, ":1.1").as_deref(), Some("t8"));
+        assert_eq!(resolve(&state, ":1.2").as_deref(), Some("t3"));
     }
 }

@@ -37,11 +37,11 @@
         {
           "id": 1,
           "title": "Pair",
-          "focused": "%2",
+          "focused": "t2",
           "tree": {
             "windows": [
               {
-                "pane": "%1",
+                "pane": "t1",
                 "shown": true,
                 "rect": {
                   "rect2": [
@@ -53,7 +53,7 @@
                 }
               },
               {
-                "pane": "%2",
+                "pane": "t2",
                 "shown": true,
                 "rect": {
                   "rect2": [
@@ -69,9 +69,9 @@
         },
         {
           "id": 3,
-          "focused": "%3",
+          "focused": "t3",
           "tree": {
-            "pane": "%3",
+            "pane": "t3",
             "shown": true,
             "rect": {
               "rect2": [
@@ -121,11 +121,11 @@
         {
           "id": 19,
           "title": "Pair",
-          "focused": "%11",
+          "focused": "t11",
           "tree": {
             "windows": [
               {
-                "pane": "%10",
+                "pane": "t10",
                 "shown": true,
                 "rect": {
                   "rect2": [
@@ -137,7 +137,7 @@
                 }
               },
               {
-                "pane": "%11",
+                "pane": "t11",
                 "shown": true,
                 "rect": {
                   "rect2": [
@@ -153,9 +153,9 @@
         },
         {
           "id": 12,
-          "focused": "%12",
+          "focused": "t12",
           "tree": {
-            "pane": "%12",
+            "pane": "t12",
             "shown": true,
             "rect": {
               "rect2": [

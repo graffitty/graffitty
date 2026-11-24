@@ -1,4 +1,5 @@
 extends "../../../../tests/llm-e2e/replay/replay.gd"
+
 const Layout = preload("res://scenes/WorkspaceLayout.gd")
 class Transport extends Node:
 	var topology := {"host_os": "macOS"}
@@ -14,13 +15,13 @@ func owner_layout(tab: int) -> Dictionary:
 
 func play() -> void:
 	var first: int = host.active_session_id
-	var key := "%%%d" % first
+	var key := PaneAddress.key(first)
 	var group: Dictionary = host.workspace_layout.tab(host.workspace_layout.active)
 	group.tree.tiling = true
 	host.create_terminal_window(key, "h")
 	await hold(.3)
 	var second: int = host.active_session_id
-	var second_key := "%%%d" % second
+	var second_key := PaneAddress.key(second)
 	var term: Control = host.sessions[first].term
 	var old_columns: int = term.remote_snapshot().columns
 	var focused: String = host.pane_focus
@@ -44,7 +45,7 @@ func play() -> void:
 	check(response.type == "ack" and host.workspace_layout.tab(tab).tree.tiles.children[0].weight == 2.0, "Remote divider resize persists owner proportions")
 	check(host.workspace_view.pane_rects[key].size.x > host.workspace_view.pane_rects[second_key].size.x * 1.7, "Godot renders owner divider proportions")
 	layout = owner_layout(tab)
-	layout.tiles.children[1].pane = "%999999"
+	layout.tiles.children[1].pane = "t999999"
 	response = await owner_edit(tab, layout)
 	check(response.type == "error" and owner_layout(tab).tiles.children[1].pane == second_key, "Stale divider request cannot replace panes")
 	var rect: Rect2 = host.workspace_view.pane_rects[second_key]

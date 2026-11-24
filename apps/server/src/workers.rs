@@ -224,6 +224,14 @@ impl Workers {
         true
     }
 
+    pub fn transfer_deliveries(&mut self, source: &str, target: &str, moved: &std::collections::HashSet<u64>) {
+        for (key, context) in &mut self.active {
+            if key.starts_with("deliver:") || key.starts_with("cancel:") {
+                crate::native_delivery::move_record(context, source, target, moved);
+            }
+        }
+    }
+
     pub fn poll(&mut self) -> Vec<(String, Value, Value)> {
         self.replies
             .try_iter()
@@ -276,6 +284,15 @@ mod tests {
             Value::clone,
         )
         .unwrap();
+        // Results carry the frontend-owned context even when the subprocess
+        // had already started before a tab transfer.
+        for key in ["deliver:2", "cancel:event"] {
+            workers.active.insert(key.into(), json!({"id":2,"workspace":"one","target":{"session_id":"original"}}));
+        }
+        workers.transfer_deliveries("one", "two", &std::collections::HashSet::from([2]));
+        for key in ["deliver:2", "cancel:event"] {
+            assert_eq!(workers.active.remove(key).unwrap(), json!({"id":2,"workspace":"two","target":{"session_id":"original"}}));
+        }
         assert!(workers.foreground(json!(["pane"])));
         assert!(!workers.foreground(Value::Null));
         assert!(!workers.start("", "scan".into(), Value::Null, Value::Null));

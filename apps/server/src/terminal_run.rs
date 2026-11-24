@@ -108,7 +108,7 @@ pub fn agent_command(cli: &str, provider: &str, model: Option<&str>, extra: &[St
 
 /// A tab-local pane target: the caller's pane when omitted.
 fn resolve_pane(server: &Server, workspace: &str, tab: u64, caller: u64, target: Option<&str>) -> Result<String, Error> {
-    let Some(target) = target else { return Ok(format!("%{caller}")) };
+    let Some(target) = target else { return Ok(format!("t{caller}")) };
     let state = server.workspace_state.snapshot(workspace);
     let key = terminal_api::resolve_in_workspace(&state, workspace, target)
         .ok_or_else(|| api::error("invalid_target", "No matching pane in this workspace"))?;
@@ -167,7 +167,7 @@ pub fn run(server: &mut Server, caller: u64, params: &Value) -> Result<Value, Er
         }
         // The lead must be able to hold the other end of every wire now; the
         // child's end exists once its SessionStart hook names its provider.
-        let lead = server.graphs.get(&workspace).and_then(|graph| graph.nodes.get(&format!("%{caller}")));
+        let lead = server.graphs.get(&workspace).and_then(|graph| graph.nodes.get(&format!("t{caller}")));
         if !crate::graph_wiring::wirable(lead) {
             return Err(api::error("forbidden", "wire needs the caller to be an integrated agent with graph ports; this terminal is not one"));
         }
@@ -181,7 +181,7 @@ pub fn run(server: &mut Server, caller: u64, params: &Value) -> Result<Value, Er
     let state = server.workspace_state.snapshot(&workspace);
     let mut layout = state.layout.tabs.get(&tab).cloned().ok_or("Unknown workspace tab")?;
     let area = state.tabs[&tab].area;
-    let key = format!("%{}", server.next);
+    let key = format!("t{}", server.pane_identity(Default::default()));
     if let Some(side) = placement.side {
         layout.add_beside(&anchor, &key, side, area)?;
     }
@@ -224,7 +224,7 @@ pub fn run(server: &mut Server, caller: u64, params: &Value) -> Result<Value, Er
     Ok(json!({
         "pane": key,
         "node": key,
-        "spawned_by": format!("%{caller}"),
+        "spawned_by": format!("t{caller}"),
         "tab": tab,
         "command": typed,
         "agent": agent,
@@ -263,7 +263,7 @@ pub fn place(server: &mut Server, caller: u64, params: &Value) -> Result<Value, 
         layout.set_rect(&target, placement.position, placement.size)?;
     }
     let rect = layout.window(&target).map(|w| w.rect).ok_or("Unknown pane")?;
-    if let Some(id) = target.strip_prefix('%').and_then(|id| id.parse::<u64>().ok()) {
+    if let Some(id) = graffitty_protocol::pane_id::parse(&target) {
         if let Some(session) = server.sessions.get_mut(&id) {
             session.rect = rect.map(f64::from);
         }
@@ -288,11 +288,11 @@ mod tests {
 
     #[test]
     fn placement_parsing_rejects_half_pairs_and_mixed_modes() {
-        let ok = Placement::parse(&json!({"side":"right","of":"%3","width":400,"height":300})).unwrap();
+        let ok = Placement::parse(&json!({"side":"right","of":"t3","width":400,"height":300})).unwrap();
         assert_eq!(ok.side, Some(Side::Right));
         assert_eq!(ok.size, Some([400., 300.]));
         assert!(Placement::parse(&json!({"side":"diagonal"})).is_err());
-        assert!(Placement::parse(&json!({"of":"%3"})).is_err());
+        assert!(Placement::parse(&json!({"of":"t3"})).is_err());
         assert!(Placement::parse(&json!({"x":1})).is_err());
         assert!(Placement::parse(&json!({"side":"left","x":1,"y":2})).is_err());
         assert!(Placement::parse(&json!({})).unwrap().is_empty());

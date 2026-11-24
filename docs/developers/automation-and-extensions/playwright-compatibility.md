@@ -24,7 +24,7 @@ That terminal already inherits the workspace socket and capability.
 ```ts
 import { attach } from "@graffitty/playwright";
 
-const connection = await attach({ chromium: "%3" });
+const connection = await attach({ chromium: "c3" });
 try {
   await connection.page.goto("http://localhost:3000");
   await connection.page.getByRole("button", { name: "Sign in" }).click();
@@ -39,7 +39,7 @@ For existing test suites, import `test` and `expect` from
 `@graffitty/playwright/test` and set `workers: 1`. Run with an explicit target:
 
 ```sh
-GRAFFITTY_CHROMIUM=%3 bunx playwright test --workers=1
+GRAFFITTY_CHROMIUM=c3 bunx playwright test --workers=1
 ```
 
 The fixtures return the existing primary page, context and chromium. They do not

@@ -1,10 +1,11 @@
 extends "../../../../tests/llm-e2e/replay/replay.gd"
 
+
 func play() -> void:
 	await camera_at_rest()
 	var graph: Node = app.agent_api.graph
 	var first: int = host.active_session_id
-	host.create_terminal_window("%%%d" % first)
+	host.create_terminal_window(PaneAddress.key(first))
 	var second: int = host.active_session_id
 	await hold(2.0)
 	var mode := OS.get_environment("GRAFFITTY_CODEX_TEST_MODE")
@@ -12,8 +13,8 @@ func play() -> void:
 	if work.is_empty():
 		check(false, "Run through tests/agents/codex_hooks_e2e.py MODE --graph")
 		return
-	var target := "%%%d" % second
-	var source := "%%%d" % first
+	var target := PaneAddress.key(second)
+	var source := PaneAddress.key(first)
 	host.sessions[second].term.send_text("cd '%s'; cod%s 'Say OK'\r" % [work, " --no-daemon" if mode == "local" else (" -c 'default_permissions=\":danger-full-access\"'" if mode == "overrides" else "")])
 	var deadline := Time.get_ticks_msec() + 30000
 	while Time.get_ticks_msec() < deadline:

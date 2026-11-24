@@ -1,4 +1,6 @@
 extends "res://scenes/ChromiumSession.gd"
+
+const PaneAddress := preload("res://scenes/PaneAddress.gd")
 const VideoFrame = preload("res://scenes/remote/ChromiumVideoFrame.gd")
 const RenderUpdates := preload("res://scenes/RenderUpdates.gd")
 
@@ -268,12 +270,12 @@ func restart() -> Dictionary:
 	restarting = true
 	status = "Restarting Chromium…"
 	changed.emit()
-	var reply: Dictionary = await connection.remote_call(tab_id, "chromium.restart", {"chromium": "%%%d" % session_id})
+	var reply: Dictionary = await connection.remote_call(tab_id, "chromium.restart", {"chromium": PaneAddress.key(session_id)})
 	# Another viewer relaunched it first: the browser is recovering.
 	if reply.has("error") and str(reply.error.get("code", "")) == "chromium_running":
 		restarting = false
 		changed.emit()
-		return {"result": {"restarted": "%%%d" % session_id}}
+		return {"result": {"restarted": PaneAddress.key(session_id)}}
 	if reply.has("error"):
 		restarting = false
 		var message := str(reply.error.get("message", "Chromium restart failed"))
@@ -466,7 +468,7 @@ func request(action: String, args: Dictionary = { }, timeout_ms := 20000) -> Dic
 	var started: Dictionary = await connection.remote_call(
 		tab_id,
 		"chromium.command",
-		{ "chromium": "%%%d" % session_id, "action": action, "args": args },
+		{ "chromium": PaneAddress.key(session_id), "action": action, "args": args },
 	)
 	if started.has("error"):
 		return started
@@ -475,7 +477,7 @@ func request(action: String, args: Dictionary = { }, timeout_ms := 20000) -> Dic
 		var result: Dictionary = await connection.remote_call(
 			tab_id,
 			"chromium.result",
-			{ "chromium": "%%%d" % session_id, "ticket": int(started.result.ticket) },
+			{ "chromium": PaneAddress.key(session_id), "ticket": int(started.result.ticket) },
 		)
 		if result.has("error"):
 			return result
@@ -542,7 +544,7 @@ func _dispatch_command(item: Dictionary) -> void:
 
 func _send_input(method: String, params: Dictionary) -> void:
 	var response: Dictionary = await connection.remote_call(tab_id, "chromium.input", {
-		"chromium": "%%%d" % session_id,
+		"chromium": PaneAddress.key(session_id),
 		"event": { "method": method, "params": params },
 	})
 	if response.has("error"):
@@ -624,7 +626,7 @@ func _clipboard_operation(code: int) -> void:
 
 
 func close() -> void:
-	connection.remote_call(tab_id, "chromium.close", { "chromium": "%%%d" % session_id })
+	connection.remote_call(tab_id, "chromium.close", { "chromium": PaneAddress.key(session_id) })
 
 
 func release_rendering() -> void:

@@ -1,4 +1,5 @@
 extends "../../../../tests/llm-e2e/replay/replay.gd"
+
 ## Isolated desktop fixture shared by the actual APK scenarios. Loopback only.
 func play() -> void:
 	var directory := ""
@@ -21,17 +22,17 @@ func play() -> void:
 	await owner_at_rest()
 	var target := ""
 	for id in host.sessions:
-		if id not in before: target = "%%%d" % id
+		if id not in before: target = PaneAddress.key(id)
 	if not check(not target.is_empty(), "Graph fixture creates a same-tab peer"): return
 	var active: int = host.workspace_layout.active
 	var focused: String = host.pane_focus
 	var graph: Node = app.agent_api.graph
-	var source := "%%%d" % int(host.workspace_layout.tabs[0].id)
+	var source := PaneAddress.key(int(host.workspace_layout.tabs[0].id))
 	for key in [source, target]:
-		var id := int(key.substr(1))
+		var id := PaneAddress.id(key)
 		await graph.dispatch(id, "agent.event", {"kind": "custom", "event": "SessionStart"})
 		await graph.dispatch(id, "agent.register", {"name": "Android fixture", "inputs": [{"id": "in"}], "outputs": [{"id": "send", "mode": "send"}]})
-	var connected: Dictionary = await graph.dispatch(int(source.substr(1)), "graph.connect", {"from": source, "to": target, "from_port": "send", "to_port": "in"})
+	var connected: Dictionary = await graph.dispatch(PaneAddress.id(source), "graph.connect", {"from": source, "to": target, "from_port": "send", "to_port": "in"})
 	check(not connected.has("error"), "Graph fixture connected: " + str(connected.get("error", "ok")))
 	var pids := {}
 	for id in host.sessions:
@@ -49,7 +50,7 @@ func play() -> void:
 			break
 	if not check(started, "Loopback remote fixture started"): return
 	create_timer(2.0).timeout.connect(func():
-		graph.dispatch(int(source.substr(1)), "agent.event", {"kind": "custom", "event": "UserPromptSubmit"}))
+		graph.dispatch(PaneAddress.id(source), "agent.event", {"kind": "custom", "event": "UserPromptSubmit"}))
 	var deadline := Time.get_ticks_msec() + 240000
 	while not FileAccess.file_exists(directory.path_join("stop")) and Time.get_ticks_msec() < deadline:
 		await wait(.1)

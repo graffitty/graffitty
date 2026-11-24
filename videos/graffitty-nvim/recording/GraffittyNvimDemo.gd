@@ -40,7 +40,7 @@ func next_pane(kind: String) -> void:
 
 func added_key(before: Array) -> String:
 	for id in host.sessions:
-		if id not in before: return "%%%d" % id
+		if id not in before: return PaneAddress.key(id)
 	return ""
 
 

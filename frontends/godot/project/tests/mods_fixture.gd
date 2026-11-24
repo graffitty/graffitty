@@ -36,7 +36,7 @@ class Host extends Node:
 	var workspace_view := View.new()
 	var workspace_layout := Layout.new()
 	var effect_profiles := Profiles.new()
-	var pane_focus := "%1"
+	var pane_focus := "t1"
 	var active_session_id := 1
 	var application: Node
 	var world: Node = World.new()
@@ -90,6 +90,8 @@ class AgentsModel extends Node:
 	var trees: Dictionary = {}
 	var focused := ""
 	var pinned := {}
+	var selections := {}
+	func selected_id(source: Node) -> String: return selections.get(source.get_instance_id(), "")
 	func focus(id: String) -> void: focused = id
 	func pin(id: String, value: bool) -> void: pinned[id] = value
 
@@ -103,6 +105,10 @@ class Space extends "res://scenes/ListDockSpace.gd":
 
 class ObservedService extends Service:
 	var session_publications := 0
+	var last_action_host: Node
+	func run(source: Node, action: String, args: Variant, origin: Node = null) -> void:
+		last_action_host = source
+		super(source, action, args, origin)
 	func _publish_sessions() -> void:
 		session_publications += 1
 		super()

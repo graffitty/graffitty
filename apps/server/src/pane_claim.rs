@@ -112,12 +112,12 @@ impl Claims {
             let reply = match claim.first_seen {
                 Some(first) if now - first >= SETTLE => Some(match claim.seen.as_slice() {
                     [pane] => match token(*pane) {
-                        Some(token) => json!({"result":{"pane":format!("%{pane}"),"token":token}}),
+                        Some(token) => json!({"result":{"pane":format!("t{pane}"),"token":token}}),
                         None => failure("pane_closed", "The claiming pane closed"),
                     },
                     panes => failure("ambiguous_claim", &format!(
                         "The claim appeared in several Graffitty panes ({}); attach this tmux session from only one",
-                        panes.iter().map(|p| format!("%{p}")).collect::<Vec<_>>().join(", "))),
+                        panes.iter().map(|p| format!("t{p}")).collect::<Vec<_>>().join(", "))),
                 }),
                 None if now - claim.issued >= TIMEOUT => Some(failure("claim_timeout",
                     "No Graffitty pane displayed the claim; enable tmux passthrough with `set -g allow-passthrough all`")),
@@ -152,7 +152,7 @@ mod tests {
         claims.settle(start + SETTLE / 2, token);
         assert!(reply.try_recv().is_err(), "a second attached pane may still report it");
         claims.settle(start + SETTLE, token);
-        assert_eq!(reply.try_recv().unwrap(), json!({"result":{"pane":"%3","token":"token-3"}}));
+        assert_eq!(reply.try_recv().unwrap(), json!({"result":{"pane":"t3","token":"token-3"}}));
         assert!(claims.finish(&ticket).is_err(), "tickets are single use");
     }
 

@@ -757,6 +757,43 @@ These are desktop checks, not physical Android/iOS microphone or multitouch
 acceptance. Phone/foldable/trackpad feel remains unverified. No production app
 installation or user-server restart was performed.
 
+## Shared agent read receipts — Android and desktop
+
+2026-11-24: **29 automated checks passed** on a physical Android device with an
+isolated server and independent desktop clients.
+
+- Reading on Android cleared the desktop's completed row and tab dot.
+- A later completion became unread again; reading on the desktop cleared Android's
+  markers without moving its focus.
+- A fresh client retained the server's read state. The fixture PTY survived, with
+  no engine or script errors.
+
+<details>
+<summary>Run the regression and inspect evidence</summary>
+
+```sh
+uv run --with websocket-client python tests/android/test_android_runtime.py \
+  --serial "$ANDROID_SERIAL" --no-record android-agent-receipts \
+  --output "$EVIDENCE_DIR/agent-receipts"
+```
+
+`receipts.json` holds both clients' phase snapshots. Screenshots, Android logcat,
+desktop logs, `results.json`, and the PTY survival result accompany it. Device
+details, build identifiers, and artifacts remain in private evidence outside the
+repo. Earlier fixture failures are not counted as passes.
+
+The disposable package is labelled **Graffitty E2E**. The harness verifies its
+built package ID and all launcher-label locales before installation. It removed
+the test package afterward; the production app was not replaced or cleared.
+
+Limits: one device/configuration, native ADB input, and headless desktop clients
+with explicit viewed-host fixtures. Human touch, other screen configurations,
+audio, Android reconnect, and transport loss remain unverified by this case.
+Stale and retried receipts have separate desktop integration coverage in
+`tests/godot/test_agent_receipts.py`.
+
+</details>
+
 ## Agent list and sound — Android device regression
 
 `android-agent-attention` is an automated case in the same runtime harness:
@@ -1673,6 +1710,14 @@ wheel/trackpad/drag acceptance matrix remain unverified.
 
 
 ## Terminal image paste and `gft terminal put` (IN-09)
+
+2026-11-24, macOS ARM64, adaptive remote upload sizing:
+
+- Five Rust tests passed for sizing, receipts, command bounds and file staging.
+- The encrypted headless controller transferred a 3 MiB fixture byte-for-byte
+  over the SSH loopback test forwarder and pasted its quoted remote path.
+- The simulated Godot bracketed-paste scenario passed with a 1024 × 768 PNG,
+  verifying its SHA-256 in the receiving terminal and typing order after paste.
 
 2026-11-14, working tree based on `70912e8`, macOS ARM64 host:
 

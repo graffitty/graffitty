@@ -40,8 +40,8 @@ func test_clock_only_targets_next_occurrence_in_displayed_offset() -> void:
 
 func test_after_mode_resolves_once_when_applied_and_can_rearm() -> void:
 	var graph := preload("res://tests/support/ServerGraph.gd").new()
-	graph.nodes = { "%1": { "provider": "claude" }, "%2": { "provider": "codex" } }
-	graph.connect_nodes({ "from": "%1", "to": "%2", "send": true })
+	graph.nodes = { "t1": { "provider": "claude" }, "t2": { "provider": "codex" } }
+	graph.connect_nodes({ "from": "t1", "to": "t2", "send": true })
 	var key: String = graph.edges.keys()[0]
 	var editor := Editor.new()
 	editor._ready()
@@ -118,8 +118,8 @@ func test_stop_time_rejects_invalid_calendar_input() -> void:
 
 func test_stop_editor_applies_clears_and_preserves_unsaved_edits() -> void:
 	var graph := preload("res://tests/support/ServerGraph.gd").new()
-	graph.nodes = { "%1": { "provider": "claude" }, "%2": { "provider": "codex" } }
-	graph.connect_nodes({ "from": "%1", "to": "%2", "send": true })
+	graph.nodes = { "t1": { "provider": "claude" }, "t2": { "provider": "codex" } }
+	graph.connect_nodes({ "from": "t1", "to": "t2", "send": true })
 	var key: String = graph.edges.keys()[0]
 	var editor := Editor.new()
 	editor._ready()

@@ -12,5 +12,5 @@ func import_snapshot(owner: Node, snapshot: Dictionary) -> void:
 	entries = update.entries
 	for edge in update.changed: changed.emit(edge)
 
-func snapshot(edge := "") -> Dictionary:
-	return _core.journal_snapshot(edge)
+func snapshot(edge := "", created_revision := -1) -> Dictionary:
+	return _core.journal_snapshot(edge, created_revision)

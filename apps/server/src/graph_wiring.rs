@@ -71,7 +71,7 @@ pub fn connections(parent: &str, child: &str, wires: &[String]) -> Vec<(String, 
 /// Make the lead's declared edges in `graph`, as the lead. Returns what was
 /// applied and what failed with why; a failure of one wire does not stop the rest.
 pub fn apply(graph: &mut Graph, parent: u64, child: u64, wires: &[String]) -> Value {
-    let (lead, node) = (format!("%{parent}"), format!("%{child}"));
+    let (lead, node) = (format!("t{parent}"), format!("t{child}"));
     let mut applied = Vec::new();
     let mut failed = Vec::new();
     for (wire, params) in connections(&lead, &node, wires) {
@@ -117,8 +117,8 @@ mod tests {
         let mut graph = Graph::default();
         session_start(&mut graph, 1, "claude");
         graph.add(2, "Terminal 2".into());
-        assert!(wirable(graph.nodes.get("%1")));
-        assert!(!wirable(graph.nodes.get("%2")), "a shell node has no ports");
+        assert!(wirable(graph.nodes.get("t1")));
+        assert!(!wirable(graph.nodes.get("t2")), "a shell node has no ports");
         let early = apply(&mut graph, 1, 2, &["send".into(), "turn-completed".into()]);
         assert_eq!(early["applied"].as_array().unwrap().len(), 0);
         assert_eq!(early["failed"].as_array().unwrap().len(), 2);
@@ -137,19 +137,19 @@ mod tests {
         assert_eq!(
             edges(&graph),
             [
-                ("%1".into(), "%2".into(), "send".into()),
-                ("%2".into(), "%1".into(), "error".into()),
-                ("%2".into(), "%1".into(), "read".into()),
-                ("%2".into(), "%1".into(), "turn_completed".into()),
-                ("%2".into(), "%1".into(), "waiting".into()),
+                ("t1".into(), "t2".into(), "send".into()),
+                ("t2".into(), "t1".into(), "error".into()),
+                ("t2".into(), "t1".into(), "read".into()),
+                ("t2".into(), "t1".into(), "turn_completed".into()),
+                ("t2".into(), "t1".into(), "waiting".into()),
             ]
         );
         // can_read(source, target): target may read source's transcript.
-        assert!(graph.can_read("%2", "%1"), "read lets the lead read the child's transcript");
-        assert!(!graph.can_read("%1", "%2"), "the child was not given Read on the lead");
+        assert!(graph.can_read("t2", "t1"), "read lets the lead read the child's transcript");
+        assert!(!graph.can_read("t1", "t2"), "the child was not given Read on the lead");
         // No `reply`: the child cannot message the lead. Asking for it adds exactly that edge.
-        assert!(graph.dispatch(2, "graph.send", &json!({"to": "%1", "text": "hi"})).is_err());
+        assert!(graph.dispatch(2, "graph.send", &json!({"to": "t1", "text": "hi"})).is_err());
         apply(&mut graph, 1, 2, &["reply".into()]);
-        assert!(graph.dispatch(2, "graph.send", &json!({"to": "%1", "text": "hi"})).is_ok());
+        assert!(graph.dispatch(2, "graph.send", &json!({"to": "t1", "text": "hi"})).is_ok());
     }
 }

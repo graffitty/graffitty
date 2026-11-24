@@ -14,6 +14,27 @@ impl IRefCounted for TerminalFileUpload {
 #[godot_api]
 impl TerminalFileUpload {
     #[func]
+    fn write_local(&self, path: GString, bytes: PackedByteArray) -> GString {
+        use std::{fs, io::Write, path::PathBuf};
+        let path = PathBuf::from(path.to_string());
+        let result = (|| -> anyhow::Result<()> {
+            anyhow::ensure!(bytes.len() <= graffitty_protocol::file_transfer::MAX_BYTES, "File exceeds 32 MiB");
+            let mut options = fs::OpenOptions::new();
+            options.write(true).create_new(true);
+            #[cfg(unix)]
+            { use std::os::unix::fs::OpenOptionsExt; options.mode(0o600); }
+            let mut file = options.open(&path)?;
+            if let Err(error) = file.write_all(bytes.as_slice()) {
+                drop(file);
+                let _ = fs::remove_file(&path);
+                return Err(error.into());
+            }
+            Ok(())
+        })();
+        result.err().map_or_else(GString::new, |e| GString::from(&e.to_string()))
+    }
+
+    #[func]
     fn start(&mut self, name: GString, bytes: PackedByteArray) -> GString {
         match graffitty_client_core::file_transfer::Upload::new(name.to_string(), bytes.to_vec(), true) {
             Ok(upload) => { self.upload = Some(upload); GString::new() },

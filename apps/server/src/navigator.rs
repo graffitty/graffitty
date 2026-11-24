@@ -197,7 +197,7 @@ fn process_name(pid: i32) -> String {
 mod tests {
     use super::*;
     fn context() -> Value {
-        json!({"origin":"%1", "rects":{"%1":[0,0,100,100],"large":[410,140,400,200],"aligned":[470,-100,200,100],"close":[250,320,100,100]}})
+        json!({"origin":"t1", "rects":{"t1":[0,0,100,100],"large":[410,140,400,200],"aligned":[470,-100,200,100],"close":[250,320,100,100]}})
     }
     #[test]
     fn server_selects_neighbors_using_configured_algorithm() {
@@ -243,7 +243,7 @@ mod tests {
     fn invalid_geometry_and_directions_are_rejected() {
         for geometry in [
             json!({"origin":"missing","rects":{}}),
-            json!({"origin":"%1","rects":{"%1":[0,0,-1,100]}}),
+            json!({"origin":"t1","rects":{"t1":[0,0,-1,100]}}),
         ] {
             assert!(
                 select(
@@ -311,7 +311,7 @@ mod tests {
                 ..Config::default()
             },
             None,
-            &json!({"key":"ctrl+h", "context":{"origin":"%1","rects":{"%1":[0,0,100,100]}}}),
+            &json!({"key":"ctrl+h", "context":{"origin":"t1","rects":{"t1":[0,0,100,100]}}}),
         )
         .unwrap() else {
             panic!("Unknown foreground should not start a worker")

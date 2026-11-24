@@ -3,7 +3,7 @@ import { randomUUID } from "node:crypto";
 import { chromium as playwrightChromium, type Browser, type BrowserContext, type Page } from "playwright-core";
 
 export interface AttachOptions {
-  /** Explicit %N; defaults to GRAFFITTY_CHROMIUM. Never guesses by focus. */
+  /** Explicit cN; defaults to GRAFFITTY_CHROMIUM. Never guesses by focus. */
   chromium?: string;
   /** Defaults to the terminal's inherited GRAFFITTY_SOCKET. */
   socket?: string;
@@ -22,7 +22,7 @@ export interface LaunchOptions extends Omit<AttachOptions, "chromium"> {
    * this terminal unless `position`/`size` or `hidden` is given.
    */
   side?: Side;
-  /** The pane `side` refers to (%N or :tab.pane); defaults to this terminal. */
+  /** The pane `side` refers to (cN or :tab.pane); defaults to this terminal. */
   of?: string;
   /** Workspace-pixel position; floating tabs only. */
   position?: { x: number; y: number };
@@ -37,7 +37,7 @@ export interface LaunchOptions extends Omit<AttachOptions, "chromium"> {
 }
 
 export interface Launched extends Attachment {
-  /** The new pane's handle (%N), usable with `gft chromium ... --target`. */
+  /** The new pane's handle (cN), usable with `gft chromium ... --target`. */
   handle: string;
   /** Detach, then close the pane this launch created. */
   close(): Promise<void>;
@@ -214,8 +214,8 @@ export async function launch(options: LaunchOptions = {}): Promise<Launched> {
 /** Borrow the primary page of an existing Graffitty chromium. Never launches one. */
 export async function attach(options: AttachOptions = {}): Promise<Attachment> {
   const chromiumRef = options.chromium ?? process.env.GRAFFITTY_CHROMIUM;
-  if (!chromiumRef || !/^%(0|[1-9]\d*)$/.test(chromiumRef))
-    throw new Error("Set chromium: '%N' or GRAFFITTY_CHROMIUM to the existing chromium ID");
+  if (!chromiumRef || !/^c([1-9]\d*)$/.test(chromiumRef))
+    throw new Error("Set chromium: 'cN' or GRAFFITTY_CHROMIUM to the existing chromium ID");
   const { socket, token, timeout } = connection(options);
   const params = { chromium: chromiumRef };
   const lease = await request<Lease>(socket, token, "chromium.attach", params, timeout);

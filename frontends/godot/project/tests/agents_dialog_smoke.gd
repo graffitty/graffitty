@@ -1,4 +1,6 @@
 extends "res://tests/mods_fixture.gd"
+
+const PaneAddress := preload("res://scenes/PaneAddress.gd")
 ## The Agents window renders the Agents mod from published rows: sections,
 ## captions, connected panes, fold, pin and focus. Isolated UI fixture.
 
@@ -6,13 +8,13 @@ func run() -> void:
 	setup()
 	var now := int(Time.get_unix_time_from_system())
 	for index in 5:
-		app.agents.rows.append({"id": "test-%d" % index, "key": "%%%d" % index,
+		app.agents.rows.append({"id": "test-%d" % index, "key": PaneAddress.key(index),
 			"title": ["Review the release", "Permission needed", "Tests complete", "Implement the agent list", "Ready for a task"][index],
 			"provider": ["claude", "pi", "codex", "pi", "opencode"][index],
 			"status": ["idle", "blocked", "done", "working", "idle"][index],
 			"section": ["Pinned", "Needs you", "Done", "Working", "Idle"][index],
 			"at": now - index * 70, "focused": false, "pinned": index == 0, "remote": "", "session": ""})
-	app.agents.trees["test-3"] = [{"key": "%9", "kind": "chromium", "title": "Docs", "status": "", "icon": "chromium", "lines": ["└"], "host_id": host.get_instance_id()}]
+	app.agents.trees["test-3"] = [{"key": "t9", "kind": "chromium", "title": "Docs", "status": "", "icon": "chromium", "lines": ["└"], "host_id": host.get_instance_id()}]
 	app.agents.changed.emit()
 	var dialog: Window = PanelWindow.open(host, "agents")
 	await settle()
@@ -28,10 +30,10 @@ func run() -> void:
 	check("Review the release" in shown and "Docs" in shown, "Rows and connected panes are drawn")
 	check("<1m" in shown and "2m" in shown, "Herdr elapsed times")
 	var keys: PackedStringArray = dialog.view.hit_keys()
-	check("sub-test-3|%9" in keys and "fold-test-3" in keys, "Connected pane row and its fold chevron exist")
+	check("sub-test-3|t9" in keys and "fold-test-3" in keys, "Connected pane row and its fold chevron exist")
 	dialog.view.click("fold-test-3")
 	await settle()
-	check(not "sub-test-3|%9" in dialog.view.hit_keys() and "1" in texts(dialog), "Folding hides connected panes and shows their count")
+	check(not "sub-test-3|t9" in dialog.view.hit_keys() and "1" in texts(dialog), "Folding hides connected panes and shows their count")
 	dialog.view.click("sec-Done")
 	await settle()
 	check(not "Tests complete" in texts(dialog), "Group folds")
@@ -53,16 +55,16 @@ func run() -> void:
 	dialog.view.click("fold-test-3")
 	await settle()
 	dialog.view.render_now()
-	dialog.view.click("sub-test-3|%9")
+	dialog.view.click("sub-test-3|t9")
 	pump()
-	check(host.focused_key == "%9", "Connected pane row focuses that pane in its host")
+	check(host.focused_key == "t9", "Connected pane row focuses that pane in its host")
 	check(dialog.visible, "Selecting a row leaves Agents open")
 	# Title-only updates re-render without losing fold state.
 	dialog.view.click("fold-test-3")
 	app.agents.rows[0].title = "Retitled"
 	app.agents.changed.emit()
 	await settle()
-	check("Retitled" in texts(dialog) and not "sub-test-3|%9" in dialog.view.hit_keys(), "Title updates keep the folded state")
+	check("Retitled" in texts(dialog) and not "sub-test-3|t9" in dialog.view.hit_keys(), "Title updates keep the folded state")
 	# Captions: one per consecutive server/session; local shows session only.
 	var contexts := [["", "work"], ["", "work"], ["build", "api"], ["build", "api"], ["build", "web"]]
 	for index in 5:
@@ -92,13 +94,58 @@ func run() -> void:
 	dialog.view.click("ag-test-2")
 	pump()
 	check(app.agents.focused == "test-2", "Compact rows focus the same agent")
+	app.agents.trees["test-3"].append({"key": "t17", "kind": "agent", "title": "Remote child", "provider": "pi", "icon": "pi", "status": "idle", "lines": ["└"], "row_id": "child", "away_id": "child"})
+	app.agents.changed.emit()
+	await settle()
+	dialog.view.click("ag-sub-test-3|t17")
+	pump()
+	check(app.agents.focused == "child", "Compact background child routes to its session and pane")
 	dialog.set_compact(false)
 	await settle()
 	check("Idle  5" in texts(dialog), "Expanding restores grouped rows")
+	dialog.view.click("fold-test-3")
+	await settle()
+	app.agents.focused = ""
+	dialog.view.click("sub-test-3|t17")
+	pump()
+	check(app.agents.focused == "child", "Expanded background child uses the same destination")
+	# Keep the same JS copy (and its fold state) across changes of presentation.
+	var replacement := Host.new()
+	replacement.application = app
+	root.add_child(replacement)
+	var other_window := Window.new()
+	root.add_child(other_window)
+	var independent := Host.new()
+	independent.application = app
+	other_window.add_child(independent)
+	app.hosts.append(independent)
+	var independent_dialog: Window = PanelWindow.open(independent, "agents")
+	var copy: int = dialog.view.copy_id()
+	app.agents.selections = {host.get_instance_id(): "test-1", replacement.get_instance_id(): "test-2"}
+	for current: Host in [replacement, host, replacement]:
+		app.hosts = [current, independent]
+		space.test_hosts = [current]
+		app.agents.changed.emit()
+		await settle()
+		dialog.set_compact(current == replacement)
+		dialog.view.render_now()
+		check(independent_dialog.source == independent and independent_dialog._props().window == independent.get_instance_id(),
+			"The other workspace window keeps its own panel source")
+		var selection: String = app.agents.selected_id(current)
+		check(dialog.source == current and dialog._props().window == current.get_instance_id() and dialog.view.copy_id() == copy,
+			"The retained panel follows the presenting host and its selection topic")
+		check(dialog.view.click("ag-" + selection), "Selected agent is actionable in this presentation")
+		pump()
+		check(app.mods.last_action_host == current and app.agents.focused == selection, "Agent action resolves the current presentation")
+	host.queue_free()
+	await settle()
+	check(dialog.source == replacement, "Freeing the outgoing host keeps the surviving panel bound")
+	dialog.set_compact(false)
 	app.agents.rows.clear()
 	app.agents.changed.emit()
 	await settle()
 	check(has_text(dialog, "No agent status yet"), "Empty list explains itself")
+	independent_dialog.queue_free()
 	dialog.queue_free()
 	await settle()
 	finish("AGENTS_DIALOG")

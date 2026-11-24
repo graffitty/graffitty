@@ -1,5 +1,7 @@
 extends "res://tests/unit/test_case.gd"
 
+const PaneAddress := preload("res://scenes/PaneAddress.gd")
+
 class Transport extends Node:
 	var server_fonts := {"ready": true}
 	var topology: Dictionary
@@ -44,7 +46,7 @@ func _topology(ids: Array) -> Dictionary:
 		result.tabs.append({"id": id, "title": "Shell"})
 		result.panes.append({"id": id * 10 + 1, "tab": id})
 		result.chromiums.append({"id": id * 10 + 2, "tab": id, "owner": id})
-		result.workspace_state.layout.tabs[str(id)] = {"focused": "%%%d" % (id * 10 + 1)}
+		result.workspace_state.layout.tabs[str(id)] = {"focused": PaneAddress.key((id * 10 + 1))}
 	return result
 
 func test_same_session_reconnect_invalidates_only_its_subscriptions() -> void:

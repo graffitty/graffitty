@@ -1,4 +1,6 @@
 extends "res://tests/unit/test_case.gd"
+
+const PaneAddress := preload("res://scenes/PaneAddress.gd")
 const KeyBar := preload("res://scenes/input/TouchKeyBar.gd")
 const Prefix := preload("res://scenes/WorkspacePrefix.gd")
 const Settings := preload("res://graffitty/config.gd")
@@ -9,10 +11,10 @@ class Host extends Node:
 	var created := 0
 	var opened: Array[String] = []
 	var tab_steps: Array[int] = []
-	var pane_focus := "%1"
+	var pane_focus := "t1"
 	var sessions := {}
 	func command_line_open() -> bool: return false
-	func is_terminal_pane(key: String) -> bool: return key.begins_with("%")
+	func is_terminal_pane(key: String) -> bool: return PaneAddress.id(key) > 0
 	func select_next_workspace(step: int) -> void:
 		tab_steps.append(step)
 	func create_session() -> void:

@@ -1,4 +1,5 @@
 extends "../../tabs-and-panes/replays/main-area-tiling.gd"
+
 var owner_config := ""
 func _initialize() -> void:
 	owner_config = OS.get_environment("XDG_CONFIG_HOME").replace("\\", "/")
@@ -34,7 +35,7 @@ func play() -> void:
 	init.store_string("vim.opt.swapfile=false\nvim.opt.rtp:prepend(%s)\nrequire('fyler').setup({kind='replace',follow_current_file=false,use_as_default_explorer=false,integrations={icon=function() return '' end}})\nvim.api.nvim_create_autocmd('VimEnter',{once=true,callback=function() vim.schedule(function() require('fyler').open({root_path=%s,kind='replace'}) end) end})\n" % [JSON.stringify(plugin), JSON.stringify(child)])
 	init.close()
 	var owner: int = host.active_session_id
-	var key := "%%%d" % owner
+	var key := PaneAddress.key(owner)
 	var original_pid: int = host.sessions[owner].term.get_shell_pid()
 	await owner_at_rest()
 	var pane: Control = host.workspace_view.panes[key]
@@ -49,19 +50,19 @@ func play() -> void:
 	while Time.get_ticks_msec() < deadline:
 		for id in host.sessions:
 			if host.sessions[id].term.get_meta("filetree_owner", -1) == owner: tree = id
-		if tree >= 0 and host.workspace_view.panes.has("%%%d" % tree) and host.session_model(tree).title == child: break
+		if tree >= 0 and host.workspace_view.panes.has(PaneAddress.key(tree)) and host.session_model(tree).title == child: break
 		await process_frame
 	check(tree >= 0, "Header button creates the connected filetree")
 	if tree < 0: return
 	check(pane.header.filetree_open, "Owner button is on")
 	check(await filetree_icon_is_blue(key), "Active filetree icon is blue")
-	var tree_pane: Control = host.workspace_view.panes["%%%d" % tree]
+	var tree_pane: Control = host.workspace_view.panes[PaneAddress.key(tree)]
 	check(host.session_model(tree).title == child, "Title is the actual Fyler root: got " + host.session_model(tree).title + " expected " + child)
 	if host.session_model(tree).title != child:
 		print(await host.session_backend.connection.remote_call(tree, "terminal.get_text", {}))
 	await say("Change Fyler root independently")
 	# Actual terminal input invokes Fyler's parent-root mapping.
-	host.focus_pane("%%%d" % tree)
+	host.focus_pane(PaneAddress.key(tree))
 	await type("-")
 	deadline = Time.get_ticks_msec() + 5000
 	while host.session_model(tree).title != directory and Time.get_ticks_msec() < deadline: await process_frame

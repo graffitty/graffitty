@@ -1,10 +1,11 @@
 extends "../../../../replay/replay.gd"
+
 const Layout := preload("res://scenes/WorkspaceLayout.gd")
 
 func exercise_browser_physics(browser: Node) -> void:
 	var view: Control = host.workspace_view
-	var browser_key := "%%%d" % browser.session_id
-	var owner_key := "%%%d" % browser.owner_id
+	var browser_key := PaneAddress.key(browser.session_id)
+	var owner_key := PaneAddress.key(browser.owner_id)
 	var group: Dictionary = host.workspace_layout.tab(host.workspace_layout.active)
 	group.tree["tiling"] = false
 	group.tree["physics"] = false
@@ -49,7 +50,7 @@ func play() -> void:
 	var browser: Node = await host.create_chromium_session("about:blank")
 	if not check(browser != null, "Create a real about:blank browser pane"): return
 	await wait_browser(browser, 1)
-	var browser_key := "%%%d" % browser.session_id
+	var browser_key := PaneAddress.key(browser.session_id)
 	var browser_tab: int = host.workspace_layout.containing(browser_key)
 	var first_tab: int = host.get_tabs()[0].id
 	for path in ["", "flat-2d"]:

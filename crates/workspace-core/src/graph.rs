@@ -1,9 +1,12 @@
 //! Workspace-owned graph state. Pane capabilities select the sender; payloads
 //! cannot impersonate another node or cross workspace boundaries.
 use serde_json::{Value, json};
-use std::collections::{BTreeMap, HashMap, HashSet};
+use std::collections::{BTreeMap, HashMap, HashSet, VecDeque};
 #[path = "graph_checkpoint.rs"]
 mod checkpoint;
+#[path = "graph_attention.rs"]
+mod attention;
+pub use attention::{ActivityClock, AttentionState};
 type Result<T> = std::result::Result<T, String>;
 const QUEUE_LIMIT: usize = 10_000;
 const RUN_MESSAGE_LIMIT: usize = 10_000;
@@ -25,6 +28,31 @@ pub fn connected_component<'a>(start: &str, edges: impl IntoIterator<Item = &'a 
         }
         if keys.len() == before { return keys; }
     }
+}
+
+/// Whether a discovery-only Codex poll verified a success after the previous sample.
+/// A rollout cursor can predate the first turn or successful checkpoint.
+pub fn discovered_codex_success(before: &Value, after: &Value) -> bool {
+    if after["provider"] != "codex" || after["integrated"] == true || after["status"] != "idle"
+        || !after["pid"].is_u64() || !after["session_id"].is_string()
+        || ["provider", "pid", "session_id", "started", "transcript_path"].iter().any(|key| before[*key] != after[*key])
+        || before["rollout_scan"].is_object() {
+        return false;
+    }
+    let turn = &after["observed_turn"];
+    let previous = &before["observed_turn"];
+    if let Some(status) = turn["status"].as_str() {
+        if status != "completed" || !turn["id"].is_string() { return false; }
+        if previous["status"] == "completed" && previous["id"] == turn["id"] { return false; }
+        if let Some(cursor) = previous["rollout_offset"].as_u64() {
+            return turn["completion_checkpoint"].as_u64().is_some_and(|end| end > cursor);
+        }
+        // A daemon poll returns an explicit null when its thread has no turns.
+        if before.get("observed_turn").is_some() { return true; }
+    }
+    let checkpoint = after["completion_checkpoint"].as_u64();
+    matches!(before["status"].as_str(), Some("busy" | "waiting"))
+        || before["completion_checkpoint"].as_u64().zip(checkpoint).is_some_and(|(old, new)| new > old)
 }
 
 /// The same complete incoming message is presented to native and inbox agents.
@@ -65,7 +93,16 @@ impl NodeSettings {
         Ok(())
     }
 }
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct OutcomeRoute {
+    wire_revision: u64,
+    inbox_generation: u64,
+}
+pub type OutcomeRoutes = BTreeMap<String, OutcomeRoute>;
+
 pub struct Graph {
+    inbox_generations: HashMap<String, u64>,
+    activity_clock: ActivityClock,
     settings: NodeSettings,
     pub nodes: BTreeMap<String, Value>,
     pub edges: BTreeMap<String, Value>,
@@ -74,6 +111,7 @@ pub struct Graph {
     runs: HashMap<String, usize>,
     run_limits: HashMap<String, usize>,
     default_run_limit: usize,
+    owner_wiring: Option<(u64, usize, std::sync::Arc<Value>)>,
     journal: crate::graph_journal::Journal,
     revision: u64,
     notification_revision: u64,
@@ -81,6 +119,8 @@ pub struct Graph {
     contexts: HashMap<String, Value>,
     next_stop_at: Option<f64>,
     expired_deadlines: HashMap<String, f64>,
+    // Routed Codex prompts awaiting their corresponding discovery result.
+    codex_turn_runs: HashMap<String, VecDeque<(String, String)>>,
     // Only heartbeat timeouts are reversible; SessionEnd is not.
     timed_out_status: HashMap<String, Value>,
 }
@@ -187,14 +227,20 @@ impl Default for Graph {
 }
 impl Graph {
     pub fn with_settings(settings: NodeSettings) -> Self {
+        Self::with_activity_clock(settings, ActivityClock::default())
+    }
+    pub fn with_activity_clock(settings: NodeSettings, activity_clock: ActivityClock) -> Self {
         Self {
+            activity_clock,
+            owner_wiring: None,
+            inbox_generations: HashMap::new(),
             nodes: BTreeMap::new(), edges: BTreeMap::new(), queues: BTreeMap::new(),
             receipts: Vec::new(), runs: HashMap::new(), run_limits: HashMap::new(),
             default_run_limit: settings.run_messages, journal: crate::graph_journal::Journal::with_limits(settings.delivery_history, settings.delivery_transitions),
             settings,
             revision: 0, notification_revision: 0, seen: HashMap::new(), contexts: HashMap::new(),
             next_stop_at: None, expired_deadlines: HashMap::new(),
-            timed_out_status: HashMap::new(),
+            timed_out_status: HashMap::new(), codex_turn_runs: HashMap::new(),
         }
     }
 }
@@ -207,11 +253,14 @@ impl Graph {
             (id, json!({"run_id":id,"count":count,"limit":self.run_limit(id),"available":true}))).collect();
         json!({"limits":{"pending_per_node":self.settings.pending_per_node,"run_messages":self.default_run_limit},"runs":runs})
     }
+    pub fn inbox_generation(&self, key: &str) -> u64 {
+        self.inbox_generations.get(key).copied().unwrap_or_default()
+    }
     pub fn native_pending(&self, id: &str) -> bool { self.journal.native_pending(id) }
     pub fn record_delivery(&mut self, event: &Value, status: &str, pending: bool) {
         self.journal.record(event, status, pending);
         self.receipts.retain(|receipt| receipt["event_id"] != event["event_id"]);
-        self.receipts.push(json!({"event_id":event["event_id"],"source":event["source"],"target":event["target"],"edge":event_key(event),"status":status}));
+        self.receipts.push(json!({"event_id":event["event_id"],"source":event["source"],"target":event["target"],"edge":event_key(event),"edge_revision":event["edge_revision"],"status":status}));
         if self.receipts.len() > self.settings.receipts { self.receipts.remove(0); }
     }
     pub fn delivery_prompt(&self, event: &Value) -> String {
@@ -223,13 +272,17 @@ impl Graph {
             && !self.can_read(string(event,"source"), string(event,"target")) {
             if let Some(sessions) = exposed["sessions"].as_array_mut() {
                 for session in sessions {
-                    if let Some(session) = session.as_object_mut() { session.remove("path"); }
+                    if let Some(session) = session.as_object_mut() {
+                        session.remove("path");
+                        session.remove("checkpoint");
+                    }
                 }
             }
         }
         exposed
     }
     fn clear_queue(&mut self, key: &str) {
+        *self.inbox_generations.entry(key.to_owned()).or_default() += 1;
         let removed = self.queues.remove(key).unwrap_or_default();
         if !removed.is_empty() { self.notification_revision = self.notification_revision.wrapping_add(1); }
         for event in removed {
@@ -237,33 +290,67 @@ impl Graph {
         }
     }
 
+    /// A delayed outcome may use only wires active at observation and delivery.
+    pub fn outcome_routes(&self, id: u64, failed: bool) -> OutcomeRoutes {
+        self.outcome_edges(&format!("t{id}"), failed.then_some("error"), None)
+            .map(|(key, edge)| (key.clone(), self.outcome_route(edge))).collect()
+    }
+
+    fn outcome_route(&self, edge: &Value) -> OutcomeRoute {
+        OutcomeRoute {
+            wire_revision: edge["revision"].as_u64().unwrap(),
+            inbox_generation: self.inbox_generation(string(edge, "to")),
+        }
+    }
+
+    fn eligible_outcome(&self, source: &str, port: Option<&str>, edge: &Value, at: f64) -> bool {
+        let output = match port {
+            Some(port) => edge["from_port"] == port && edge["send"] == true,
+            None => edge["turn_completed"] == true,
+        };
+        output && edge["from"] == source && edge["muted"] != true && !expired(edge, at)
+    }
+
+    pub fn has_outcome_route(&self, id: u64, failed: bool, routes: &OutcomeRoutes) -> bool {
+        let key = format!("t{id}");
+        let at = now();
+        routes.iter().any(|(wire, captured)| self.edges.get(wire).is_some_and(|edge|
+            self.eligible_outcome(&key, failed.then_some("error"), edge, at) && *captured == self.outcome_route(edge)))
+    }
+
+    fn outcome_edges<'a>(&'a self, key: &'a str, port: Option<&'a str>, routes: Option<&'a OutcomeRoutes>)
+        -> impl Iterator<Item = (&'a String, &'a Value)> {
+        let at = now();
+        self.edges.iter().filter(move |(id, edge)| {
+            self.eligible_outcome(key, port, edge, at)
+                && routes.is_none_or(|routes| routes.get(*id).is_some_and(|route| *route == self.outcome_route(edge)))
+        })
+    }
+
     /// A native discovery worker can finish reading a completed turn after a
     /// newer turn has started. Route its output without changing live status.
-    pub fn discovered_completion(&mut self, id: u64, text: &str, checkpoint: &str, run_id: &str) -> Result<()> {
-        let key = format!("%{id}");
+    pub fn discovered_completion(&mut self, id: u64, text: &str, checkpoint: u64, run_id: &str, routes: &OutcomeRoutes) -> Result<()> {
+        let key = format!("t{id}");
         let node = self.nodes.get(&key).ok_or("Unknown agent")?;
         let run_id = if self.runs.contains_key(run_id) { run_id } else { "" };
         let params = json!({"text":text,"session_id":node["session_id"],"run_id":run_id});
         let signature = format!("{}:{checkpoint}:{text}", node["session_id"]);
         self.expire();
-        self.enqueue_completion(&key, &params, signature)
+        self.enqueue_completion(&key, &params, signature, Some(checkpoint), Some(routes))
     }
 
-    fn enqueue_completion(&mut self, key: &str, params: &Value, signature: String) -> Result<()> {
+    fn enqueue_completion(&mut self, key: &str, params: &Value, signature: String, checkpoint: Option<u64>, routes: Option<&OutcomeRoutes>) -> Result<()> {
         if self.seen.get(key) == Some(&signature) {
             return Ok(());
         }
         self.seen.insert(key.into(), signature);
-        let edges: Vec<_> = self.edges.values().filter(|edge| {
-            edge["from"] == key && edge["turn_completed"] == true
-                && edge["muted"] != true && !expired(edge, now())
-        }).cloned().collect();
+        let edges: Vec<_> = self.outcome_edges(key, None, routes).map(|(_, edge)| edge.clone()).collect();
         for edge in edges {
-            if let Err(error) = self.enqueue(&edge, params, None, true) {
-                let event = json!({"event_id":uuid(),"source":edge["from"],"target":edge["to"],"source_port":edge["from_port"],"target_port":edge["to_port"],"run_id":params["run_id"],"type":"turn.completed"});
+            if let Err(error) = self.enqueue(&edge, params, None, true, checkpoint) {
+                let event = json!({"event_id":uuid(),"source":edge["from"],"target":edge["to"],"source_port":edge["from_port"],"target_port":edge["to_port"],"edge_revision":edge["revision"],"run_id":params["run_id"],"type":"turn.completed"});
                 let status = format!("failed: {error}");
                 self.journal.record(&event, &status, false);
-                self.receipts.push(json!({"event_id":event["event_id"],"source":event["source"],"target":event["target"],"edge":event_key(&event),"status":status}));
+                self.receipts.push(json!({"event_id":event["event_id"],"source":event["source"],"target":event["target"],"edge":event_key(&event),"edge_revision":event["edge_revision"],"status":status}));
                 if self.receipts.len() > self.settings.receipts { self.receipts.remove(0); }
                 return Err(error);
             }
@@ -273,11 +360,11 @@ impl Graph {
 
     /// Lifecycle outputs use ordinary message delivery, without granting Read.
     /// Their trigger is owner-observed state, not an agent's graph.send call.
-    fn enqueue_lifecycle(&mut self, key: &str, output: &str, fields: &Value) -> Result<()> {
+    fn enqueue_lifecycle(&mut self, key: &str, output: &str, fields: &Value, run: Value, routes: Option<&OutcomeRoutes>) -> Result<()> {
         if is_custom_node(&self.nodes[key]) { return Ok(()); }
         let mut params = fields.clone();
         params["kind"] = json!(format!("agent.{output}"));
-        params["run_id"] = self.nodes[key]["run_id"].clone();
+        params["run_id"] = run;
         if params["payload"].is_null() {
             params["payload"] = json!({"provider":self.nodes[key]["provider"],
                 "session_id":self.nodes[key]["session_id"],"error":fields["error"]});
@@ -285,14 +372,11 @@ impl Graph {
         if params["text"].as_str().is_none_or(str::is_empty) {
             params["text"] = json!(if output == "waiting" { "Agent is awaiting input" } else { "Agent failed" });
         }
-        let edges: Vec<_> = self.edges.values().filter(|edge| {
-            edge["from"] == key && edge["from_port"] == output && edge["send"] == true
-                && edge["muted"] != true && !expired(edge, now())
-        }).cloned().collect();
+        let edges: Vec<_> = self.outcome_edges(key, Some(output), routes).map(|(_, edge)| edge.clone()).collect();
         for edge in edges {
-            if let Err(error) = self.enqueue(&edge, &params, None, false) {
+            if let Err(error) = self.enqueue(&edge, &params, None, false, None) {
                 let event = json!({"event_id":uuid(),"source":key,"target":edge["to"],
-                    "source_port":output,"target_port":edge["to_port"],"run_id":params["run_id"],"type":"message"});
+                    "source_port":output,"target_port":edge["to_port"],"edge_revision":edge["revision"],"run_id":params["run_id"],"type":"message"});
                 self.journal.record(&event, &format!("failed: {error}"), false);
             }
         }
@@ -300,17 +384,44 @@ impl Graph {
     }
 
     pub fn add(&mut self, id: u64, title: String) {
-        let key = format!("%{id}");
+        let key = format!("t{id}");
         self.nodes
             .entry(key)
-            .or_insert_with(|| json!({"provider":"shell","status":"unintegrated","title":title}));
+            .or_insert_with(|| json!({"provider":"shell","status":"unintegrated","title":title,"activity_revision":self.activity_clock.next()}));
     }
     /// Apply owner-side process discovery. Live integrated agents retain their
     /// hook status; discovery still records process exits and replacements.
-    pub fn observe_agent(&mut self, id: u64, state: &Value) {
-        let key = format!("%{id}");
-        let Some(node) = self.nodes.get(&key) else { return; };
-        if is_custom_node(node) { return; }
+    pub fn observe_agent(&mut self, id: u64, state: &Value) -> Vec<(Value, String)> {
+        let mut successes = Vec::new();
+        for (turn, run) in self.observe_agent_outcomes(id, state) {
+            if turn["status"] == "failed" {
+                let _ = self.discovered_failure(id, &turn, &run, &self.outcome_routes(id, true));
+            } else {
+                successes.push((turn, run));
+            }
+        }
+        successes
+    }
+
+    pub fn discovered_failure(&mut self, id: u64, turn: &Value, run_id: &str, routes: &OutcomeRoutes) -> Result<()> {
+        let key = format!("t{id}");
+        if !self.nodes.contains_key(&key) { return Err("Unknown agent".into()); }
+        let run = self.runs.get_key_value(run_id).map(|(id, _)| id.clone());
+        self.expire();
+        self.enqueue_lifecycle(&key, "error", &json!({
+            "text":turn["error"]["message"], "outcome":"error",
+            "payload":{"error":turn["error"],"turn_id":turn["id"]}
+        }), json!(run), Some(routes))
+    }
+
+    /// The server sequences these outcomes while completion text is being read.
+    pub fn observe_agent_outcomes(&mut self, id: u64, state: &Value) -> Vec<(Value, String)> {
+        let mut discovered = Vec::new();
+        let key = format!("t{id}");
+        let Some(node) = self.nodes.get(&key) else { return discovered; };
+        if is_custom_node(node) { return discovered; }
+        let previous = node.clone();
+        let replaced = attention::identity_replaced(node, state);
         let was_waiting = node["status"] == "waiting";
         let had_turn_baseline = node.get("observed_turn").is_some();
         let previous_turn = node["observed_turn"].clone();
@@ -320,11 +431,12 @@ impl Graph {
             // A gft node is not a native-provider process. Ignore shell scans,
             // but allow a subsequently launched real provider to replace it.
             if !["codex", "claude", "opencode", "pi"].contains(&string(state, "provider"))
-                || state["pid"].as_i64().is_none_or(|pid| Some(pid) == node["pid"].as_i64()) {
-                return;
+                || state["status"] == "offline"
+                || state["pid"].as_i64().is_none_or(|pid| Some(pid) == node["pid"].as_i64() && !replaced) {
+                return discovered;
             }
-            self.clear_queue(&key);
         }
+        if inbox || replaced { self.clear_queue(&key); }
         let node = self.nodes.get_mut(&key).unwrap();
         if inbox {
             self.timed_out_status.remove(&key);
@@ -332,12 +444,42 @@ impl Graph {
                 node.as_object_mut().unwrap().remove(field);
             }
         }
-        let Some(found) = state.as_object() else { return; };
+        let Some(found) = state.as_object() else { return discovered; };
         let mut found = found.clone();
-        if found.get("pid").is_some_and(|pid| !pid.is_null() && *pid != node["pid"]) {
+        // Exits and incomplete samples cannot identify a successor. Keep the
+        // last verified identity to compare with the next live observation.
+        for field in ["provider", "pid", "started", "session_id"] {
+            if state["status"] == "offline" || state[field].is_null() || state[field] == "" {
+                found.remove(field);
+            }
+        }
+        let outcomes = found.remove("turn_outcomes").unwrap_or(Value::Null);
+        let turn = &state["observed_turn"];
+        let prompt_turn = node["codex_prompt_turn"].as_str();
+        let current_prompt = prompt_turn.is_some() && turn["id"].as_str() == prompt_turn;
+        let turn_changed = !replaced && same_session && (had_turn_baseline || current_prompt) && turn["id"].is_string()
+            && (turn["id"] != previous_turn["id"] || turn["status"] != previous_turn["status"]);
+        let stopped_without_success = matches!(turn["status"].as_str(), Some("failed" | "interrupted")) && state["status"] == "idle";
+        // Codex does not send StopFailure. Apply a new terminal failure, and
+        // allow discovery to see the retry when it has no prompt hook either.
+        let codex_transition = state["provider"] == "codex" && same_session && !replaced &&
+            ((stopped_without_success && (current_prompt || prompt_turn.is_none()) && (turn_changed || !had_turn_baseline)) ||
+             (turn_changed && matches!(previous_turn["status"].as_str(), Some("failed" | "interrupted")) && state["status"] == "busy"));
+        if replaced || found.get("status").is_some_and(|status| status == "offline") {
+            node.as_object_mut().unwrap().remove("transcript_path");
+        }
+        if replaced {
+            if !found.contains_key("session_id") { node.as_object_mut().unwrap().remove("session_id"); }
+            if state["pid"] != node["pid"] && !found.contains_key("started") { node.as_object_mut().unwrap().remove("started"); }
+            self.codex_turn_runs.remove(&key);
+            node.as_object_mut().unwrap().remove("rollout_scan");
+            node.as_object_mut().unwrap().remove("observed_turn");
+            node.as_object_mut().unwrap().remove("codex_prompt_turn");
             node.as_object_mut().unwrap().remove("integrated");
         }
-        if node["integrated"] == true && found.get("status") != Some(&json!("offline")) {
+        let claude_blocked = !replaced && node["provider"] == "claude" && node["status_source"] == "program"
+            && node["program_status"]["app"] == "claude-code" && node["program_status"]["state"] == "blocked";
+        if ((node["integrated"] == true && !codex_transition) || claude_blocked) && found.get("status") != Some(&json!("offline")) {
             found.remove("status");
         }
         // Keep the status from lifecycle events or OSC 7501 when discovery only
@@ -346,7 +488,7 @@ impl Graph {
         //
         // Replace it when discovery sees a new process or a known status.
         if found.contains_key("status") {
-            let same_process = node["pid"].is_null() || found.get("pid").is_none_or(|pid| pid.is_null() || *pid == node["pid"]);
+            let same_process = !replaced;
             let informed = !matches!(node["status"].as_str(), None | Some("unintegrated" | "unknown" | "offline"));
             if found["status"] == "unknown" && same_process && informed {
                 found.remove("status");
@@ -358,33 +500,74 @@ impl Graph {
         // client/server reconnects. Never apply it over authoritative hooks.
         let observed_at = found.get("status").and_then(|_| found.get("status_at")).and_then(Value::as_str).map(str::to_owned);
         found.remove("status_at");
+        let stopped_without_completion = stopped_without_success && found.contains_key("status") && state["provider"] == "codex"
+            && (!had_turn_baseline || turn_changed || previous["status"] == "busy" || previous["status"] == "waiting");
         node.as_object_mut().unwrap().extend(found);
+        if current_prompt && turn["status"] == "completed" && state["status"] == "idle" {
+            node.as_object_mut().unwrap().remove("codex_prompt_turn");
+        }
+        if stopped_without_completion {
+            if current_prompt { node.as_object_mut().unwrap().remove("codex_prompt_turn"); }
+            node.as_object_mut().unwrap().remove("attention");
+        } else if discovered_codex_success(&previous, node) {
+            attention::issue(node, graffitty_protocol::agent_attention::AttentionKind::Completed);
+        } else if node["provider"] == "codex" && node["integrated"] != true && node["status"] == "idle"
+            && turn["status"] == "completed" && matches!(previous["status"].as_str(), Some("busy" | "waiting")) {
+            node.as_object_mut().unwrap().remove("attention");
+        } else {
+            attention::update(node, string(&previous, "status"), replaced);
+        }
         if ["codex", "claude", "opencode", "pi"].contains(&string(node, "provider")) { record_status_at(node, self.settings.status_history, observed_at.as_deref()); }
         let waiting = node["status"] == "waiting";
-        let turn = node["observed_turn"].clone();
+        attention::record_change(&self.activity_clock, node, &previous);
+        if *node != previous { self.notification_revision = self.notification_revision.wrapping_add(1); }
         if !was_waiting && waiting {
-            let _ = self.enqueue_lifecycle(&key, "waiting", &json!({}));
+            let _ = self.enqueue_lifecycle(&key, "waiting", &json!({}), self.nodes[&key]["run_id"].clone(), None);
         }
         // Establish a baseline on attachment; do not replay a historical error.
         // Comparing status too catches a turn seen running before it failed.
-        if same_session && had_turn_baseline
-            && (turn["id"] != previous_turn["id"] || turn["status"] != previous_turn["status"])
-            && turn["status"] == "failed" && turn["id"].is_string() {
-            let _ = self.enqueue_lifecycle(&key, "error", &json!({
-                "text":turn["error"]["message"], "outcome":"error", "payload":{"error":turn["error"],"turn_id":turn["id"]}
-            }));
+        if turn_changed {
+            let mut reported: Vec<&Value> = outcomes.as_array().into_iter().flatten().collect();
+            if turn["status"] == "failed" && !reported.iter().any(|outcome| outcome["id"] == turn["id"]) {
+                reported.push(turn);
+            }
+            for outcome in reported {
+                let run = self.codex_turn_runs.get_mut(&key).and_then(|turns| {
+                    let index = turns.iter().position(|(turn_id, _)| turn_id == string(outcome, "id"))?;
+                    turns.remove(index).map(|(_, run)| run)
+                }).filter(|run| self.runs.contains_key(run));
+                if outcome["status"] == "failed" ||
+                    (outcome["status"] == "completed" && self.nodes[&key]["integrated"] != true) {
+                    discovered.push((outcome.clone(), run.unwrap_or_default()));
+                }
+            }
         }
+        // The scan includes outcomes between its previous and current turn.
+        // Drop reconciled turns, preserving newer hooks that beat this scan.
+        if let Some(turns) = self.codex_turn_runs.get_mut(&key) {
+            if let Some(index) = turns.iter().position(|(id, _)| id == string(turn, "id")) {
+                let finished = matches!(turn["status"].as_str(), Some("failed" | "completed" | "interrupted"));
+                turns.drain(..index + usize::from(finished));
+            }
+        }
+        discovered
     }
     /// Apply the terminal's OSC 7501 root record (`None` once cleared). Every
     /// node keeps the record as `program_status`. A node without lifecycle hooks
     /// or discovery also takes its status from it; hook status stays authoritative.
     pub fn observe_program_status(&mut self, id: u64, status: Option<&Value>) {
-        let Some(node) = self.nodes.get_mut(&format!("%{id}")) else { return; };
+        let Some(node) = self.nodes.get_mut(&format!("t{id}")) else { return; };
+        let previous = node.clone();
         match status {
             Some(status) => node["program_status"] = status.clone(),
             None => { node.as_object_mut().unwrap().remove("program_status"); }
         }
-        if !matches!(node["status"].as_str(), Some("unintegrated" | "unknown")) && node["status_source"] != "program" {
+        // Claude reports authentication failures at its prompt even when no stop hook arrives.
+        let claude_blocked = node["provider"] == "claude" && matches!(string(node, "status"), "busy" | "idle")
+            && node["program_status"] != previous["program_status"] && node["program_status"]["app"] == "claude-code" && node["program_status"]["state"] == "blocked";
+        if !claude_blocked && !matches!(node["status"].as_str(), Some("unintegrated" | "unknown")) && node["status_source"] != "program" {
+            attention::record_change(&self.activity_clock, node, &previous);
+            if *node != previous { self.notification_revision = self.notification_revision.wrapping_add(1); }
             return;
         }
         let word = status.and_then(|status| status["state"].as_str());
@@ -401,12 +584,23 @@ impl Graph {
             node.as_object_mut().unwrap().remove("status_source");
         }
         record_status(node, self.settings.status_history);
+        let previous_app = string(&previous["program_status"], "app");
+        let app = string(&node["program_status"], "app");
+        let replaced = !previous_app.is_empty() && !app.is_empty() && previous_app != app;
+        attention::update(node, string(&previous, "status"), replaced);
+        attention::record_change(&self.activity_clock, node, &previous);
+        if *node != previous { self.notification_revision = self.notification_revision.wrapping_add(1); }
+        if previous["status"] != "waiting" && node["status"] == "waiting" && node["provider"] == "claude" && node["program_status"]["app"] == "claude-code" {
+            let _ = self.enqueue_lifecycle(&format!("t{id}"), "waiting", &json!({}), previous["run_id"].clone(), None);
+        }
     }
     pub fn remove(&mut self, id: u64) {
-        let key = format!("%{id}");
+        let key = format!("t{id}");
         self.nodes.remove(&key);
+        self.codex_turn_runs.remove(&key);
         self.timed_out_status.remove(&key);
         self.clear_queue(&key);
+        self.inbox_generations.remove(&key);
         self.contexts.remove(&key);
         self.edges.retain(|_, e| e["from"] != key && e["to"] != key);
         self.revoke();
@@ -414,12 +608,31 @@ impl Graph {
     /// Preserve the moved subgraph and its queued work. Edges crossing the new
     /// session boundary lose authority and queued cross-session delivery stops.
     pub fn transfer_nodes_to(&mut self, ids: &HashSet<u64>, target: &mut Graph) {
-        let keys: HashSet<_> = ids.iter().map(|id| format!("%{id}")).collect();
+        let keys: HashSet<_> = ids.iter().map(|id| format!("t{id}")).collect();
+        let queued = keys.iter().filter_map(|key| self.queues.get(key)).flatten()
+            .map(|event| string(event, "event_id").to_owned()).collect();
+        let moved = self.journal.transfer_pending(&keys, &queued, &mut target.journal);
+        self.receipts.retain_mut(|receipt| {
+            if !moved.contains(string(receipt, "event_id")) { return true; }
+            target.receipts.push(receipt.take());
+            false
+        });
+        let excess = target.receipts.len().saturating_sub(target.settings.receipts);
+        target.receipts.drain(..excess);
         let internal: Vec<_> = self.edges.iter().filter(|(_, e)|
             keys.contains(string(e, "from")) && keys.contains(string(e, "to")))
             .map(|(id, edge)| (id.clone(), edge.clone())).collect();
+        // Imported wires retain their revision. Future destination edits must
+        // never reuse that revision, including a reconnect of the same ports.
+        target.revision = target.revision.max(self.revision);
+        target.activity_clock.resume_after(self.activity_clock.current());
         for key in &keys {
-            if let Some(node) = self.nodes.remove(key) { target.nodes.insert(key.clone(), node); }
+            if let Some(mut node) = self.nodes.remove(key) {
+                target.activity_clock.advance(&mut node);
+                target.nodes.insert(key.clone(), node);
+            }
+            if let Some(generation) = self.inbox_generations.remove(key) { target.inbox_generations.insert(key.clone(), generation); }
+            if let Some(turns) = self.codex_turn_runs.remove(key) { target.codex_turn_runs.insert(key.clone(), turns); }
             if let Some(status) = self.timed_out_status.remove(key) { target.timed_out_status.insert(key.clone(), status); }
             if let Some(context) = self.contexts.remove(key) { target.contexts.insert(key.clone(), context); }
             if let Some(seen) = self.seen.remove(key) { target.seen.insert(key.clone(), seen); }
@@ -580,6 +793,9 @@ impl Graph {
                 && node["heartbeat_at"].as_f64().is_some_and(|at| now - at > 15.0) {
                 self.timed_out_status.insert(key.clone(), node["status"].clone());
                 node["status"] = json!("offline");
+                self.activity_clock.advance(node);
+                // A heartbeat gap is reversible: keep the current receipt so
+                // readers can settle it while the waiting marker is hidden.
                 self.notification_revision = self.notification_revision.wrapping_add(1);
                 record_status(node, self.settings.status_history);
             }
@@ -594,23 +810,15 @@ impl Graph {
         }
         self.revoke_at(now);
     }
-    fn reconcile_ports(&mut self) {
+    /// A registration can invalidate only ports owned by the reporting pane.
+    fn reconcile_ports(&mut self, key: &str) {
         self.edges.retain(|_, edge| {
-            let output = port(
-                &self.nodes[string(edge, "from")],
-                true,
-                string(edge, "from_port"),
-            );
-            let input = port(
-                &self.nodes[string(edge, "to")],
-                false,
-                string(edge, "to_port"),
-            );
-            output.is_ok_and(|p| {
-                let mode = string(&p, "mode");
-                edge["send"] == (mode == "send")
-                    && edge["turn_completed"] == (mode == "turn_completed")
-            }) && input.is_ok()
+            if edge["from"] == key {
+                let Ok(output) = port(&self.nodes[key], true, string(edge, "from_port")) else { return false };
+                let mode = string(&output, "mode");
+                return edge["send"] == (mode == "send") && edge["turn_completed"] == (mode == "turn_completed");
+            }
+            edge["to"] != key || port(&self.nodes[key], false, string(edge, "to_port")).is_ok()
         });
     }
     pub fn can_read(&self, source: &str, target: &str) -> bool {
@@ -632,6 +840,7 @@ impl Graph {
         params: &Value,
         content: Option<&Value>,
         turn: bool,
+        checkpoint: Option<u64>,
     ) -> Result<Value> {
         if expired(edge, now()) {
             return Err(STOP_TIME_ERROR.into());
@@ -680,7 +889,9 @@ impl Graph {
                     }
                     if !path.is_empty() && self.can_read(string(edge,"from"),target) {
                         reference["path"] = json!(path);
-                        if let Ok(metadata) = std::fs::metadata(path) { reference["checkpoint"] = json!({"byte_offset":metadata.len()}); }
+                        if let Some(end) = checkpoint.or_else(|| std::fs::metadata(path).ok().map(|m| m.len())) {
+                            reference["checkpoint"] = json!({"byte_offset":end});
+                        }
                     }
                     event["sessions"] = json!([reference]);
                 }
@@ -712,7 +923,7 @@ impl Graph {
     }
     pub fn dispatch(&mut self, id: u64, method: &str, p: &Value) -> Result<Value> {
         let result = self.dispatch_inner(id, method, p);
-        if result.is_ok() && !matches!(method, "agent.heartbeat" | "graph.adjacent" | "graph.list" | "graph.read" | "graph.inbox" | "graph.take") {
+        if result.is_ok() && !matches!(method, "agent.seen" | "agent.heartbeat" | "graph.adjacent" | "graph.list" | "graph.read" | "graph.inbox" | "graph.take") {
             self.notification_revision = self.notification_revision.wrapping_add(1);
         }
         result
@@ -721,12 +932,26 @@ impl Graph {
         if serde_json::to_vec(p).map_err(|e| e.to_string())?.len() > 2 * 1024 * 1024 {
             return Err("Graph message exceeds 2 MiB".into());
         }
-        let key = format!("%{id}");
+        let key = format!("t{id}");
         if !self.nodes.contains_key(&key) {
             return Err("Unknown pane".into());
         }
         self.expire();
         match method {
+            "agent.seen" => {
+                #[derive(serde::Deserialize)]
+                #[serde(deny_unknown_fields)]
+                struct Seen { event: String }
+                let receipt: Seen = serde_json::from_value(p.clone()).map_err(|e| e.to_string())?;
+                uuid::Uuid::parse_str(&receipt.event).map_err(|_| "Attention event must be a UUID")?;
+                let node = self.nodes.get_mut(&key).unwrap();
+                if node["attention"]["event"] == receipt.event && node["attention"]["seen"] == false {
+                    node["attention"]["seen"] = json!(true);
+                    self.activity_clock.advance(node);
+                    self.notification_revision = self.notification_revision.wrapping_add(1);
+                }
+                Ok(json!({"attention":node["attention"]}))
+            }
             "graph.list" => Ok(self.snapshot()),
             "graph.queue" => Ok(self.journal.snapshot(string(p, "edge"))),
             "graph.run.default" | "graph.run.limit" | "graph.run.reset" => {
@@ -750,7 +975,7 @@ impl Graph {
                 }
                 let manifest = manifest(p)?;
                 self.nodes.get_mut(&key).unwrap()["manifest"] = manifest;
-                self.reconcile_ports();
+                self.reconcile_ports(&key);
                 self.revoke();
                 Ok(self.nodes[&key].clone())
             }
@@ -775,6 +1000,7 @@ impl Graph {
                     node["heartbeat_at"] = json!(now());
                     if let Some(status) = self.timed_out_status.remove(&key) {
                         node["status"] = status;
+                        self.activity_clock.advance(node);
                         record_status(node, self.settings.status_history);
                         self.notification_revision = self.notification_revision.wrapping_add(1);
                     }
@@ -817,23 +1043,40 @@ impl Graph {
                     crate::checkpoint::node_restore(restore)?;
                 }
                 let node = &self.nodes[&key];
-                if p["event"] == "SessionStart"
-                    && (node["pid"] != p["pid"] || node["session_id"] != p["session_id"])
-                    && !(kind == "custom"
-                        && is_custom_node(node)
-                        && p["resume_inbox"] == true)
-                {
-                    self.clear_queue(&key);
-                }
+                let starting = p["event"] == "SessionStart";
+                // OpenCode registers its home screen as a native, sessionless
+                // node. Selecting or closing a conversation changes its inbox
+                // even when the frontend process stays alive.
+                let home_transition = starting && provider.as_deref() == Some("opencode") && node["provider"] == "opencode"
+                    && ((p["transport"] == "native" && p["session_id"].is_null() && node["session_id"].is_string())
+                        || (node["transport"] == "native" && node["session_id"].is_null() && p["session_id"].is_string()));
+                let kind_changed = node["provider"] != "shell" && is_custom_node(node) != (kind == "custom");
+                let replaced = home_transition || kind_changed || attention::identity_replaced(node, p);
+                let reconnect = starting && !replaced && ["pid", "session_id"].iter()
+                    .any(|field| !p[*field].is_null() && p[*field] == node[*field]);
+                let resume_inbox = starting && kind == "custom" && is_custom_node(node) && p["resume_inbox"] == true;
+                if (replaced || starting && !reconnect) && !resume_inbox { self.clear_queue(&key); }
                 let node = self.nodes.get_mut(&key).unwrap();
+                let previous = node.clone();
+                if replaced || p["event"] == "SessionEnd" {
+                    node.as_object_mut().unwrap().remove("transcript_path");
+                }
+                if replaced && p["session_id"].is_null() { node.as_object_mut().unwrap().remove("session_id"); }
+                if replaced || (starting && !reconnect) || p["event"] == "SessionEnd" { self.codex_turn_runs.remove(&key); }
                 let was_waiting = node["status"] == "waiting";
                 if p["event"] == "SessionStart" {
                     node["transport"] = json!(p["transport"].as_str().unwrap_or("native"));
                     node.as_object_mut().unwrap().remove("heartbeat_at");
                     // A newly launched node must not inherit the previous
                     // agent's conversation identity in the same terminal.
-                    for field in ["session_id", "transcript_path", "session_file", "provider_home", "checkpoint_state", "observed_turn"] {
+                    for field in ["session_id", "transcript_path", "session_file", "provider_home", "checkpoint_state", "observed_turn", "rollout_scan"] {
+                        if reconnect && matches!(field, "session_id" | "transcript_path") { continue; }
                         node.as_object_mut().unwrap().remove(field);
+                    }
+                    if !reconnect {
+                        for field in ["pid", "started"] {
+                            node.as_object_mut().unwrap().remove(field);
+                        }
                     }
                     match p.get("restore").filter(|v| !v.is_null()) {
                         Some(restore) => node["restore"] = restore.clone(),
@@ -847,7 +1090,7 @@ impl Graph {
                 if kind != "custom" {
                     node.as_object_mut().unwrap().remove("manifest");
                 }
-                self.timed_out_status.remove(&key);
+                let timed_out = self.timed_out_status.remove(&key);
                 node["kind"] = json!(kind);
                 node.as_object_mut().unwrap().remove("status_source");
                 if let Some(provider) = provider { node["provider"] = json!(provider); }
@@ -858,7 +1101,6 @@ impl Graph {
                     "PermissionRequest" | "AwaitingInput" => "waiting",
                     _ => "busy",
                 });
-                record_status(node, self.settings.status_history);
                 // Another process: the start time kept for the previous one
                 // would make this one look like an impostor of it.
                 if p.get("pid").is_some_and(|pid| !pid.is_null() && *pid != node["pid"]) {
@@ -873,11 +1115,32 @@ impl Graph {
                     "provider_home",
                     "started",
                 ] {
-                    if let Some(value) = p.get(field) {
+                    if let Some(value) = p.get(field).filter(|value| !value.is_null()) {
                         node[field] = value.clone();
                     }
                 }
+                // The next hook may arrive before the heartbeat. Its status
+                // transition still starts at the last live status.
+                let previous_status = if !replaced { timed_out.as_ref().unwrap_or(&previous["status"]) }
+                    else { &previous["status"] };
+                if reconnect && matches!(previous_status.as_str(), Some("busy" | "idle" | "waiting")) {
+                    node["status"] = previous_status.clone();
+                }
+                let event = string(p, "event");
+                let failed = event == "Error" || (matches!(event, "Stop" | "AwaitingInput") && p["outcome"] == "error");
+                let interrupted = event == "Stop" && p["outcome"] == "interrupted";
+                if interrupted || (failed && node["status"] == "idle") {
+                    node.as_object_mut().unwrap().remove("attention");
+                } else {
+                    attention::update(node, previous_status.as_str().unwrap_or(""), replaced || (starting && !reconnect));
+                }
+                attention::record_change(&self.activity_clock, node, &previous);
+                record_status(node, self.settings.status_history);
                 if p["event"] == "UserPromptSubmit" || p["event"] == "SessionStart" {
+                    node.as_object_mut().unwrap().remove("codex_prompt_turn");
+                    if p["event"] == "UserPromptSubmit" && node["provider"] == "codex" && p["turn_id"].is_string() {
+                        node["codex_prompt_turn"] = p["turn_id"].clone();
+                    }
                     node.as_object_mut().unwrap().remove("last_lifecycle_error");
                 }
                 if p["event"] == "UserPromptSubmit" {
@@ -893,30 +1156,38 @@ impl Graph {
                         .filter(|run| self.runs.contains_key(*run));
                     if let Some(run) = run {
                         node["run_id"] = json!(run);
+                        if node["provider"] == "codex" {
+                            if let Some(turn) = p["turn_id"].as_str().filter(|id| !id.is_empty()) {
+                                let turns = self.codex_turn_runs.entry(key.clone()).or_default();
+                                turns.retain(|(id, _)| id != turn);
+                                turns.push_back((turn.into(), run.into()));
+                                if turns.len() > self.settings.tracked_runs { turns.pop_front(); }
+                            }
+                        }
                     } else {
                         node.as_object_mut().unwrap().remove("run_id");
                     }
                 } else if p["event"] == "SessionStart" {
                     node.as_object_mut().unwrap().remove("run_id");
                 }
-                self.reconcile_ports();
+                self.reconcile_ports(&key);
                 self.revoke();
                 if !was_waiting && self.nodes[&key]["status"] == "waiting" {
-                    self.enqueue_lifecycle(&key, "waiting", &json!({}))?;
+                    self.enqueue_lifecycle(&key, "waiting", &json!({}), self.nodes[&key]["run_id"].clone(), None)?;
                 }
-                if p["event"] == "Error" || (p["event"] == "Stop" && p["outcome"] == "error") {
+                if failed {
                     let signature = json!([p["session_id"], p["completion_id"], p["text"]]);
                     if self.nodes[&key]["last_lifecycle_error"] != signature {
                         self.nodes.get_mut(&key).unwrap()["last_lifecycle_error"] = signature;
-                        self.enqueue_lifecycle(&key, "error", p)?;
+                        self.enqueue_lifecycle(&key, "error", p, self.nodes[&key]["run_id"].clone(), None)?;
                     }
-                } else if p["event"] == "Stop" && p["outcome"] != "interrupted" {
+                } else if event == "Stop" && !interrupted {
                     // A user interrupt only returns the node to idle: it is
                     // neither a completed turn nor an error.
                     let signature = format!("{}:{}:{}", p["session_id"], p["completion_id"], p["text"]);
                     let mut completion = p.clone();
                     completion["run_id"] = self.nodes[&key]["run_id"].clone();
-                    self.enqueue_completion(&key, &completion, signature)?;
+                    self.enqueue_completion(&key, &completion, signature, None, None)?;
                 }
                 let adjacent = self.adjacent(&key);
                 // Lifecycle/status updates advance the snapshot revision but
@@ -946,9 +1217,12 @@ impl Graph {
                 let mut edge = serde_json::to_value(canonical).map_err(|e| e.to_string())?;
                 let id = edge_key(&edge);
                 let mut retained_revision = None;
+                let mut created_revision = None;
                 if let Some(existing) = self.edges.get(&id) {
                     let mut previous = existing.clone();
-                    previous.as_object_mut().unwrap().remove("revision");
+                    let fields = previous.as_object_mut().unwrap();
+                    fields.remove("revision");
+                    created_revision = fields.remove("created_revision");
                     if previous == edge {
                         return Ok(existing.clone());
                     }
@@ -961,6 +1235,7 @@ impl Graph {
                 }
                 self.revision += 1;
                 edge["revision"] = retained_revision.unwrap_or_else(|| json!(self.revision));
+                edge["created_revision"] = created_revision.unwrap_or_else(|| json!(self.revision));
                 self.edges.insert(id, edge.clone());
                 self.revoke();
                 Ok(edge)
@@ -1030,7 +1305,7 @@ impl Graph {
                 } else { status_text.into() };
                 self.journal.record(&event, &journal_status, pending);
                 self.receipts.retain(|e| e["event_id"] != event["event_id"]);
-                self.receipts.push(json!({"event_id":event["event_id"],"source":event["source"],"target":key,"edge":event_key(&event),"status":status,"message":p["message"],"details":p["details"]}));
+                self.receipts.push(json!({"event_id":event["event_id"],"source":event["source"],"target":key,"edge":event_key(&event),"edge_revision":event["edge_revision"],"status":status,"message":p["message"],"details":p["details"]}));
                 if self.receipts.len() > self.settings.receipts {
                     self.receipts.remove(0);
                 }
@@ -1130,7 +1405,7 @@ impl Graph {
                 }
                 let mut events = vec![];
                 for edge in edges {
-                    events.push(self.enqueue(&edge, &params, content.as_ref(), false)?);
+                    events.push(self.enqueue(&edge, &params, content.as_ref(), false, None)?);
                 }
                 if method == "graph.send" {
                     Ok(events.remove(0))
@@ -1148,13 +1423,13 @@ mod tests {
     use super::*;
     #[test]
     fn connected_group_follows_both_directions_cycles_and_muted_links() {
-        let edges = vec![json!({"from":"%3","to":"%2","muted":true}),
-            json!({"from":"%1","to":"%2"}), json!({"from":"%3","to":"%1"}),
-            json!({"from":"%8","to":"%9"})];
-        for start in ["%1", "%2", "%3"] {
-            assert_eq!(connected_component(start, &edges), HashSet::from(["%1".into(), "%2".into(), "%3".into()]));
+        let edges = vec![json!({"from":"t3","to":"t2","muted":true}),
+            json!({"from":"t1","to":"t2"}), json!({"from":"t3","to":"t1"}),
+            json!({"from":"t8","to":"t9"})];
+        for start in ["t1", "t2", "t3"] {
+            assert_eq!(connected_component(start, &edges), HashSet::from(["t1".into(), "t2".into(), "t3".into()]));
         }
-        assert_eq!(connected_component("%7", &edges), HashSet::from(["%7".into()]));
+        assert_eq!(connected_component("t7", &edges), HashSet::from(["t7".into()]));
     }
 
     #[test]
@@ -1165,14 +1440,14 @@ mod tests {
             graph.dispatch(id, "agent.event", &json!({"provider":"pi", "event":"SessionStart",
                 "session_id":format!("s{id}"), "transport":"inbox"})).unwrap();
         }
-        let edge = json!({"from":"%1", "to":"%2", "send":true});
+        let edge = json!({"from":"t1", "to":"t2", "send":true});
         graph.dispatch(1, "graph.connect", &edge).unwrap();
         let idle = graph.notification_revision();
         for method in ["graph.adjacent", "graph.list", "graph.take", "graph.inbox", "agent.heartbeat"] {
             graph.dispatch(2, method, &json!({})).unwrap();
             assert_eq!(graph.notification_revision(), idle, "{method} must not cause a notification loop");
         }
-        graph.dispatch(1, "graph.send", &json!({"to":"%2", "text":"test"})).unwrap();
+        graph.dispatch(1, "graph.send", &json!({"to":"t2", "text":"test"})).unwrap();
         let queued = graph.notification_revision();
         assert_ne!(queued, idle);
         assert_eq!(graph.dispatch(2, "graph.take", &json!({})).unwrap()["events"].as_array().unwrap().len(), 1);
@@ -1188,21 +1463,21 @@ mod tests {
         for id in 1..=3 { source.add(id, format!("Shell {id}")); }
         target.add(4, "Existing target".into());
         for receiver in [2, 3] {
-            let edge = json!({"from":"%1","from_port":"out",
-                "to":format!("%{receiver}"),"to_port":"in","send":true,"revision":1});
+            let edge = json!({"from":"t1","from_port":"out",
+                "to":format!("t{receiver}"),"to_port":"in","send":true,"revision":1});
             source.edges.insert(edge_key(&edge), edge);
-            source.queues.insert(format!("%{receiver}"), vec![json!({
-                "source":"%1","source_port":"out","target":format!("%{receiver}"),
+            source.queues.insert(format!("t{receiver}"), vec![json!({
+                "source":"t1","source_port":"out","target":format!("t{receiver}"),
                 "target_port":"in","type":"message","edge_revision":1,"event_id":format!("event-{receiver}")})]);
         }
         source.transfer_nodes_to(&HashSet::from([1, 2]), &mut target);
-        assert_eq!(source.nodes.keys().cloned().collect::<Vec<_>>(), vec!["%3"]);
+        assert_eq!(source.nodes.keys().cloned().collect::<Vec<_>>(), vec!["t3"]);
         assert_eq!(target.nodes.len(), 3);
         assert!(source.edges.is_empty());
         assert_eq!(target.edges.len(), 1);
-        assert!(source.queues["%3"].is_empty());
-        assert_eq!(target.queues["%2"].len(), 1);
-        assert!(target.allowed(&target.queues["%2"][0]));
+        assert!(source.queues["t3"].is_empty());
+        assert_eq!(target.queues["t2"].len(), 1);
+        assert!(target.allowed(&target.queues["t2"][0]));
     }
     #[test]
     fn another_process_in_the_same_terminal_does_not_keep_the_previous_start_time() {
@@ -1210,15 +1485,15 @@ mod tests {
         graph.add(1, "Terminal 1".to_string());
         // Discovery learned the first agent's process and when it started.
         graph.dispatch(1,"agent.event",&json!({"provider":"codex","event":"SessionStart","pid":10,"started":"Mon Sep 21 10:00:00 2026"})).unwrap();
-        assert_eq!(graph.nodes["%1"]["started"],"Mon Sep 21 10:00:00 2026");
+        assert_eq!(graph.nodes["t1"]["started"],"Mon Sep 21 10:00:00 2026");
         // The same process reporting again keeps it.
         graph.dispatch(1,"agent.event",&json!({"provider":"codex","event":"Stop","pid":10,"text":"done"})).unwrap();
-        assert_eq!(graph.nodes["%1"]["started"],"Mon Sep 21 10:00:00 2026");
+        assert_eq!(graph.nodes["t1"]["started"],"Mon Sep 21 10:00:00 2026");
         // Another process, which does not say when it started, must not look
         // like the first one: a later check compares this time with the process.
         graph.dispatch(1,"agent.event",&json!({"provider":"pi","event":"SessionStart","pid":11,"integrated":true})).unwrap();
-        assert_eq!(graph.nodes["%1"]["pid"],11);
-        assert!(graph.nodes["%1"].get("started").is_none());
+        assert_eq!(graph.nodes["t1"]["pid"],11);
+        assert!(graph.nodes["t1"].get("started").is_none());
     }
     #[test]
     fn provider_prompt_restores_only_known_causal_runs_and_stop_preserves_them() {
@@ -1227,22 +1502,22 @@ mod tests {
             graph.add(id, format!("Terminal {id}"));
             graph.dispatch(id,"agent.event",&json!({"provider":"claude","event":"SessionStart","pid":id,"session_id":format!("session-{id}")})).unwrap();
         }
-        graph.dispatch(1,"graph.connect",&json!({"from":"%1","to":"%2","send":true})).unwrap();
-        graph.dispatch(2,"graph.connect",&json!({"from":"%2","to":"%3","turn_completed":true})).unwrap();
-        let event = graph.dispatch(1,"graph.send",&json!({"to":"%2","text":"request"})).unwrap();
+        graph.dispatch(1,"graph.connect",&json!({"from":"t1","to":"t2","send":true})).unwrap();
+        graph.dispatch(2,"graph.connect",&json!({"from":"t2","to":"t3","turn_completed":true})).unwrap();
+        let event = graph.dispatch(1,"graph.send",&json!({"to":"t2","text":"request"})).unwrap();
         let run = event["run_id"].as_str().unwrap();
-        let prompt = format!("[Graffitty message from %1; event accepted; run {run}]\nrequest");
+        let prompt = format!("[Graffitty message from t1; event accepted; run {run}]\nrequest");
         graph.dispatch(2,"agent.event",&json!({"provider":"claude","event":"UserPromptSubmit","prompt":prompt})).unwrap();
-        assert_eq!(graph.nodes["%2"]["run_id"],run);
+        assert_eq!(graph.nodes["t2"]["run_id"],run);
         graph.dispatch(2,"agent.event",&json!({"provider":"claude","event":"Stop","text":"completion"})).unwrap();
-        assert_eq!(graph.queues["%3"][0]["run_id"],run);
+        assert_eq!(graph.queues["t3"][0]["run_id"],run);
         assert_eq!(graph.runs[run],2,"The forwarded completion consumes the original run budget");
-        for prompt in ["ordinary user input", "[Graffitty message from %1; run unknown]\nrequest"] {
+        for prompt in ["ordinary user input", "[Graffitty message from t1; run unknown]\nrequest"] {
             graph.dispatch(2,"agent.event",&json!({"provider":"claude","event":"UserPromptSubmit","prompt":prompt})).unwrap();
-            assert!(graph.nodes["%2"].get("run_id").is_none());
+            assert!(graph.nodes["t2"].get("run_id").is_none());
         }
         graph.dispatch(2,"agent.event",&json!({"provider":"claude","event":"Stop","text":"new user completion"})).unwrap();
-        assert_ne!(graph.queues["%3"][1]["run_id"],run);
+        assert_ne!(graph.queues["t3"][1]["run_id"],run);
     }
 
     #[test]
@@ -1251,13 +1526,13 @@ mod tests {
         let hook = |graph: &mut Graph, id| graph.dispatch(id, "agent.event", &json!({"provider":"adapter","event":"PreToolUse"})).unwrap();
         hook(&mut graph, 2);
         assert_eq!(hook(&mut graph, 2)["graph_changed"], false);
-        graph.dispatch(1, "graph.connect", &json!({"from":"%1","to":"%3","from_port":"out","to_port":"in","read":true})).unwrap();
+        graph.dispatch(1, "graph.connect", &json!({"from":"t1","to":"t3","from_port":"out","to_port":"in","read":true})).unwrap();
         assert_eq!(hook(&mut graph, 2)["graph_changed"], false);
-        graph.dispatch(1, "graph.connect", &json!({"from":"%1","to":"%2","from_port":"out","to_port":"in","read":true})).unwrap();
+        graph.dispatch(1, "graph.connect", &json!({"from":"t1","to":"t2","from_port":"out","to_port":"in","read":true})).unwrap();
         assert_eq!(hook(&mut graph, 2)["graph_changed"], true);
         assert_eq!(hook(&mut graph, 2)["graph_changed"], false);
-        graph.dispatch(1, "graph.disconnect", &json!({"from":"%1","to":"%2"})).unwrap();
-        let denied = graph.read_denied("%1", "%2");
+        graph.dispatch(1, "graph.disconnect", &json!({"from":"t1","to":"t2"})).unwrap();
+        let denied = graph.read_denied("t1", "t2");
         assert_eq!(denied["code"], "connection_changed");
         assert_eq!(denied["adjacent"]["incoming"], json!([]));
         assert_eq!(hook(&mut graph, 2)["graph_changed"], true);
@@ -1289,22 +1564,22 @@ mod tests {
         g.dispatch(1, "agent.register", &json!({"name":"Renamed composer","inputs":[],
             "outputs":[{"id":"out","line_style":"solid"}]})).unwrap();
         let snapshot = g.snapshot();
-        let source = snapshot["nodes"].as_array().unwrap().iter().find(|n| n["node"] == "%1").unwrap();
+        let source = snapshot["nodes"].as_array().unwrap().iter().find(|n| n["node"] == "t1").unwrap();
         assert_eq!(source["manifest"]["outputs"][0]["line_style"], "solid");
         let edge = g.dispatch(1, "graph.connect", &send_edge()).unwrap();
         assert_eq!(edge["send"], true);
         assert_eq!(edge["turn_completed"], false);
         g.dispatch(1, "graph.emit", &json!({"output":"out","payload":"submitted"})).unwrap();
-        assert_eq!(g.queues["%2"][0]["text"], "submitted");
+        assert_eq!(g.queues["t2"][0]["text"], "submitted");
         for style in [json!("dotted"), json!("unknown"), json!(7), Value::Null] {
             assert!(manifest(&json!({"inputs":[],"outputs":[{"id":"out","line_style":style}]})).is_err());
         }
         assert!(manifest(&json!({"inputs":[{"id":"in","line_style":"solid"}],"outputs":[]})).is_err());
     }
     #[test]
-    fn connections_use_the_same_pane_ids_as_nodes_including_zero() {
+    fn connections_use_the_same_pane_ids_as_nodes() {
         let mut graph = Graph::default();
-        for id in [0, 2] {
+        for id in [1, 2] {
             graph.add(id, format!("Pane {id}"));
             graph.dispatch(id, "agent.event", &json!({
                 "provider":"adapter", "event":"SessionStart", "pid":id
@@ -1313,12 +1588,12 @@ mod tests {
                 "name":"Fixture", "inputs":[{"id":"in"}], "outputs":[{"id":"out"}]
             })).unwrap();
         }
-        let connected = graph.dispatch(0, "graph.connect", &json!({
-            "from":"%0", "to":"%2", "from_port":"out", "to_port":"in"
+        let connected = graph.dispatch(1, "graph.connect", &json!({
+            "from":"t1", "to":"t2", "from_port":"out", "to_port":"in"
         })).unwrap();
-        assert_eq!(connected["from"], "%0");
-        assert_eq!(connected["to"], "%2");
-        assert!(graph.edges.contains_key("%0/out>%2/in"));
+        assert_eq!(connected["from"], "t1");
+        assert_eq!(connected["to"], "t2");
+        assert!(graph.edges.contains_key("t1/out>t2/in"));
         for node in graph.snapshot()["nodes"].as_array().unwrap() {
             assert_eq!(node["pane"], node["node"]);
             assert!(crate::pane_id::parse(node["node"].as_str().unwrap()).is_some());
@@ -1332,29 +1607,29 @@ mod tests {
             g.dispatch(1, "graph.emit", &json!({"output":"out","payload":"hello"}))
                 .is_err()
         );
-        let edge = json!({"from":"%1","to":"%2","from_port":"out","to_port":"in"});
+        let edge = json!({"from":"t1","to":"t2","from_port":"out","to_port":"in"});
         g.dispatch(1, "graph.connect", &edge).unwrap();
         g.dispatch(
             2,
             "graph.connect",
-            &json!({"from":"%2","to":"%3","from_port":"out","to_port":"in"}),
+            &json!({"from":"t2","to":"t3","from_port":"out","to_port":"in"}),
         )
         .unwrap();
         let result = g
             .dispatch(
                 1,
                 "graph.emit",
-                &json!({"output":"out","payload":{"text":"한글"},"source":"%3"}),
+                &json!({"output":"out","payload":{"text":"한글"},"source":"t3"}),
             )
             .unwrap();
         let id = &result["events"][0]["event_id"];
         let event = &g.dispatch(2, "graph.take", &json!({})).unwrap()["events"][0];
-        assert_eq!(event["source"], "%1");
-        assert!(!g.can_read("%1", "%2"));
+        assert_eq!(event["source"], "t1");
+        assert!(!g.can_read("t1", "t2"));
         g.dispatch(2, "graph.forward", &json!({"output":"out","event_id":id}))
             .unwrap();
         let forwarded = &g.dispatch(3, "graph.take", &json!({})).unwrap()["events"][0];
-        assert_eq!(forwarded["origin"]["source"], "%1");
+        assert_eq!(forwarded["origin"]["source"], "t1");
         assert_eq!(forwarded["text"], "한글");
         g.dispatch(1, "graph.disconnect", &edge).unwrap();
         assert!(
@@ -1371,7 +1646,7 @@ mod tests {
             g.dispatch(
                 1,
                 "graph.connect",
-                &json!({"from":"%1","to":"%99"})
+                &json!({"from":"t1","to":"t99"})
             )
             .is_err()
         );
@@ -1380,7 +1655,7 @@ mod tests {
     fn bounded_fanout_is_atomic() {
         let mut g = setup();
         for id in 2..=3 {
-            g.dispatch(1,"graph.connect",&json!({"from":"%1","to":format!("%{id}"),"from_port":"out","to_port":"in"})).unwrap();
+            g.dispatch(1,"graph.connect",&json!({"from":"t1","to":format!("t{id}"),"from_port":"out","to_port":"in"})).unwrap();
         }
         for _ in 0..QUEUE_LIMIT {
             g.dispatch(1, "graph.emit", &json!({"output":"out","payload":"hello"}))
@@ -1394,14 +1669,14 @@ mod tests {
             )
             .is_err()
         );
-        assert_eq!(g.queues["%2"].len(), QUEUE_LIMIT);
-        assert_eq!(g.queues["%3"].len(), QUEUE_LIMIT);
+        assert_eq!(g.queues["t2"].len(), QUEUE_LIMIT);
+        assert_eq!(g.queues["t3"].len(), QUEUE_LIMIT);
         g.remove(1);
-        assert!(g.queues["%2"].is_empty());
+        assert!(g.queues["t2"].is_empty());
     }
 
     fn send_edge() -> Value {
-        json!({"from":"%1","to":"%2","from_port":"out","to_port":"in"})
+        json!({"from":"t1","to":"t2","from_port":"out","to_port":"in"})
     }
 
     #[test]
@@ -1449,19 +1724,24 @@ mod tests {
             &json!({"output":"out","payload":"accepted"}),
         )
         .unwrap();
-        let event = g.queues["%2"][0].clone();
+        let event = g.queues["t2"][0].clone();
         for deadline in [now() + 600.0, now() + 60.0, 0.0] {
             params["stop_at"] = json!(deadline);
             let edge = g.dispatch(1, "graph.connect", &params).unwrap();
             assert_eq!(edge["revision"], original["revision"]);
-            assert_eq!(g.queues["%2"], vec![event.clone()]);
+            assert_eq!(g.queues["t2"], vec![event.clone()]);
             assert!(g.allowed(&event));
         }
         params["muted"] = json!(true);
         let edge = g.dispatch(1, "graph.connect", &params).unwrap();
         assert_ne!(edge["revision"], original["revision"]);
+        assert_eq!(edge["created_revision"], original["revision"]);
         assert!(!g.allowed(&event));
-        assert!(g.queues["%2"].is_empty());
+        assert!(g.queues["t2"].is_empty());
+        g.dispatch(1, "graph.disconnect", &params).unwrap();
+        let replacement = g.dispatch(1, "graph.connect", &params).unwrap();
+        assert_eq!(replacement["created_revision"], replacement["revision"]);
+        assert_ne!(replacement["created_revision"], edge["created_revision"]);
     }
 
     #[test]
@@ -1477,14 +1757,14 @@ mod tests {
             &json!({"output":"out","payload":"accepted"}),
         )
         .unwrap();
-        let event = g.queues["%2"][0].clone();
+        let event = g.queues["t2"][0].clone();
         assert!(g.allowed_at(&event, deadline - 0.001));
         assert!(!g.allowed_at(&event, deadline));
         let before = g.revision;
         g.expire_at(deadline - 0.001);
         assert_eq!(g.revision, before);
         g.expire_at(deadline);
-        assert!(g.queues["%2"].is_empty());
+        assert!(g.queues["t2"].is_empty());
         assert_eq!(g.edges[&edge_key(&edge)], edge);
         assert_eq!(g.revision, before + 1);
         assert_eq!(g.next_stop_at, None);
@@ -1502,7 +1782,7 @@ mod tests {
             g.dispatch(
                 1,
                 "graph.send",
-                &json!({"to":"%2","text":"blocked"})
+                &json!({"to":"t2","text":"blocked"})
             )
             .unwrap_err(),
             STOP_TIME_ERROR
@@ -1513,8 +1793,8 @@ mod tests {
             params["from_port"] = json!(output);
             g.dispatch(1, "graph.connect", &params).unwrap();
         }
-        assert!(!g.can_read("%1", "%2"));
-        assert!(g.can_read("%1", "%1"));
+        assert!(!g.can_read("t1", "t2"));
+        assert!(g.can_read("t1", "t1"));
         g.dispatch(
             1,
             "agent.event",
@@ -1523,7 +1803,7 @@ mod tests {
         .unwrap();
         assert!(g.queues.values().all(Vec::is_empty));
         params = send_edge();
-        params["to"] = json!("%3");
+        params["to"] = json!("t3");
         g.dispatch(1, "graph.connect", &params).unwrap();
         let emitted = g
             .dispatch(
@@ -1533,8 +1813,8 @@ mod tests {
             )
             .unwrap();
         assert_eq!(emitted["events"].as_array().unwrap().len(), 1);
-        assert_eq!(g.queues["%3"].len(), 1);
-        assert!(g.queues.get("%2").is_none_or(Vec::is_empty));
+        assert_eq!(g.queues["t3"].len(), 1);
+        assert!(g.queues.get("t2").is_none_or(Vec::is_empty));
     }
 
     #[test]
@@ -1544,7 +1824,7 @@ mod tests {
         let edge = g.dispatch(1, "graph.connect", &params).unwrap();
         g.dispatch(1, "graph.emit", &json!({"output":"out","payload":"old"}))
             .unwrap();
-        let old = g.queues["%2"][0].clone();
+        let old = g.queues["t2"][0].clone();
         // Move the clock boundary into the past without delivering actor expiry.
         g.edges.get_mut(&edge_key(&edge)).unwrap()["stop_at"] = json!(now() - 1.0);
         g.schedule_expiry();
@@ -1553,10 +1833,10 @@ mod tests {
         let reopened = g.dispatch(1, "graph.connect", &clear).unwrap();
         assert_ne!(reopened["revision"], edge["revision"]);
         assert!(!g.allowed(&old));
-        assert!(g.queues["%2"].is_empty());
+        assert!(g.queues["t2"].is_empty());
         g.dispatch(1, "graph.emit", &json!({"output":"out","payload":"new"}))
             .unwrap();
-        assert_eq!(g.queues["%2"][0]["text"], "new");
+        assert_eq!(g.queues["t2"][0]["text"], "new");
     }
 }
 

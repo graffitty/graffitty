@@ -1,4 +1,6 @@
 extends Control
+
+const PaneAddress := preload("res://scenes/PaneAddress.gd")
 signal navigation_changed
 const ViewportUpdates := preload("res://scenes/TerminalViewportUpdates.gd")
 const RenderUpdates := preload("res://scenes/RenderUpdates.gd")
@@ -603,10 +605,6 @@ func refresh() -> void:
 	# the tab strip. Wait until all workspace controls have been attached.
 	if not _initialized:
 		return
-	if not overview and host != null and host.session_backend != null:
-		var target := main_frame()
-		navigation_center = target.center
-		navigation_zoom = target.zoom
 	if (
 		_refreshing or not is_node_ready() or not is_inside_tree() or get_viewport() == null or not host.presentation_active
 		or not canvas.is_inside_tree() or host.layout_transaction or size.x < 2 or size.y < 72
@@ -615,6 +613,12 @@ func refresh() -> void:
 	if not tile_resize.is_empty() and host.workspace_layout.active != tile_resize.tab:
 		cancel_tile_resize()
 	_refreshing = true
+	var main_frame_changed := false
+	if not overview:
+		var target := main_frame()
+		main_frame_changed = not navigation_center.is_equal_approx(target.center) or not is_equal_approx(navigation_zoom, target.zoom)
+		navigation_center = target.center
+		navigation_zoom = target.zoom
 	_bind_projection_world()
 	if physics_typing and _typing_tab != host.workspace_layout.active:
 		_typing_timer.stop()
@@ -651,7 +655,7 @@ func refresh() -> void:
 			pane.handle.item_rect_changed.connect(_invalidate_headers)
 			pane.body.item_rect_changed.connect(_invalidate_headers)
 		panes[key].show()
-		var id := int(key.substr(1))
+		var id := PaneAddress.id(key)
 		if host.is_terminal_pane(key) and not host.sessions.has(id) and host.world != null:
 			host.session_for(id, host.world)
 		panes[key].refresh()
@@ -681,7 +685,7 @@ func refresh() -> void:
 	host.world_container.visible = host.world != null
 	RenderUpdates.set_enabled(host.world_viewport, host.presentation_active and host.world_container.visible)
 	for id in host.sessions:
-		var visible_terminal: bool = ('%%%d' % id) in shown
+		var visible_terminal: bool = PaneAddress.key(id) in shown
 		var vp: SubViewport = host.sessions[id].vp
 		# Visible panes set their own raster visibility after crop calculation.
 		if not visible_terminal: ViewportUpdates.set_visible(vp, false)
@@ -690,7 +694,7 @@ func refresh() -> void:
 			or id != host.active_session_id
 		)
 	for id in host.chromiums:
-		host.chromiums[id].selected = ('%%%d' % id) in shown
+		host.chromiums[id].selected = PaneAddress.key(id) in shown
 	if tile_button != null:
 		tile_button.set_pressed_no_signal(group.get("tree", { }).get("tiling", false))
 	var focused := Layout.find(group.get("tree", { }), host.pane_focus)
@@ -705,6 +709,10 @@ func refresh() -> void:
 	# animation loop sleeps in an inactive window. Otherwise the old X/Y
 	# scale squeezes the entire workspace into the newly sized viewport.
 	_sync_status_sources()
+	# Another client can resize Main while this window's typing camera sleeps.
+	# Project the new layout before measuring which part of it to rasterize.
+	if main_frame_changed and is_instance_valid(host.world):
+		host.world._apply_camera_fx()
 	update_raster_region()
 	_update_compact_headers()
 	_update_monitor()
@@ -755,7 +763,7 @@ func _sync_status_sources() -> void:
 		_status_graph = graph
 		if is_instance_valid(graph): graph.changed.connect(_agent_status_changed)
 	for key in _status_sources.keys():
-		var source: Node = host.resource_monitor_for(int(key.substr(1))) if panes.has(key) else null
+		var source: Node = host.resource_monitor_for(PaneAddress.id(key)) if panes.has(key) else null
 		if not is_instance_valid(_status_sources[key]) or _status_sources[key] != source:
 			if is_instance_valid(_status_sources[key]):
 				_status_sources[key].snapshot_changed.disconnect(_resource_status_changed.bind(key))
@@ -767,7 +775,7 @@ func _sync_status_sources() -> void:
 			var ordered := Layout.numbered_keys(tab.get("tree", {}), tab.get("focused", ""))
 			for index in ordered.size(): positions[ordered[index]] = index + 1
 		if not _status_sources.has(key):
-			var source: Node = host.resource_monitor_for(int(key.substr(1)))
+			var source: Node = host.resource_monitor_for(PaneAddress.id(key))
 			if source != null:
 				_status_sources[key] = source
 				source.snapshot_changed.connect(_resource_status_changed.bind(key))
@@ -887,6 +895,82 @@ func _pane_screen_rect(pane: Control) -> Rect2:
 	return rect
 
 
+static func _rect_outline(rect: Rect2) -> PackedVector2Array:
+	return PackedVector2Array([rect.position, Vector2(rect.end.x, rect.position.y), rect.end,
+		Vector2(rect.position.x, rect.end.y)])
+
+
+static func _polygon_bounds(points: PackedVector2Array) -> Rect2:
+	var bounds := Rect2(points[0], Vector2.ZERO)
+	for point in points: bounds = bounds.expand(point)
+	return bounds
+
+
+## Both panes are painted on the same sheet. Subtract covers there so adjacent
+## edges still meet exactly after the camera bends or tilts the sheet.
+static func _subtract_pane(piece: PackedVector2Array, cover: Control) -> Array[PackedVector2Array]:
+	var transform := cover.get_transform()
+	var local := transform.affine_inverse() * piece
+	var bounds := _polygon_bounds(local)
+	var overlap := Rect2(Vector2.ZERO, cover.size).intersection(bounds)
+	if not overlap.has_area(): return [piece]
+	if overlap == bounds: return []
+	# Four disjoint strips cover the remaining bounds. Each clipped piece is
+	# convex, even when this cover cuts a hole in the middle of the original.
+	var remaining: Array[PackedVector2Array] = []
+	for strip: Rect2 in [
+		Rect2(bounds.position, Vector2(bounds.size.x, overlap.position.y - bounds.position.y)),
+		Rect2(Vector2(bounds.position.x, overlap.end.y), Vector2(bounds.size.x, bounds.end.y - overlap.end.y)),
+		Rect2(Vector2(bounds.position.x, overlap.position.y), Vector2(overlap.position.x - bounds.position.x, overlap.size.y)),
+		Rect2(Vector2(overlap.end.x, overlap.position.y), Vector2(bounds.end.x - overlap.end.x, overlap.size.y))]:
+		# A rotated edge can leave a rounding sliver in local coordinates.
+		if minf(strip.size.x, strip.size.y) > 0.0001:
+			for fragment in Geometry2D.intersect_polygons(local, _rect_outline(strip)):
+				remaining.append(transform * fragment)
+	return remaining
+
+
+func _piece_in_content(piece: PackedVector2Array, content: Rect2) -> bool:
+	var outline := PackedVector2Array()
+	for i in piece.size():
+		# Include edge midpoints for the curved world sheet.
+		for at: Vector2 in [piece[i], (piece[i] + piece[(i + 1) % piece.size()]) * 0.5]:
+			var point: Vector2 = host.world.sheet_window_fraction(at) * size if host.world != null and host.world.has_method("sheet_window_fraction") else at
+			if not point.is_finite(): continue
+			if content.has_point(point) and point.x > content.position.x and point.y > content.position.y: return true
+			outline.append(point)
+	return outline.size() >= 3 and _polygon_bounds(outline).intersects(content) and not Geometry2D.intersect_polygons(outline, _rect_outline(content)).is_empty()
+
+
+func pane_in_content(key: String) -> bool:
+	var pane: Control = panes.get(key)
+	if not is_instance_valid(pane) or not pane.visible or pane.size.x <= 0 or pane.size.y <= 0: return false
+	var content := viewport_content_rect()
+	if not content.has_area(): return false
+	var shape := pane.get_transform() * _rect_outline(Rect2(Vector2.ZERO, pane.size))
+	if not _piece_in_content(shape, content): return false
+	var bounds := _polygon_bounds(shape)
+	var pieces: Array[PackedVector2Array] = [shape]
+	var overlapped := false
+	for cover: Control in panes.values():
+		if cover == pane or not cover.visible or cover.z_index < pane.z_index: continue
+		if cover.z_index == pane.z_index and cover.get_index() <= pane.get_index(): continue
+		var transform := cover.get_transform()
+		if transform.determinant() == 0.0 or not cover.size.is_finite(): continue
+		var cover_bounds := transform * Rect2(Vector2.ZERO, cover.size)
+		if not bounds.intersects(cover_bounds): continue
+		overlapped = true
+		var remaining: Array[PackedVector2Array] = []
+		for piece in pieces: remaining.append_array(_subtract_pane(piece, cover))
+		if remaining.is_empty(): return false
+		pieces = remaining
+	# Most panes have no overlapping siblings and need just the first projection.
+	if not overlapped: return true
+	for piece in pieces:
+		if _piece_in_content(piece, content): return true
+	return false
+
+
 ## Titles compensate navigation zoom inside the sheet, so typing motion and
 ## depth of field still affect them together with the pane.
 func _presentation_settled() -> bool:
@@ -1004,7 +1088,7 @@ func _measure_status_strip(strip: Control) -> void:
 
 
 func _has_session_status(key: String) -> bool:
-	var id := int(key.substr(1))
+	var id := PaneAddress.id(key)
 	return not host.chromiums.has(id) or host.chromiums[id].main_window
 
 
@@ -1296,7 +1380,7 @@ func reveal_navigation_target(key: String) -> void:
 	var viewport: Rect2 = workspace_region().canvas_rect(center, zoom)
 	var cursor := Rect2()
 	if host.is_terminal_pane(key):
-		var pair: Dictionary = host.sessions.get(int(key.substr(1)), {})
+		var pair: Dictionary = host.sessions.get(PaneAddress.id(key), {})
 		if not pair.is_empty() and pair.term.get_cursor_cell().x >= 0:
 			var term: Control = pair.term
 			var scale_value := terminal_scale(key)
@@ -1672,13 +1756,13 @@ func _chromium_owners() -> Dictionary:
 	var owners := { }
 	for id in host.chromiums:
 		var owner_id: int = host.chromiums[id].owner_id
-		if owner_id != id: owners["%%%d" % id] = "%%%d" % owner_id
+		if owner_id != id: owners[PaneAddress.key(id)] = PaneAddress.key(owner_id)
 	for id in host.sessions:
 		var owner_id: int = host.sessions[id].term.get_meta("filetree_owner", -1)
-		if owner_id >= 0: owners["%%%d" % id] = "%%%d" % owner_id
+		if owner_id >= 0: owners[PaneAddress.key(id)] = PaneAddress.key(owner_id)
 		# A pane started by `gft pane run` hangs off its parent like a chromium or filetree.
 		var parent_id: int = host.sessions[id].term.get_meta("spawned_by", -1)
-		if owner_id < 0 and parent_id >= 0 and host.sessions.has(parent_id): owners["%%%d" % id] = "%%%d" % parent_id
+		if owner_id < 0 and parent_id >= 0 and host.sessions.has(parent_id): owners[PaneAddress.key(id)] = PaneAddress.key(parent_id)
 	return owners
 
 
@@ -1902,7 +1986,7 @@ func _terminal_owns_modified_wheel(event: InputEvent) -> bool:
 	var key := window_at(point)
 	if not host.is_terminal_pane(key):
 		return false
-	var pair: Dictionary = host.sessions.get(int(key.substr(1)), {})
+	var pair: Dictionary = host.sessions.get(PaneAddress.id(key), {})
 	if pair.is_empty():
 		return false
 	var scale_value := terminal_scale(key)
@@ -2055,7 +2139,7 @@ func _forward_pointer(event: InputEvent, replay_click := false) -> void:
 	if event is InputEventMouseButton and event.button_index == MOUSE_BUTTON_RIGHT and event.pressed:
 		var pointed := window_at(sheet_point)
 		if host.is_chromium_pane(pointed):
-			var chromium: Node = host.chromiums.get(int(pointed.substr(1)))
+			var chromium: Node = host.chromiums.get(PaneAddress.id(pointed))
 			if chromium != null:
 				chromium.context_menu_screen = preload("res://scenes/ScreenSpace.gd").of(pointer, event.position)
 		if panes.has(pointed) and panes[pointed].secondary_split_at(sheet_point):
@@ -2123,7 +2207,7 @@ func _resize_cursor(point: Vector2) -> int:
 	# A held button belongs to whatever it pressed, not to the edge it crosses.
 	if _held != 0:
 		return -1
-	var key := window_at(canvas_root.get_global_transform().affine_inverse() * point)
+	var key := resize_window_at(canvas_root.get_global_transform().affine_inverse() * point)
 	return panes[key].resize_cursor(point) if key != '' else -1
 
 
@@ -2322,7 +2406,12 @@ func resize_window_at(point: Vector2, touch := false) -> String:
 	if not over.is_empty():
 		var pane: Control = panes[over]
 		return over if pane._edge_at(pane.get_transform().affine_inverse() * point, touch) != Vector2.ZERO else ""
-	if not touch: return ""
+	if not touch:
+		if not agent_links.editing: return ""
+		var focused: Control = panes.get(host.pane_focus)
+		if is_instance_valid(focused) and focused.visible and focused._edge_at(focused.get_transform().affine_inverse() * point) != Vector2.ZERO:
+			return focused.key
+		return ""
 	var closest := ""
 	var distance := INF
 	var screen := window_point(point)
@@ -2725,14 +2814,17 @@ func preview_window_move(
 	point: Vector2,
 	incoming: Dictionary = { },
 	placements: Dictionary = {},
+	drag_started_outside_main := false,
 ) -> Dictionary:
 	var group: Dictionary = host.workspace_layout.tab(host.workspace_layout.active)
-	if group.is_empty() or (not group.tree.get("tiling", false) and incoming.is_empty()):
+	var area := content_rect()
+	var manual_return := drag_started_outside_main and area.has_point(point)
+	if group.is_empty() or (not group.tree.get("tiling", false) and incoming.is_empty() and not manual_return):
 		clear_layout_preview()
 		return { }
 	if incoming.is_empty():
 		incoming = Layout.find(group.tree, key)
-	preview_plan = Layout.preview_placement(group.tree, incoming, rect, content_rect(), point, placements)
+	preview_plan = Layout.preview_placement(group.tree, incoming, rect, area, point, placements, manual_return)
 	# A local drag already carries its pane. A transfer needs a visible outline
 	# even when the destination is floating or outside the Main Area.
 	layout_preview.present(preview_plan, content_rect(), point, key.is_empty())

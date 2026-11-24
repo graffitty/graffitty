@@ -1,5 +1,7 @@
 extends "res://tests/unit/test_case.gd"
 
+const PaneAddress := preload("res://scenes/PaneAddress.gd")
+
 class Transport extends Node:
 	signal acknowledged(message: Dictionary)
 	signal state_changed(message: String)
@@ -23,7 +25,7 @@ class Pane extends Control:
 
 class Host extends Node:
 	func is_terminal_pane(key: String) -> bool:
-		return preload("res://scenes/PaneTargets.gd").valid(key) and sessions.has(int(key.substr(1)))
+		return preload("res://scenes/PaneTargets.gd").valid(key) and sessions.has(PaneAddress.id(key))
 	var layout_transaction := false
 	var sessions := {}
 	var world := {"terminal_window": {"padding": Vector4(8, 8, 8, 8)}}
@@ -38,21 +40,21 @@ func test_owner_grid_uses_logical_pane_and_font_not_client_camera() -> void:
 	pane.size = Vector2(1264, 750)
 	pane.body.size = Vector2(1264, 720)
 	host.sessions[7] = {"term": terminal}
-	host.workspace_view.panes["%7"] = pane
-	host.workspace_view.pane_rects["%7"] = Rect2(8, 42, 1264, 750)
-	backend.sync_pane_grid(host, "%7")
+	host.workspace_view.panes["t7"] = pane
+	host.workspace_view.pane_rects["t7"] = Rect2(8, 42, 1264, 750)
+	backend.sync_pane_grid(host, "t7")
 	expect(transport.sent.size() == 1 and transport.sent[0].options == {"width":1240.0,"height":700.0}, "Initial owner grid fills the canonical logical body minus both padding layers")
 	host.workspace_view.size = Vector2(400, 900)
 	host.workspace_view.navigation_zoom = 0.3
-	backend.sync_pane_grid(host, "%7")
+	backend.sync_pane_grid(host, "t7")
 	expect(transport.sent.size() == 1, "A remote client resize or navigation change neither reflows the owner nor sends redundant resizes")
 	terminal.cell = Vector2(14, 30)
-	backend.sync_pane_grid(host, "%7")
+	backend.sync_pane_grid(host, "t7")
 	expect(transport.sent.size() == 1, "Client font metrics cannot redefine server wrapping")
 	pane.size = Vector2(640, 750)
 	pane.body.size = Vector2(640, 720)
-	host.workspace_view.pane_rects["%7"] = Rect2(8, 42, 640, 750)
-	backend.sync_pane_grid(host, "%7")
+	host.workspace_view.pane_rects["t7"] = Rect2(8, 42, 640, 750)
+	backend.sync_pane_grid(host, "t7")
 	expect(transport.sent.size() == 2 and transport.sent[1].options.width == 616.0, "A canonical pane resize updates the owner grid")
 
 
@@ -79,7 +81,7 @@ func test_terminal_metadata_does_not_reinstall_authoritative_layout() -> void:
 
 func test_federated_metadata_does_not_reinstall_owner_layouts() -> void:
 	var client := preload("res://scenes/remote/RemoteClient.gd")
-	var original := {"tabs": [{"id": 1, "title": "before", "canonical_layout": {"windows": [{"key": "%7", "rect": [0,0,640,480]}]}}],
+	var original := {"tabs": [{"id": 1, "title": "before", "canonical_layout": {"windows": [{"key": "t7", "rect": [0,0,640,480]}]}}],
 		"panes": [{"id": 7, "tab": 1, "title": "before", "columns": 80, "app": {"name": "claude"}}], "chromiums": []}
 	var changed := original.duplicate(true)
 	changed.tabs[0].title = "after"
@@ -96,8 +98,8 @@ func test_federated_metadata_does_not_reinstall_owner_layouts() -> void:
 
 func test_local_divider_changes_do_not_mutate_owner_compare_and_swap_base() -> void:
 	var owner := {"enabled":true,"tiles":{"axis":"h","children":[
-		{"pane":"%1","weight":1.0},{"pane":"%2","weight":1.0}]},
-		"windows":[{"key":"%1"},{"key":"%2"}]}
+		{"pane":"t1","weight":1.0},{"pane":"t2","weight":1.0}]},
+		"windows":[{"key":"t1"},{"key":"t2"}]}
 	var original := owner.duplicate(true)
 	var local := preload("res://scenes/session/ServerWorkspace.gd").decode_tab(1,owner)
 	local.tree.tiles.children[0].weight = 1.4
@@ -110,8 +112,8 @@ func test_local_divider_changes_do_not_mutate_owner_compare_and_swap_base() -> v
 func test_older_ack_preserves_newer_layout_intent_without_reviving_closed_panes() -> void:
 	var transport := Transport.new()
 	var backend := preload("res://scenes/session/RemoteSessionBackend.gd").new(transport)
-	var canonical := {"windows":[{"key":"%7"},{"key":"%8"}],
-		"tiles":{"axis":"h","children":[{"pane":"%7"},{"pane":"%8"}]}}
+	var canonical := {"windows":[{"key":"t7"},{"key":"t8"}],
+		"tiles":{"axis":"h","children":[{"pane":"t7"},{"pane":"t8"}]}}
 	var in_flight := canonical.duplicate(true)
 	in_flight.tiles.children[0].weight = 1.2
 	var later := canonical.duplicate(true)
@@ -120,7 +122,7 @@ func test_older_ack_preserves_newer_layout_intent_without_reviving_closed_panes(
 	backend.pending_tab_edit = {"tab":1,"layout":in_flight}
 	backend.queued_edits["tab:1"] = {"layout":later}
 	expect(backend.presentation_layout(1, canonical) == later, "An older owner snapshot cannot replace a newer queued divider gesture")
-	var closed := {"windows":[{"key":"%7"}],"tiles":{"pane":"%7"}}
+	var closed := {"windows":[{"key":"t7"}],"tiles":{"pane":"t7"}}
 	expect(backend.presentation_layout(1, closed) == closed, "Owner membership wins when a pane is closed while a layout is pending")
 	backend._workspace_ack({"type":"error","request":42,"message":"conflicting layout"})
 	expect(backend.presentation_layout(1, canonical) == canonical, "A rejected gesture restores the authoritative layout instead of retaining stale preview geometry")

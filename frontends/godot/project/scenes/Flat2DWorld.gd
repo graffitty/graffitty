@@ -1,4 +1,5 @@
 extends "res://scenes/FlatTerminalSpaceWorld.gd"
+
 ## Shares session/config/input helpers with Flat. The inherited Node3D is only
 ## a host API container: this world creates no 3D camera, mesh, light or
 ## viewport.
@@ -216,7 +217,7 @@ func _initial_terminal() -> int:
 	var group: Dictionary = host.workspace_layout.tab(host.workspace_layout.active)
 	var focused := str(group.get("focused", ""))
 	if host.is_terminal_pane(focused) and focused in WorkspaceLayoutScript.keys(group.get("tree", {})):
-		return int(focused.substr(1))
+		return PaneAddress.id(focused)
 	return _first_terminal(group)
 
 func _focus_session(index: int) -> void:
@@ -271,7 +272,7 @@ func finish_session_transition() -> void:
 func _goto(index: int, instant: bool) -> void:
 	if index < 0 or index >= surfaces.size() or index == active: return
 	instant = instant or host.instant_workspace_switch
-	var workspace: int = host.workspace_layout.containing("%%%d" % surfaces[index].session_id)
+	var workspace: int = host.workspace_layout.containing(PaneAddress.key(surfaces[index].session_id))
 	# Removing a pane rebinds the sheet instantly. While staying in the same
 	# workspace, let its current typing animation finish instead of snapping idle.
 	var retain_typing := instant and workspace >= 0 and workspace == _camera_workspace

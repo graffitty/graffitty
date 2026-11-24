@@ -1,4 +1,5 @@
 extends "../../../../tests/llm-e2e/suites/godot/tabs-and-panes/replays/main-area-tiling.gd"
+
 var typed_into_terminal := 0
 
 func menu_ready() -> void:
@@ -18,8 +19,8 @@ func play() -> void:
 	var source: String = host.pane_focus
 	var extra := await add_window(source, "h")
 	if extra.is_empty(): return
-	await app.agent_api.dispatch(int(extra.substr(1)), "window.set_title", {"title": "Database migration"})
-	await host.session_backend.connection.remote_call(int(source.substr(1)), "tab.set_title", {"id": first, "title": "Backend"})
+	await app.agent_api.dispatch(PaneAddress.id(extra), "window.set_title", {"title": "Database migration"})
+	await host.session_backend.connection.remote_call(PaneAddress.id(source), "tab.set_title", {"id": first, "title": "Backend"})
 	await owner_at_rest()
 	await select_tab(1)
 	await camera_at_rest()

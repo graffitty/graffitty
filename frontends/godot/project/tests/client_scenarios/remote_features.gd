@@ -1,4 +1,5 @@
 extends "res://tests/client_scenarios/workspace.gd"
+
 ## Feature checks through a real owner; shared by desktop simulation and APK.
 
 func scene_retention() -> void:
@@ -81,7 +82,7 @@ func _terminal_stream(source: String, observe_titles: bool) -> void:
 	for pane in panes:
 		titles[pane] = 0
 		if observe_titles:
-			host.session_model(int(pane.substr(1))).title_changed.connect(func(value):
+			host.session_model(PaneAddress.id(pane)).title_changed.connect(func(value):
 				if str(value).begins_with("Agent spinner "): titles[pane] += 1)
 		terminal(pane).send_text("python3 -c 'import base64;exec(base64.b64decode(\"%s\"))'\r" % Marshalls.utf8_to_base64(source))
 	await wait(2.0)

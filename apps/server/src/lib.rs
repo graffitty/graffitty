@@ -1,4 +1,5 @@
 //! Session owner implementation, run by `gft server`. No Godot or windowing.
+use graffitty_protocol::pane_id::address as pane_address;
 pub mod fonts;
 use graffitty_platform::process_cwd;
 mod chromium_video;
@@ -41,6 +42,7 @@ mod shell_integration;
 mod workers;
 mod settings;
 mod agent_completion;
+mod native_delivery;
 mod agent_context;
 mod pane_claim;
 mod effects_api;
@@ -64,6 +66,7 @@ mod close_policy;
 pub mod holder;
 pub mod holder_proto;
 mod holder_link;
+mod holder_upgrade;
 pub use holder_link::build_id;
 mod owner_state;
 mod clipboard;
@@ -106,7 +109,7 @@ struct Client {
     workspace: String,
     workspace_incarnation: u64,
     workspace_closed: bool,
-    session_catalog: Value,
+    catalog_revision: u64,
     subscribed: Vec<u64>,
     revisions: HashMap<u64, u64>,
     /// Structural topology signature last delivered; volatile pane fields
@@ -185,6 +188,7 @@ struct Server {
     session_name_cache: std::cell::RefCell<HashMap<String, (Instant, Option<String>)>>,
     /// Agent titles for session descriptors, taken at turn boundaries: pane -> (status, title).
     agent_title_cache: std::cell::RefCell<HashMap<u64, (String, String)>>,
+    pane_catalog_titles: std::cell::RefCell<HashMap<u64, session_management::CatalogTitle>>,
     /// `terminal.run --wire` requests waiting for their agent to register.
     pending_wires: HashMap<u64, graph_wiring::Pending>,
     started_session: bool,
@@ -194,8 +198,12 @@ struct Server {
     tab_titles: HashMap<u64, String>,
     retired_tabs: regroup::RetiredTabs,
     next: u64,
+    next_chromium: u64,
     shell: String,
     epoch: String,
+    catalog_revision: u64,
+    catalog_snapshot: Value,
+    activity_clock: graph::ActivityClock,
     graphs: HashMap<String, graph::Graph>,
     chromiums: BTreeMap<u64, chromium::Chromium>,
     filetrees: filetree::Filetrees,
@@ -210,7 +218,7 @@ struct Server {
     app_scan_at: Instant,
     app_groups: HashMap<u64, Option<i32>>,
     foreground_apps: HashMap<u64, Value>,
-    native_pending: HashMap<String, Value>,
+    native_pending: HashMap<String, native_delivery::Submission>,
     completions: agent_completion::Completions,
     agent_contexts: HashMap<String, mpsc::SyncSender<Value>>,
     pane_claims: pane_claim::Claims,
@@ -267,18 +275,70 @@ fn queue(client: &mut Client, message: Message) -> Result<(), Error> {
 fn send(client: &mut Client, value: Value) -> Result<(), Error> {
     queue(client, Message::Text(value.to_string().into()))
 }
+/// Discovery runs outside the server loop. A hook may register a different
+/// agent in the same pane before the worker returns its observation.
+fn scan_registration(node: &Value) -> Value {
+    json!([node["provider"], node["pid"], node["started"], node["session_id"], node["transport"]])
+}
+
+fn scan_baseline(root: &mut Value, node: &Value) {
+    for field in ["observed_turn", "rollout_scan"] {
+        if let Some(value) = node.get(field) {
+            // A null observed_turn identifies a sampled daemon thread with zero turns.
+            root["session_id"] = node["session_id"].clone();
+            root[field] = value.clone();
+        }
+    }
+}
+
+#[cfg(test)]
+mod scan_tests {
+    use super::*;
+
+    #[test]
+    fn empty_sample_is_distinct_from_first_attachment() {
+        let mut root = json!({});
+        scan_baseline(&mut root, &json!({"session_id":"a"}));
+        assert!(root.get("observed_turn").is_none());
+        scan_baseline(&mut root, &json!({"session_id":"a","observed_turn":null}));
+        assert_eq!(root, json!({"session_id":"a","observed_turn":null}));
+    }
+
+    #[test]
+    fn scan_follows_registration_across_status_changes_only() {
+        let mut graph = graph::Graph::default();
+        graph.add(1, "review".into());
+        let start = json!({"provider":"codex","event":"SessionStart","pid":10,"session_id":"first"});
+        graph.dispatch(1, "agent.event", &start).unwrap();
+        let sampled = scan_registration(&graph.nodes["t1"]);
+        graph.dispatch(1, "agent.event", &json!({"provider":"codex","event":"UserPromptSubmit","pid":10,"session_id":"first"})).unwrap();
+        assert_eq!(sampled, scan_registration(&graph.nodes["t1"]));
+        let mut replacement = start;
+        replacement["session_id"] = json!("replacement");
+        graph.dispatch(1, "agent.event", &replacement).unwrap();
+        assert_ne!(sampled, scan_registration(&graph.nodes["t1"]));
+    }
+}
+
 impl Server {
     fn stops_when_empty(&self) -> bool {
         // A server meant to be reached remotely stays, also while its address is taken.
         self.remote_listener.is_none() && self.remote_error.is_none()
     }
 
-    fn session_catalog(&self) -> Value {
-        json!({
+    fn session_catalog(&mut self) -> Result<Value, Error> {
+        let mut snapshot = json!({
             "type": "session_list",
             "sessions": session_management::descriptions(self),
             "stops_when_empty": self.stops_when_empty(),
-        })
+        });
+        if self.catalog_snapshot != snapshot {
+            self.catalog_revision = self.activity_clock.next();
+            self.save_owner_state()?;
+            self.catalog_snapshot = snapshot.clone();
+        }
+        snapshot["revision"] = json!(self.catalog_revision);
+        Ok(snapshot)
     }
 
     fn remote_descriptor(&self) -> Value {
@@ -314,26 +374,29 @@ impl Server {
     ) -> Result<u64, Error> {
         self.create_with_environment(workspace, tab, source, options, &[], SavedIdentity::default())
     }
-    /// The identity a new pane or chromium takes: the saved one a restore
-    /// asks for while no live pane has it, else the next unused one.
-    ///
-    /// A reference to `%N` then still names the same pane after its
-    /// checkpoint is restored.
-    fn pane_identity(&self, saved: Option<u64>) -> u64 {
-        SavedIdentity::choose([saved, None], self.next, |id| {
-            !self.sessions.contains_key(&id)
-                && !self.chromiums.contains_key(&id)
-                && !self.retired_chromiums.iter().any(|chromium| chromium.id == id)
-        })
+    /// Restore a saved terminal ID when free, otherwise use the next terminal number.
+    fn pane_identity(&self, saved: SavedIdentity) -> u64 {
+        let next = saved.through.filter(|id| *id < SavedIdentity::LIMIT)
+            .map_or(self.next, |id| self.next.max(id + 1));
+        SavedIdentity::choose([saved.pane, None], next, |id| !self.sessions.contains_key(&id))
     }
     /// A new tab's identity: the saved one, else `fallback`, while no live tab
     /// has it, else the next unused one after `taken`.
     fn tab_identity(&self, saved: Option<u64>, fallback: u64, taken: u64) -> u64 {
         // The workspace layout accepts only positive tab IDs.
-        SavedIdentity::choose([saved, Some(fallback)], self.next.max(taken + 1), |tab| {
+        SavedIdentity::choose([saved, Some(fallback)], self.next.max(taken.saturating_add(1)), |tab| {
             !self.sessions.values().any(|s| s.tab == tab) && !self.chromiums.values().any(|b| b.tab == tab)
         })
     }
+    fn chromium_identity(&self, saved: Option<u64>, through: Option<u64>) -> Result<u64, Error> {
+        let base = graffitty_protocol::pane_id::CHROMIUM_BASE;
+        let id = SavedIdentity::choose_chromium(saved, through, self.next_chromium, |id| {
+            !self.chromiums.contains_key(&id) && !self.retired_chromiums.iter().any(|b| b.id == id)
+        });
+        if id >= 2 * base { return Err("Chromium ID space exhausted".into()); }
+        Ok(id)
+    }
+
     fn identities_taken(&mut self, ids: &[u64]) {
         for id in ids {
             self.next = self.next.max(id + 1);
@@ -363,11 +426,8 @@ impl Server {
         let cwd = source.and_then(|id| self.sessions.get(&id)).and_then(Session::cwd);
         let effective = self.settings.spawn_options(options.as_ref());
         let prepared = Some(effective.prepare(&self.shell, cwd.as_deref())?);
-        // A pane that cannot keep its ID must not take another saved pane's.
-        if let Some(through) = saved.through.filter(|id| *id < SavedIdentity::LIMIT) {
-            self.identities_taken(&[through]);
-        }
-        let id = self.pane_identity(saved.pane);
+        let id = self.pane_identity(saved);
+        if id >= graffitty_protocol::pane_id::CHROMIUM_BASE { return Err("Terminal ID space exhausted".into()); }
         let new_tab = self.tab_identity(saved.tab, id, id);
         let initial_font = self.recent_font_size.unwrap_or_else(|| source.and_then(|id| self.sessions.get(&id)).map_or(self.settings.terminal.font.size, |s| s.font_size));
         let mut session = Session::new_with_font(
@@ -392,6 +452,10 @@ impl Server {
                 session.initial_directory.clone_from(&source.initial_directory);
             }
         }
+        // A pane that cannot keep its ID must not take another saved pane's.
+        if let Some(through) = saved.through.filter(|id| *id < SavedIdentity::LIMIT) {
+            self.identities_taken(&[through]);
+        }
         self.identities_taken(&[id]);
         if tab.is_none() {
             self.identities_taken(&[new_tab]);
@@ -407,7 +471,7 @@ impl Server {
         }
         self.graphs
             .entry(workspace.into())
-            .or_insert_with(|| graph::Graph::with_settings(self.settings.nodes.clone()))
+            .or_insert_with(|| graph::Graph::with_activity_clock(self.settings.nodes.clone(), self.activity_clock.clone()))
             .add(id, session.title());
         if let Some(pid) = session.pid() {
             self.resources.register(id, pid, Duration::from_secs(1), true);
@@ -435,7 +499,8 @@ impl Server {
         }
         Ok(id)
     }
-    fn agents(&mut self) {
+    fn agents(&mut self) -> bool {
+        let before: HashMap<_, _> = self.graphs.iter().map(|(key, graph)| (key.clone(), graph.notification_revision())).collect();
         for graph in self.graphs.values_mut() {
             graph.expire();
         }
@@ -450,7 +515,7 @@ impl Server {
                     if json!(session.pid()) != root["pid"] || json!(session.foreground()) != root["foreground"] {
                         continue;
                     }
-                    if let Some(app) = result.get(format!("%{id}")).filter(|v| v.is_object()) {
+                    if let Some(app) = result.get(pane_address(id)).filter(|v| v.is_object()) {
                         self.foreground_apps.insert(id, app.clone());
                     }
                 }
@@ -458,7 +523,7 @@ impl Server {
                 if let Some(found) = result.as_object() {
                     for (key, state) in found {
                         let Some(id) = key
-                            .strip_prefix('%')
+                            .strip_prefix('t')
                             .and_then(|s| s.parse::<u64>().ok())
                         else {
                             continue;
@@ -471,108 +536,37 @@ impl Server {
                         let Some(previous) = graph.nodes.get(key).cloned() else {
                             continue;
                         };
+                        if context.get(key) != Some(&scan_registration(&previous)) { continue; }
                         if previous["transport"] != "inbox"
                             && !graffitty_workspace_core::graph::is_custom_node(&previous) {
                             self.checkpoint_lifecycle.observe(id, state);
                         }
-                        graph.observe_agent(id, state);
-                        self.completions.observe(&session.workspace, id, &previous, &graph.nodes[key]);
+                        let outcomes = graph.observe_agent_outcomes(id, state);
+                        if !outcomes.is_empty() || state["turn_outcomes"].is_array() {
+                            self.completions.observe_turns(&session.workspace, id, &previous, graph, outcomes);
+                        } else {
+                            self.completions.observe(&session.workspace, id, &previous, graph);
+                        }
                     }
                 }
             } else if key.starts_with("completion:") {
                 self.completions.finish(&key, &result, &mut self.graphs);
             } else if key.starts_with("native:") {
-                if let Some(ids) = result["queued_ids"].as_array() {
-                    for record in context["records"].as_array().into_iter().flatten() {
-                        let id = record["event"]["event_id"].as_str().unwrap_or("");
-                        if self.native_pending.get(id).is_none_or(|current| current["submission_id"] != record["submission_id"]) { continue; }
-                        if !ids.contains(&record["submission_id"]) {
-                            self.native_pending.remove(id);
-                            if let Some(graph) = self.graphs.get_mut(record["workspace"].as_str().unwrap_or("")) {
-                                graph.record_delivery(&record["event"], "started or removed in Codex", false);
-                            }
-                        }
-                    }
-                }
+                native_delivery::finish_poll(&mut self.native_pending, &mut self.graphs, &context, &result);
             } else if key.starts_with("cancel:") {
-                if let Some(graph) = self.graphs.get_mut(context["workspace"].as_str().unwrap_or("")) {
-                    let status = if result.get("error").is_some() {
-                        format!("cancel failed: {}", result["error"]["message"].as_str().unwrap_or("queue error"))
-                    } else if result["deleted"] == true { "cancelled in Codex".into() }
-                    else { "already started or removed in Codex; cannot recall".into() };
-                    graph.record_delivery(&context["event"], &status, false);
-                }
+                native_delivery::finish_cancel(&mut self.native_pending, &mut self.graphs, &context, &result);
             } else if key.starts_with("deliver:") {
-                let Some(workspace) = context["workspace"].as_str() else {
-                    continue;
-                };
-                let Some(graph) = self.graphs.get_mut(workspace) else {
-                    continue;
-                };
-                let id = context["id"].as_u64().unwrap_or(0);
-                let event_id = &context["event"]["event_id"];
-                let queued = graph
-                    .queues
-                    .get(&format!("%{id}"))
-                    .is_some_and(|q| q.iter().any(|e| e["event_id"] == *event_id));
-                if !queued || !graph.allowed(&context["event"]) {
-                    if let Some(submission) = result["queuedSubmission"]["id"].as_str() {
-                        // Keep revoked submissions until a worker slot can
-                        // cancel them; a late result must not bypass expiry.
-                        let mut record = context.clone();
-                        record["submission_id"] = json!(submission);
-                        self.native_pending.insert(event_id.as_str().unwrap_or("").into(), record);
-                    }
-                    continue;
-                }
-                let queued = result["queuedSubmission"]["id"].as_str();
-                if let Some(submission) = queued {
-                    let mut record = context.clone();
-                    record["submission_id"] = json!(submission);
-                    self.native_pending
-                        .insert(event_id.as_str().unwrap_or("").into(), record);
-                }
-                let status = if result.get("error").is_some() {
-                    format!(
-                        "failed: {}",
-                        result["error"]["message"]
-                            .as_str()
-                            .unwrap_or("delivery failed")
-                    )
-                } else if queued.is_some() {
-                    "queued in Codex".into()
-                } else {
-                    "submitted".into()
-                };
-                let _ = graph.dispatch(
-                    id,
-                    "graph.ack",
-                    &json!({"event_id":event_id,"status":status}),
-                );
+                native_delivery::finish_submit(&mut self.native_pending, &mut self.graphs, context, &result);
             }
         }
+        self.completions.advance(&mut self.graphs);
         for (key, request) in self.completions.requests() {
             if self.workers.start(&self.cli, key.clone(), request, json!({})) {
                 self.completions.launched(&key);
             }
         }
-        self.native_pending.retain(|id, record| {
-            self.graphs.get(record["workspace"].as_str().unwrap_or(""))
-                .is_none_or(|g| !g.allowed(&record["event"]) || g.native_pending(id))
-        });
-        let revoked: Vec<_> = self
-            .native_pending
-            .iter()
-            .filter(|(_, record)| {
-                !self
-                    .graphs
-                    .get(record["workspace"].as_str().unwrap_or(""))
-                    .is_some_and(|g| g.allowed(&record["event"]))
-            })
-            .map(|(id, r)| (id.clone(), r.clone()))
-            .collect();
-        for (id, record) in revoked {
-            if self.workers.start(&self.cli,format!("cancel:{id}"),json!({"op":"codex_cancel","target":record["target"],"submission_id":record["submission_id"]}),record.clone()) {self.native_pending.remove(&id);}
+        for (id, record) in native_delivery::cancellations(&mut self.native_pending, &self.graphs) {
+            if self.workers.start(&self.cli,format!("cancel:{id}"),json!({"op":"codex_cancel","target":record["target"],"submission_id":record["submission_id"]}),record.clone()) { self.native_pending.get_mut(&id).unwrap().cancelling = true; }
         }
         let groups: HashMap<_, _> = self.sessions.values_mut().filter(|s| !s.exited)
             .map(|s| {
@@ -585,7 +579,7 @@ impl Server {
             && (groups != self.app_groups || self.app_scan_at.elapsed() >= Duration::from_millis(400))
         {
             let roots: Vec<_> = self.sessions.values().filter(|s| !s.exited).map(|s| {
-                let key = format!("%{}", s.id);
+                let key = pane_address(s.id);
                 let node = &self.graphs[&s.workspace].nodes[&key];
                 json!({"id":s.id,"node":key,"pid":s.pid(),"foreground":groups[&s.id],
                     "agent":{"pid":node["pid"],"provider":node["provider"],"started":node["started"],
@@ -598,20 +592,26 @@ impl Server {
         }
         self.foreground_apps.retain(|id, _| self.sessions.get(id).is_some_and(|s| !s.exited));
         if self.scan_at.elapsed() > Duration::from_secs(2) && !self.workers.busy("scan") {
+            let mut registrations = serde_json::Map::new();
             let roots: Vec<_> = self.sessions.values().filter_map(|s| {
-                let key = format!("%{}", s.id);
+                let key = pane_address(s.id);
                 let node = &self.graphs[&s.workspace].nodes[&key];
                 // A closed shell's PID can be reused. Only check its registered agent.
                 let shell = if s.exited { None } else { s.pid() };
                 if shell.is_none() && (node["pid"].is_null() || node["status"] == "offline") { return None; }
-                Some(json!({"node":key,"pid":shell,"agent_pid":node["pid"],"started":node["started"],
-                    "provider_home":node["provider_home"],"launch_context":node["launch_context"]}))
+                let mut root = json!({"node":key,"pid":shell,"agent_pid":node["pid"],"started":node["started"],
+                    "provider_home":node["provider_home"],"launch_context":node["launch_context"]});
+                scan_baseline(&mut root, node);
+                registrations.insert(key, scan_registration(node));
+                Some(root)
             }).collect();
-            if !roots.is_empty() {
-                self.workers.start(&self.cli, "scan".into(), json!({"op":"scan","roots":roots}), json!({}));
+            if !roots.is_empty() && self.completions.ready_for_scan() {
+                self.workers.start(&self.cli, "scan".into(), json!({"op":"scan","roots":roots}), Value::Object(registrations));
             }
             let mut targets: HashMap<String, Vec<Value>> = HashMap::new();
-            for record in self.native_pending.values() {
+            for submission in self.native_pending.values() {
+                let record = &submission.record;
+                if !self.graphs.get(record["workspace"].as_str().unwrap_or("")).is_some_and(|g| native_delivery::allowed(g, record)) { continue; }
                 targets.entry(record["event"]["target"].as_str().unwrap_or("").into()).or_default().push(record.clone());
             }
             for (target, records) in targets {
@@ -633,21 +633,22 @@ impl Server {
                 if node["transport"] == "inbox" || node["status"] == "offline" || !["codex", "claude"].contains(&provider) {
                     continue;
                 }
-                if provider == "codex" && self.native_pending.len() >= 1024 {
+                if provider == "codex" && !native_delivery::has_capacity(&self.native_pending) {
                     continue;
                 }
                 if provider == "claude" && node["socket_path"].as_str().unwrap_or("").is_empty() {
                     continue;
                 }
                 let id = key
-                    .trim_start_matches('%')
+                    .trim_start_matches('t')
                     .parse::<u64>()
                     .unwrap_or(0);
                 if self.sessions.get(&id).is_none_or(|s| s.typing_guard.blocked()) { continue; }
                 let text = graph.delivery_prompt(event);
-                self.workers.start(&self.cli,format!("deliver:{id}"),json!({"op":if provider=="codex"{"codex_queue"}else{"claude_send"},"target":node,"text":text,"event_id":event["event_id"]}),json!({"id":id,"workspace":workspace,"target":node,"event":event,"text":text}));
+                self.workers.start(&self.cli,format!("deliver:{id}"),json!({"op":if provider=="codex"{"codex_queue"}else{"claude_send"},"target":node,"text":text,"event_id":event["event_id"]}),json!({"id":id,"workspace":workspace,"target":node,"inbox_generation":graph.inbox_generation(key),"event":event,"text":text}));
             }
         }
+        self.graphs.iter().any(|(key, graph)| before.get(key) != Some(&graph.notification_revision()))
     }
     #[cfg(target_os = "macos")]
     fn sync_chromium_windows(&mut self) {
@@ -661,9 +662,9 @@ impl Server {
                 if self.chromiums[&root].window_is_closing(window) { continue; }
                 if self.chromiums.values().any(|b|b.session_id==session && b.state["windowId"]==window) { continue; }
                 if self.chromiums.len() >= 32 { break; }
-                let id=self.next; self.next+=1;
+                let Ok(id) = self.chromium_identity(None, None) else { break };
                 match self.chromiums[&root].sibling(id,window,self.resources.clone()) {
-                    Ok(chromium)=>{self.chromiums.insert(id,chromium);self.lifecycle_dirty=true;},
+                    Ok(chromium)=>{self.next_chromium = id + 1; self.chromiums.insert(id,chromium);self.lifecycle_dirty=true;},
                     Err(error)=>eprintln!("Could not mirror Chromium window: {error}"),
                 }
             }
@@ -809,7 +810,7 @@ impl Server {
             let event_id = params["event_id"].as_str().ok_or("Expected event_id")?;
             let ready = self.sessions.get(&id).is_some_and(|s| !s.typing_guard.blocked())
                 && self.graphs.get(&workspace).is_some_and(|graph|
-                    graph.queues.get(&format!("%{id}")).is_some_and(|queue|
+                    graph.queues.get(&pane_address(id)).is_some_and(|queue|
                         queue.iter().any(|event| event["event_id"] == event_id && graph.allowed(event))));
             return Ok(json!({"ready":ready}));
         }
@@ -866,7 +867,7 @@ impl Server {
                 target
             } else if let Some(target) = params["target"].as_str() {
                 let pane = target
-                    .trim_start_matches('%')
+                    .trim_start_matches('t')
                     .parse::<u64>()?;
                 self.sessions
                     .get(&pane)
@@ -888,8 +889,7 @@ impl Server {
             return Ok(json!({"id":target,"title":title}));
         }
         if method == "agent.event" && params["event"] == "UserPromptSubmit" {
-            self.native_pending
-                .retain(|_, record| record["id"] != id || record["text"] != params["prompt"]);
+            self.native_pending.retain(|_, submission| !native_delivery::prompt_started(submission, id, params));
         }
         if method == "session.capture" {
             if params["layout"] == true {
@@ -917,8 +917,10 @@ impl Server {
             if params.get("id").is_some_and(|saved| !saved.is_u64()) {
                 return Err("Expected a saved chromium ID".into());
             }
-            let chromium_id = self.pane_identity(params["id"].as_u64());
-            self.identities_taken(&[chromium_id]);
+            if params.get("through").is_some_and(|value| !value.is_u64()) {
+                return Err("Expected a saved Chromium ID in through".into());
+            }
+            let chromium_id = self.chromium_identity(params["id"].as_u64(), params["through"].as_u64())?;
             let chromium = chromium::Chromium::new(
                 chromium_id,
                 id,
@@ -929,10 +931,11 @@ impl Server {
                 &self.settings.chromium,
                 Arc::clone(&self.resources),
             )?;
-            let result = json!({"chromium":format!("%{chromium_id}"),"id":chromium_id,
-                "surface":format!("%{chromium_id}"),"pane":format!("%{chromium_id}"),"tab_id":id,
+            let result = json!({"chromium":pane_address(chromium_id),"id":chromium_id,
+                "surface":chromium_id,"pane":pane_address(chromium_id),"tab_id":id,
                 "native_visible":false,"profile":chromium.state["profile"],
                 "temporary_profile":chromium.state["temporaryProfile"],"profile_template":template,"exited":false});
+            self.next_chromium = self.next_chromium.max(chromium_id + 1);
             self.chromiums.insert(chromium_id, chromium);
             let tab = self.sessions[&id].tab;
             if let Err(error) = workspace::place_chromium_beside_owner(self, &workspace, tab, id, chromium_id) {
@@ -945,7 +948,7 @@ impl Server {
             let chromium_id = params["chromium"]
                 .as_str()
                 .and_then(graffitty_workspace_core::pane_id::parse)
-                .ok_or_else(|| api::error("invalid_target", "Explicit %N required"))?;
+                .ok_or_else(|| api::error("invalid_target", "Explicit cN required"))?;
             let chromium = self
                 .chromiums
                 .get_mut(&chromium_id)
@@ -1007,7 +1010,7 @@ impl Server {
             let graph = &self.graphs[&workspace];
             let event = graph
                 .queues
-                .get(&format!("%{id}"))
+                .get(&pane_address(id))
                 .and_then(|q| q.iter().find(|e| e["event_id"] == event_id))
                 .ok_or("Pending event not found")?
                 .clone();
@@ -1026,8 +1029,8 @@ impl Server {
         if method == "graph.read" {
             let source = params["node"].as_str().ok_or("Expected node")?;
             let graph = &self.graphs[&workspace];
-            if !graph.can_read(source, &format!("%{id}")) {
-                return Err(Box::new(DispatchError(graph.read_denied(source, &format!("%{id}")))));
+            if !graph.can_read(source, &pane_address(id)) {
+                return Err(Box::new(DispatchError(graph.read_denied(source, &pane_address(id)))));
             }
             let node = graph.nodes.get(source).ok_or("Unknown node")?;
             let path = node["transcript_path"]
@@ -1041,15 +1044,15 @@ impl Server {
                 file.seek(SeekFrom::Start(offset))?;
                 let mut bytes = Vec::new();
                 file.take(512 * 1024).read_to_end(&mut bytes)?;
-                if !graph.can_read(source, &format!("%{id}")) {
-                    return Err(Box::new(DispatchError(graph.read_denied(source, &format!("%{id}")))));
+                if !graph.can_read(source, &pane_address(id)) {
+                    return Err(Box::new(DispatchError(graph.read_denied(source, &pane_address(id)))));
                 }
                 return Ok(
                     json!({"sessions":sessions,"text":String::from_utf8_lossy(&bytes),"offset":offset,"next_offset":offset+bytes.len() as u64,"size":size}),
                 );
             }
-            if !graph.can_read(source, &format!("%{id}")) {
-                return Err(Box::new(DispatchError(graph.read_denied(source, &format!("%{id}")))));
+            if !graph.can_read(source, &pane_address(id)) {
+                return Err(Box::new(DispatchError(graph.read_denied(source, &pane_address(id)))));
             }
             return Ok(json!({"sessions":sessions,"size":size,"format":"jsonl"}));
         }
@@ -1065,7 +1068,7 @@ impl Server {
                     eprintln!("[graph] %{} wiring %{} -> {}", pending.parent, id, Value::Array(failed.clone()));
                 }
             }
-            self.checkpoint_lifecycle.hook(id, &params["event"], &graph.nodes[&format!("%{id}")]);
+            self.checkpoint_lifecycle.hook(id, &params["event"], &graph.nodes[&pane_address(id)]);
             if matches!(params["event"].as_str(), Some("SessionStart" | "SessionEnd")) {
                 self.app_scan_at = Instant::now() - Duration::from_millis(400);
             }
@@ -1119,9 +1122,10 @@ impl Server {
             if value["method"] == "terminal.put" && value["token"].as_str() == Some(self.local_token.as_str()) {
                 return controller::dispatch(self, &json!({"version":value["version"],"method":value["method"],"params":value["params"]}));
             }
-            let (id, method, params) = api::request(&value, |token| {
+            let (id, method, mut params) = api::request(&value, |token| {
                 self.sessions.values().find(|s| s.token == token).map(|s| s.id)
             })?;
+            holder_upgrade::inherited_target(&self.sessions[&id], &mut params);
             self.request(id, method, &params)
         })();
         let result = result.and_then(|reply| { self.save_owner_state()?; Ok(reply) });
@@ -1145,7 +1149,7 @@ impl Server {
         let state = self.workspace_state.snapshot(workspace);
         let sessions: Vec<_> = self.sessions.values().filter(|s| s.workspace == workspace).collect();
         let panes: Vec<_> = sessions.iter().map(|s| {
-            let rect = state.layout.tabs.get(&s.tab).and_then(|t|t.window(&format!("%{}",s.id)))
+            let rect = state.layout.tabs.get(&s.tab).and_then(|t|t.window(&pane_address(s.id)))
                 .map(|w| w.rect.map(f64::from)).unwrap_or(s.rect);
             json!({"id":s.id,"tab":s.tab,"title":s.title(),"title_is_fallback":s.pinned_title.is_empty() && s.automatic_title().is_empty(),"pinned_title":s.pinned_title,"builtin_title":s.builtin_title,"automatic_title":s.automatic_title(),"rect":rect,"columns":s.columns,"rows":s.rows,"exited":s.exited,"font_size":s.font_size,"font_metrics":self.fonts.metrics(s.font_size),"content_insets":self.settings.terminal.content_insets,"pid":s.pid(),"shell":s.shell,"app":self.foreground_apps.get(&s.id).cloned().unwrap_or(json!({})),"limits":s.limits,"spawned_by":s.spawned_by,"effect_holds":s.effect_holds.snapshot(),"filetree":filetree::checkpoint(self, s.id),"filetree_owner":filetree::connection_owner(self, s.id),"filetree_open":self.filetrees.active.values().any(|tree| tree.owner == filetree::owner(self, s.id))})
         }).collect();
@@ -1229,6 +1233,7 @@ impl Server {
             c.workspace = key.clone();
             c.workspace_incarnation = self.workspace_incarnations.get(workspace).copied().unwrap_or(0);
             c.authenticated = true;
+            c.socket.allow_authenticated_uploads();
             c.chromium_png = value["chromium_image_format"] == "png";
             c.video_quality = chromium_video::Quality::parse(&value["chromium_stream"]);
             c.video_rejected.clear();
@@ -1265,6 +1270,7 @@ impl Server {
             let result = if c.rpc_pending.len() >= 32 {
                 Err(api::error("busy", "Too many pending terminal requests"))
             } else { controller::dispatch(self, &value["call"]) };
+            let result = result.and_then(|reply| { self.save_owner_state()?; Ok(reply) });
             return match result {
                 Ok(api::Reply::Pending(receiver)) => { c.rpc_pending.push((value["request"].clone(), receiver)); Ok(()) },
                 Ok(api::Reply::Ready(reply)) => send(c, api::rpc_response(value["request"].clone(), reply)),
@@ -1543,6 +1549,20 @@ impl Server {
                     "params":{"name":value["name"]}}));
             }
             if kind == "session_new" {
+                if value.get("if_empty").is_some_and(|v| !v.is_boolean()) {
+                    return Err("if_empty must be boolean".into());
+                }
+                // Empty-inventory attachments race across clients. Check and
+                // create on the owner thread so they share the first session.
+                if value["if_empty"] == true {
+                    let existing = self.workspaces.iter()
+                        .min_by_key(|key| self.workspaces.info(key).id).cloned();
+                    if let Some(key) = existing {
+                        let session = session_management::description(self, &key);
+                        session_switch::apply(self, c, session["id"].as_str().unwrap())?;
+                        return Ok(session);
+                    }
+                }
                 // Authenticated local and remote clients create a named session
                 // through the same validation as `gft session new`.
                 let created = session_management::dispatch(self, &json!({
@@ -1554,9 +1574,9 @@ impl Server {
             if kind == "sync" {
                 // Queue the authoritative workspace membership before this
                 // request's ack, so a resumed frontend can drain stale backlog.
-                let catalog = self.session_catalog();
-                send(c, catalog.clone())?;
-                c.session_catalog = catalog;
+                let catalog = self.session_catalog()?;
+                send(c, catalog)?;
+                c.catalog_revision = self.catalog_revision;
                 let topology = self.client_topology(&c.workspace, c.frontend_client);
                 send(c, topology)?;
                 return Ok(json!({}));
@@ -1577,7 +1597,7 @@ impl Server {
                 return Ok(json!({"created":created,"tab":self.sessions[&created].tab}));
             }
             if kind == "regroup" {
-                let surface = value["surface"].as_str().map(str::to_owned).unwrap_or_else(||format!("%{id}"));
+                let surface = value["pane"].as_str().map(str::to_owned).unwrap_or_else(||pane_address(id));
                 if !value["tab"].is_null() && !value["tab"].is_u64() { return Err("Expected destination tab ID or null".into()); }
                 if value.get("browser_only").is_some_and(|v| !v.is_boolean()) { return Err("browser_only must be boolean".into()); }
                 if value.get("new_tab").is_some_and(|saved| !saved.is_u64() || !value["tab"].is_null()) { return Err("new_tab names the saved ID of a tab this move creates".into()); }
@@ -1649,6 +1669,12 @@ impl Server {
                     if !c.subscribed.contains(&id) { return Err("Terminal is not subscribed".into()); }
                     let theme = serde_json::from_value::<graffitty_protocol::terminal_theme::Theme>(value["theme"].clone())?;
                     session.set_terminal_theme(theme)?;
+                }
+                "local_attachment" => {
+                    if !c.socket.is_local() || session.exited { return Err("A live local terminal is required".into()); }
+                    let name = value["name"].as_str().ok_or("Expected attachment name")?;
+                    let path = file_transfer::local_destination(&self.owner_runtime.join("files"), id, name)?;
+                    return Ok(json!({"path":path,"text":file_transfer::quoted_path(&path.to_string_lossy())}));
                 }
                 "clipboard_reply" => {
                     use base64::Engine as _;
@@ -1737,10 +1763,10 @@ impl Server {
         if !c.authenticated {
             return Ok(());
         }
-        let catalog = self.session_catalog();
-        if c.session_catalog != catalog {
-            send(c, catalog.clone())?;
-            c.session_catalog = catalog;
+        let catalog = self.session_catalog()?;
+        if c.catalog_revision != self.catalog_revision {
+            send(c, catalog)?;
+            c.catalog_revision = self.catalog_revision;
         }
         let current_workspace = !c.workspace_closed && self.workspace_incarnations.get(&c.workspace) == Some(&c.workspace_incarnation);
         for session in self.sessions.values_mut() {
@@ -2024,7 +2050,7 @@ mod listener_tests {
 fn new_client(socket: Connection, network_generation: u64) -> Client {
     static NEXT: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(1);
     Client { frontend_client:NEXT.fetch_add(1,Ordering::Relaxed),session_switch:false,last_input:HashMap::new(),auth:Default::default(),socket,network_generation,api_reply:None,api_done:false,api_stream:false,rpc_pending:vec![],
-        authenticated:false,opened:Instant::now(),workspace:String::new(),workspace_incarnation:0,workspace_closed:false,session_catalog:Value::Null,subscribed:vec![],
+        authenticated:false,opened:Instant::now(),workspace:String::new(),workspace_incarnation:0,workspace_closed:false,catalog_revision:0,subscribed:vec![],
         revisions:HashMap::new(),topology:String::new(),pane_updates:Default::default(),scenes:Default::default(),font_pending:None,bell_events:false,clipboard_events:false,clipboard_generations:HashMap::new(),
         #[cfg(any(target_os = "macos", windows))]
         gpu: Default::default(),
@@ -2201,7 +2227,8 @@ pub fn run(options: Options, foreground_apps: fn(&Value) -> Value) -> Result<(),
     ctrlc::set_handler(move || stop.store(false, Ordering::Relaxed))?;
     let authentication = auth::Server::new(auth_config, &token)?;
     let epoch = previous.as_ref().map(|state| state.epoch.clone()).unwrap_or_else(|| uuid::Uuid::new_v4().to_string());
-    let workspace_state = workspace::Store::new(&descriptor, &epoch)?;
+    let adopting_003 = previous.as_ref().is_some_and(|owner| owner.sessions.iter().any(|s| s.inherited_percent_id));
+    let workspace_state = workspace::Store::new(&descriptor, &epoch, adopting_003)?;
     let resources = terminal_resource_monitor::Service::new()?;
     resources.set_cpu_scale(match settings.resource_monitor.cpu_percent_scale {
         settings::CpuPercentScale::OneCore => terminal_resource_monitor::CpuScale::OneCore,
@@ -2225,6 +2252,7 @@ pub fn run(options: Options, foreground_apps: fn(&Value) -> Value) -> Result<(),
         sessions: BTreeMap::new(),
         tab_titles: HashMap::new(),
         retired_tabs: Default::default(),
+        activity_clock: graph::ActivityClock::default(),
         graphs: HashMap::new(),
         chromiums: BTreeMap::new(),
         filetrees: filetree::Filetrees::default(),
@@ -2256,16 +2284,20 @@ pub fn run(options: Options, foreground_apps: fn(&Value) -> Value) -> Result<(),
         workspaces: session_registry::Registry::default(),
         session_name_cache: Default::default(),
         agent_title_cache: Default::default(),
+        pane_catalog_titles: Default::default(),
         pending_wires: HashMap::new(),
         started_session: false,
         lifecycle_dirty: false,
         workspace_incarnations: HashMap::new(),
         next: 1,
+        next_chromium: graffitty_protocol::pane_id::CHROMIUM_BASE + 1,
         shell: default_shell,
         recent_font_size: None,
         fonts: fonts::Fonts::load(&settings.terminal.font, config_path.parent().unwrap_or(std::path::Path::new(".")))?,
         settings,
         epoch,
+        catalog_revision: 0,
+        catalog_snapshot: Value::Null,
     };
     owner_state_adopt(&mut server, adopted, previous);
     server.save_owner_state()?;
@@ -2403,6 +2435,7 @@ pub fn run(options: Options, foreground_apps: fn(&Value) -> Value) -> Result<(),
                     let workspace = session.workspace.clone();
                     let mut id = session.id;
                     let mut value = request.value.clone();
+                    holder_upgrade::inherited_target(session, &mut value["params"]);
                     if value["method"] == "navigator.focus" {
                         if let Some(tty) = value["params"]["client_tty"].as_str() {
                             id = server.sessions.values()
@@ -2555,7 +2588,7 @@ pub fn run(options: Options, foreground_apps: fn(&Value) -> Value) -> Result<(),
             chromium.poll();
         }
         server.retired_chromiums.retain(|b| !b.finished());
-        server.agents();
+        if server.agents() { server.save_owner_state()?; }
         server.frontend.expire(|id, workspace| server.sessions.get(&id).is_some_and(|s|s.workspace == workspace));
         agent_watch::flush(&server, &mut agent_watches);
         server.datagrams.sync(server.remote_listener.as_ref());
@@ -2599,6 +2632,9 @@ pub fn run(options: Options, foreground_apps: fn(&Value) -> Value) -> Result<(),
                     match c.socket.read() {
                         Ok(Message::Text(text)) => {
                             let value: Value = serde_json::from_str(&text)?;
+                            if !c.socket.is_local() && !graffitty_protocol::file_transfer::fits_command(&value, text.len()) {
+                                return Err("Command exceeds the packet limit".into());
+                            }
                             if c.socket.is_cli() {
                                 if c.api_stream { return Err("Subscription does not accept further requests".into()); }
                                 c.api_stream = value["method"] == "graph.watch";
@@ -2734,8 +2770,8 @@ pub struct SavedIdentity {
     pub through: Option<u64>,
 }
 impl SavedIdentity {
-    /// Keeps one restored file from moving every later identity out of reach.
-    const LIMIT: u64 = 1 << 32;
+    /// Holder IDs fit in an unsigned 32-bit integer.
+    const LIMIT: u64 = graffitty_protocol::pane_id::CHROMIUM_BASE;
     pub fn parse(value: &Value) -> Result<Self, Error> {
         let field = |name: &str| match value.get(name) {
             None | Some(Value::Null) => Ok(None),
@@ -2743,10 +2779,20 @@ impl SavedIdentity {
         };
         Ok(Self { pane: field("id")?, tab: field("tab")?, through: field("through")? })
     }
+    fn choose_chromium(saved: Option<u64>, through: Option<u64>, next: u64, unused: impl Fn(u64) -> bool) -> u64 {
+        let base = graffitty_protocol::pane_id::CHROMIUM_BASE;
+        let ordinal = |id: u64| id.checked_sub(base).filter(|n| (1..Self::LIMIT).contains(n));
+        let first = next.saturating_sub(base).max(through.and_then(ordinal).map_or(1, |id| id + 1));
+        base + Self::choose([saved.and_then(ordinal), None], first, |id| unused(base + id))
+    }
     /// The first wanted identity, from 1 up, that nothing live has, else
     /// the next new one.
     fn choose(wanted: [Option<u64>; 2], next: u64, unused: impl Fn(u64) -> bool) -> u64 {
-        wanted.into_iter().flatten().find(|id| (1..Self::LIMIT).contains(id) && unused(*id)).unwrap_or(next)
+        if let Some(id) = wanted.into_iter().flatten().find(|id| (1..Self::LIMIT).contains(id) && unused(*id)) {
+            return id;
+        }
+        let start = if (1..Self::LIMIT).contains(&next) { next } else { 1 };
+        (start..Self::LIMIT).chain(1..start).find(|id| unused(*id)).unwrap_or(Self::LIMIT)
     }
 }
 #[cfg(test)]
@@ -2770,26 +2816,69 @@ mod saved_identity_tests {
         assert_eq!(SavedIdentity::choose([Some(0), Some(0)], 9, unused), 9, "A layout tab is never zero");
     }
     #[test]
+    fn exhausted_holder_counter_wraps_to_an_unused_id() {
+        let limit = SavedIdentity::LIMIT;
+        let unused = |id| ![1, limit - 1].contains(&id);
+        for next in [limit - 1, limit, u64::MAX] {
+            assert_eq!(SavedIdentity::choose([None, None], next, unused), 2);
+        }
+        assert_eq!(SavedIdentity::choose([None, None], limit, |_| true), 1);
+    }
+
+    #[test]
+    fn conflicting_chromium_skips_free_saved_browsers() {
+        let base = graffitty_protocol::pane_id::CHROMIUM_BASE;
+        let through = Some(base + 2);
+        let unused = |id| id != base + 1;
+        assert_eq!(SavedIdentity::choose_chromium(Some(base + 1), through, base + 2, unused), base + 3);
+        assert_eq!(SavedIdentity::choose_chromium(Some(base + 2), through, base + 4, unused), base + 2);
+    }
+
+    #[test]
     fn saved_identities_are_optional_unsigned_numbers() {
         let saved = SavedIdentity::parse(&json!({"id":4,"tab":2,"through":9})).unwrap();
         assert_eq!((saved.pane, saved.tab, saved.through), (Some(4), Some(2), Some(9)));
         let saved = SavedIdentity::parse(&json!({"tab":null})).unwrap();
         assert_eq!((saved.pane, saved.tab), (None, None));
-        assert!(SavedIdentity::parse(&json!({"id":"%4"})).is_err());
+        assert!(SavedIdentity::parse(&json!({"id":"t4"})).is_err());
         assert!(SavedIdentity::parse(&json!({"id":-1})).is_err());
     }
 }
 
 impl Server {
+    fn saved_agent_attention(&self) -> HashMap<u64, graph::AttentionState> {
+        self.sessions.values().filter(|session| session.is_held() && !session.exited)
+            .filter_map(|session| self.graphs.get(&session.workspace)?.attention_state(session.id)
+                .map(|state| (session.id, state))).collect()
+    }
+
+    fn saved_transcripts(&self) -> HashMap<u64, owner_state::Transcript> {
+        self.sessions.values().filter(|s| s.is_held() && !s.exited).filter_map(|session| {
+            let node = self.graphs.get(&session.workspace)?.nodes.get(&pane_address(session.id))?;
+            let previous = self.saved_owner.as_ref().and_then(|state| state.transcripts.get(&session.id));
+            owner_state::Transcript::capture(node, previous).map(|record| (session.id, record))
+        }).collect()
+    }
+
+    fn saved_wiring(&mut self) -> HashMap<String, std::sync::Arc<Value>> {
+        self.graphs.iter_mut().filter_map(|(workspace, graph)|
+            graph.owner_wiring().map(|saved| (workspace.clone(), saved))).collect()
+    }
+
     /// Commit recovery metadata before acknowledging a request or event.
     /// Skip the write when state is unchanged. Return any commit failure
     /// so success always means the pane can be recovered.
     fn save_owner_state(&mut self) -> Result<(), Error> {
         if self.holders.is_none() { return Ok(()); }
-        let mut state = owner_state::OwnerState::new(&self.epoch, &self.owner_runtime, self.next, &self.tab_titles);
+        let mut state = owner_state::OwnerState::new(&self.epoch, &self.owner_runtime, self.next, self.next_chromium, &self.tab_titles);
         state.workspaces = self.workspaces.clone();
         state.filetrees = self.filetrees.saved();
         state.last_viewed = self.last_viewed.clone();
+        state.agent_attention = self.saved_agent_attention();
+        state.activity_revision = self.activity_clock.current();
+        state.catalog_revision = self.catalog_revision;
+        state.wiring = self.saved_wiring();
+        state.transcripts = self.saved_transcripts();
         state.sessions = self.sessions.values().filter(|s| s.is_held() && !s.exited).map(Session::saved).collect();
         if self.saved_owner.as_ref() == Some(&state) { return Ok(()); }
         // Persist even an empty registry: deletion errors must not silently
@@ -2807,7 +2896,7 @@ fn hand_over(server: &mut Server, runtime: &std::path::Path) {
         // forwarded is queued for its session and lands in the saved screen.
         holders.goodbye(if server.park { holder_proto::Goodbye::Park } else { holder_proto::Goodbye::Handover });
     }
-    let mut state = owner_state::OwnerState::new(&server.epoch, runtime, server.next, &server.tab_titles);
+    let mut state = owner_state::OwnerState::new(&server.epoch, runtime, server.next, server.next_chromium, &server.tab_titles);
     state.workspaces = server.workspaces.clone();
     state.filetrees = server.filetrees.saved();
     state.last_viewed = server.last_viewed.clone();
@@ -2821,8 +2910,19 @@ fn hand_over(server: &mut Server, runtime: &std::path::Path) {
             Err(error) => eprintln!("[holder] cannot capture screen %{}: {error}", session.id),
         }
         state.sessions.push(session.saved());
+        if std::mem::take(&mut session.program_status_changed) {
+            let status = session.program_status.status.as_ref().map(|status| json!(status));
+            if let Some(graph) = server.graphs.get_mut(&session.workspace) {
+                graph.observe_program_status(session.id, status.as_ref());
+            }
+        }
         session.detached = true;
     }
+    state.agent_attention = server.saved_agent_attention();
+    state.activity_revision = server.activity_clock.current();
+    state.catalog_revision = server.catalog_revision;
+    state.wiring = server.saved_wiring();
+    state.transcripts = server.saved_transcripts();
     if let Err(error) = owner_state::save(&server.descriptor, &state) {
         eprintln!("[holder] cannot save owner state: {error}");
     }
@@ -2878,7 +2978,10 @@ fn owner_state_adopt(server: &mut Server, adopted: Vec<holder_link::Adopted>, pr
         adopted.into_iter().for_each(holder_link::Holders::discard);
         return;
     };
+    server.activity_clock.resume_after(previous.activity_revision.max(previous.catalog_revision));
+    server.catalog_revision = previous.catalog_revision;
     server.next = server.next.max(previous.next);
+    server.next_chromium = server.next_chromium.max(previous.next_chromium);
     server.tab_titles = previous.tab_titles.clone();
     server.workspaces = previous.workspaces.clone();
     server.last_viewed = previous.last_viewed.clone();
@@ -2897,10 +3000,20 @@ fn owner_state_adopt(server: &mut Server, adopted: Vec<holder_link::Adopted>, pr
                 continue;
             }
         };
-        server.graphs
+        let graph = server.graphs
             .entry(session.workspace.clone())
-            .or_insert_with(|| graph::Graph::with_settings(server.settings.nodes.clone()))
-            .add(id, session.title());
+            .or_insert_with(|| graph::Graph::with_activity_clock(server.settings.nodes.clone(), server.activity_clock.clone()));
+        graph.add(id, session.title());
+        if let Some(state) = previous.agent_attention.get(&id) {
+            if let Err(error) = graph.restore_attention_state(id, state) {
+                eprintln!("[holder] cannot restore attention for %{id}: {error}");
+            }
+        }
+        if let Some(record) = previous.transcripts.get(&id) {
+            record.restore(graph.nodes.get_mut(&pane_address(id)).unwrap());
+        }
+        let status = session.program_status.status.as_ref().map(|status| json!(status));
+        graph.observe_program_status(id, status.as_ref());
         if let Some(pid) = session.pid() {
             server.resources.register(id, pid, Duration::from_secs(1), true);
         }
@@ -2909,6 +3022,29 @@ fn owner_state_adopt(server: &mut Server, adopted: Vec<holder_link::Adopted>, pr
         workspaces.insert(session.workspace.clone());
         server.sessions.insert(id, session);
         server.started_session = true;
+    }
+    for (workspace, saved) in previous.wiring {
+        let mut saved = std::sync::Arc::unwrap_or_clone(saved);
+        let Some(graph) = server.graphs.get_mut(&workspace) else { continue };
+        // A holder can disappear before adoption. Restore only links whose
+        // endpoints the new owner actually adopted in this workspace.
+        let ids: HashMap<_, _> = graph.nodes.keys().map(|key| (key.clone(), key.clone())).collect();
+        let mut connected = HashSet::new();
+        if let Some(edges) = saved["edges"].as_array_mut() {
+            edges.retain(|edge| {
+                let Some((from, to)) = edge["from"].as_str().zip(edge["to"].as_str()) else { return false };
+                if !ids.contains_key(from) || !ids.contains_key(to) { return false; }
+                connected.insert(from.to_owned());
+                connected.insert(to.to_owned());
+                true
+            });
+        }
+        if let Some(nodes) = saved["nodes"].as_array_mut() {
+            nodes.retain(|n| n["node"].as_str().is_some_and(|key| connected.contains(key)));
+        }
+        if let Err(error) = graph.restore_checkpoint(&saved, &ids) {
+            eprintln!("[holder] cannot restore connections in {workspace}: {error}");
+        }
     }
     filetree::adopt(server, previous.filetrees);
     for workspace in workspaces {

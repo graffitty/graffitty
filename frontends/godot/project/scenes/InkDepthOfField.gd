@@ -85,6 +85,8 @@ void main() {
 }
 """
 const BAND_RADII := [0.0, 3.0, 6.0, 12.0, 24.0]
+const RETRY_INITIAL_MSEC := 250
+const RETRY_MAX_MSEC := 4000
 
 var rd: RenderingDevice
 var shader := RID()
@@ -96,6 +98,11 @@ var texture_size := Vector2i.ZERO
 var mutex := Mutex.new()
 var lens := Vector4(1, 0, 1, 24)
 var minimum_radius := 0.0
+# Optional GPU resources and their retry state belong to the render thread.
+# Zero means initialization failed independently of the texture dimensions.
+var _retry_texture_pixels := 0
+var _retry_after_msec := 0
+var _retry_delay_msec := RETRY_INITIAL_MSEC
 
 
 func _init() -> void:
@@ -127,6 +134,98 @@ func _notification(what: int) -> void:
 				rd.free_rid(resource)
 
 
+func _create_target(format: RDTextureFormat) -> RID:
+	return rd.texture_create(format, RDTextureView.new())
+
+
+func _monotonic_msec() -> int:
+	return Time.get_ticks_msec()
+
+
+func _create_pipeline() -> RID:
+	return rd.compute_pipeline_create(shader)
+
+
+func _create_sampler() -> RID:
+	var state := RDSamplerState.new()
+	state.min_filter = RenderingDevice.SAMPLER_FILTER_LINEAR
+	state.mag_filter = RenderingDevice.SAMPLER_FILTER_LINEAR
+	state.repeat_u = RenderingDevice.SAMPLER_REPEAT_MODE_CLAMP_TO_EDGE
+	state.repeat_v = RenderingDevice.SAMPLER_REPEAT_MODE_CLAMP_TO_EDGE
+	return rd.sampler_create(state)
+
+
+func _initialize_resources() -> bool:
+	if not shader.is_valid():
+		var source := RDShaderSource.new()
+		source.source_compute = CODE
+		var spirv := rd.shader_compile_spirv_from_source(source)
+		if not spirv.compile_error_compute.is_empty():
+			push_error(spirv.compile_error_compute)
+			return false
+		shader = rd.shader_create_from_spirv(spirv)
+		if not shader.is_valid(): return false
+		pipeline = _create_pipeline()
+		sampler = _create_sampler()
+	if pipeline.is_valid() and sampler.is_valid(): return true
+	# Freeing the shader also releases its dependent pipeline.
+	if shader.is_valid(): rd.free_rid(shader)
+	if sampler.is_valid(): rd.free_rid(sampler)
+	shader = RID()
+	pipeline = RID()
+	sampler = RID()
+	return false
+
+
+func _prepare_resources(size: Vector2i) -> bool:
+	var pixels := size.x * size.y
+	if _retry_texture_pixels > 0 and pixels < _retry_texture_pixels:
+		# Only a cheaper texture request may bypass cooldown. Growing resizes
+		# and size-independent initialization failures must remain bounded.
+		_retry_after_msec = 0
+		_retry_delay_msec = RETRY_INITIAL_MSEC
+	if _monotonic_msec() < _retry_after_msec: return false
+	var initialized := _initialize_resources()
+	if not initialized or not _resize_targets(size):
+		_retry_texture_pixels = pixels if initialized else 0
+		_retry_after_msec = _monotonic_msec() + _retry_delay_msec
+		_retry_delay_msec = mini(_retry_delay_msec * 2, RETRY_MAX_MSEC)
+		return false
+	_retry_texture_pixels = 0
+	_retry_after_msec = 0
+	_retry_delay_msec = RETRY_INITIAL_MSEC
+	return true
+
+
+func _release_targets() -> void:
+	for resource in [temporary] + footprints:
+		if resource.is_valid(): rd.free_rid(resource)
+	temporary = RID()
+	footprints.clear()
+	texture_size = Vector2i.ZERO
+
+
+func _resize_targets(size: Vector2i) -> bool:
+	if texture_size == size: return true
+	_release_targets()
+	var format := RDTextureFormat.new()
+	format.width = size.x
+	format.height = size.y
+	format.format = RenderingDevice.DATA_FORMAT_R16G16B16A16_SFLOAT
+	format.usage_bits = RenderingDevice.TEXTURE_USAGE_SAMPLING_BIT | RenderingDevice.TEXTURE_USAGE_STORAGE_BIT
+	for i in 3:
+		var target := _create_target(format)
+		if not target.is_valid():
+			# A failed resize must neither dispatch invalid images nor cache the
+			# size as complete. Release partial work before the retry cooldown.
+			_release_targets()
+			return false
+		if i == 0: temporary = target
+		else: footprints.append(target)
+	texture_size = size
+	return true
+
+
 func _render_callback(kind: int, data: RenderData) -> void:
 	if rd == null or kind != EFFECT_CALLBACK_TYPE_POST_TRANSPARENT:
 		return
@@ -142,33 +241,11 @@ func _render_callback(kind: int, data: RenderData) -> void:
 	var size := buffers.get_internal_size()
 	if size.x <= 0 or size.y <= 0:
 		return
-	if not shader.is_valid():
-		var source := RDShaderSource.new()
-		source.source_compute = CODE
-		var spirv := rd.shader_compile_spirv_from_source(source)
-		if not spirv.compile_error_compute.is_empty():
-			push_error(spirv.compile_error_compute)
-			return
-		shader = rd.shader_create_from_spirv(spirv)
-		pipeline = rd.compute_pipeline_create(shader)
-		var state := RDSamplerState.new()
-		state.min_filter = RenderingDevice.SAMPLER_FILTER_LINEAR
-		state.mag_filter = RenderingDevice.SAMPLER_FILTER_LINEAR
-		state.repeat_u = RenderingDevice.SAMPLER_REPEAT_MODE_CLAMP_TO_EDGE
-		state.repeat_v = RenderingDevice.SAMPLER_REPEAT_MODE_CLAMP_TO_EDGE
-		sampler = rd.sampler_create(state)
-	if texture_size != size:
-		for resource in [temporary] + footprints:
-			if resource.is_valid(): rd.free_rid(resource)
-		footprints.clear()
-		var format := RDTextureFormat.new()
-		format.width = size.x
-		format.height = size.y
-		format.format = RenderingDevice.DATA_FORMAT_R16G16B16A16_SFLOAT
-		format.usage_bits = RenderingDevice.TEXTURE_USAGE_SAMPLING_BIT | RenderingDevice.TEXTURE_USAGE_STORAGE_BIT
-		temporary = rd.texture_create(format, RDTextureView.new())
-		for i in 2: footprints.append(rd.texture_create(format, RDTextureView.new()))
-		texture_size = size
+	# Scene attachments can also be absent after a failed engine allocation.
+	if not rd.texture_is_valid(buffers.get_color_texture()) or not rd.texture_is_valid(buffers.get_depth_texture()):
+		return
+	if not _prepare_resources(size):
+		return
 	var inverse: Projection = data.get_render_scene_data().get_cam_projection().inverse()
 	# Only adjacent bands receive a source's coverage. Fly Away's authored
 	# arrival has one uniform radius, often between the 3 and 6 px bands.
@@ -182,6 +259,7 @@ func _render_callback(kind: int, data: RenderData) -> void:
 	for view in buffers.get_view_count():
 		var color := buffers.get_color_layer(view)
 		var depth := buffers.get_depth_layer(view)
+		if not rd.texture_is_valid(color) or not rd.texture_is_valid(depth): return
 		for step in resolve_step + 1:
 			var axis := -1 if step == 0 else (2 if step == resolve_step else (step - 1) % 2)
 			var band_index := clampi(first + (step - 1) / 2, first, last)
@@ -217,11 +295,13 @@ func _render_callback(kind: int, data: RenderData) -> void:
 			)
 			constants.append_array([BAND_RADII[maxi(band_index - 1, 0)], BAND_RADII[band_index],
 				BAND_RADII[mini(band_index + 1, BAND_RADII.size() - 1)], float(band_index - first)])
+			var uniform_set := UniformSetCacheRD.get_cache(shader, 0, uniforms)
+			if not uniform_set.is_valid(): return
 			var list := rd.compute_list_begin()
 			rd.compute_list_bind_compute_pipeline(list, pipeline)
 			rd.compute_list_bind_uniform_set(
 				list,
-				UniformSetCacheRD.get_cache(shader, 0, uniforms),
+				uniform_set,
 				0,
 			)
 			rd.compute_list_set_push_constant(list, constants.to_byte_array(), constants.size() * 4)

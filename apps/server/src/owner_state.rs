@@ -15,6 +15,51 @@ use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
 
+fn old_pane_environment() -> bool { true }
+fn first_chromium() -> u64 { graffitty_protocol::pane_id::CHROMIUM_BASE + 1 }
+
+#[cfg(unix)]
+use crate::session_jobs::process_start;
+#[cfg(windows)]
+use terminal_resource_monitor::windows::process_start;
+
+/// Private Read reference belonging to one live provider process and conversation.
+#[derive(Clone, PartialEq, Serialize, Deserialize)]
+pub struct Transcript {
+    path: String,
+    provider: String,
+    session_id: String,
+    pid: u32,
+    process_start: (u64, u64),
+}
+
+impl Transcript {
+    fn identifies(&self, node: &serde_json::Value) -> bool {
+        node["provider"] == self.provider && node["session_id"] == self.session_id
+            && node["pid"].as_u64() == Some(u64::from(self.pid))
+    }
+
+    pub fn capture(node: &serde_json::Value, previous: Option<&Self>) -> Option<Self> {
+        if node["status"] == "offline" { return None; }
+        let path = node["transcript_path"].as_str().filter(|s| !s.is_empty())?;
+        if let Some(previous) = previous.filter(|record| record.identifies(node) && record.path == path) {
+            return Some(previous.clone());
+        }
+        let pid = u32::try_from(node["pid"].as_u64()?).ok()?;
+        Some(Self {
+            path: path.into(), provider: node["provider"].as_str()?.into(),
+            session_id: node["session_id"].as_str().filter(|s| !s.is_empty())?.into(),
+            pid, process_start: process_start(pid)?,
+        })
+    }
+
+    pub fn restore(&self, node: &mut serde_json::Value) {
+        if self.identifies(node) && process_start(self.pid) == Some(self.process_start) {
+            node["transcript_path"] = serde_json::json!(self.path);
+        }
+    }
+}
+
 const VERSION: u32 = 1;
 
 #[derive(Serialize, Deserialize, Clone, PartialEq)]
@@ -24,9 +69,23 @@ pub struct OwnerState {
     /// The private runtime directory holding the IPC endpoint.
     pub runtime: PathBuf,
     pub next: u64,
+    #[serde(default = "first_chromium")] // 0.0.3 owner handover
+    pub next_chromium: u64,
     pub tab_titles: HashMap<u64, String>,
     pub sessions: Vec<SavedSession>,
     pub workspaces: crate::session_registry::Registry,
+    #[serde(default)]
+    pub activity_revision: u64,
+    #[serde(default)]
+    pub catalog_revision: u64,
+    /// Optional agent metadata, bound to the live panes adopted from holders.
+    #[serde(default)]
+    pub agent_attention: HashMap<u64, graffitty_workspace_core::graph::AttentionState>,
+    #[serde(default, skip_serializing_if = "HashMap::is_empty")]
+    pub transcripts: HashMap<u64, Transcript>,
+    /// Connections and advertised ports for graphs with live wiring.
+    #[serde(default, skip_serializing_if = "HashMap::is_empty")]
+    pub wiring: HashMap<String, std::sync::Arc<serde_json::Value>>,
     /// Optional application metadata; terminals can exist without any filetrees.
     #[serde(default)]
     pub filetrees: crate::filetree::SavedFiletrees,
@@ -55,6 +114,9 @@ pub struct SavedSession {
     /// The pane that ran `gft pane run` to create this one, as herdr's parent.
     #[serde(default)]
     pub spawned_by: Option<u64>,
+    /// Existing 0.0.3 processes still have %N in their environment.
+    #[serde(default = "old_pane_environment")]
+    pub inherited_percent_id: bool,
     #[serde(default)]
     pub dies_with_parent: bool,
     /// Windows: the title the console starts with. A program did not set it.
@@ -138,17 +200,93 @@ pub fn clear(descriptor: &Path) {
 }
 
 impl OwnerState {
-    pub fn new(epoch: &str, runtime: &Path, next: u64, tab_titles: &HashMap<u64, String>) -> Self {
+    pub fn new(epoch: &str, runtime: &Path, next: u64, next_chromium: u64, tab_titles: &HashMap<u64, String>) -> Self {
         Self {
             version: VERSION,
             epoch: epoch.into(),
             runtime: runtime.into(),
             next,
+            next_chromium,
             tab_titles: tab_titles.clone(),
             sessions: Vec::new(),
             workspaces: Default::default(),
+            activity_revision: 0,
+            catalog_revision: 0,
+            agent_attention: HashMap::new(),
+            wiring: HashMap::new(),
+            transcripts: HashMap::new(),
             filetrees: Default::default(),
             last_viewed: None,
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use graffitty_workspace_core::graph::{ActivityClock, Graph, NodeSettings};
+    use serde_json::json;
+
+    #[test]
+    fn transcript_recovery_checks_the_process_start_and_conversation() {
+        let node = json!({"provider":"claude","pid":std::process::id(),
+            "session_id":"session","transcript_path":"example.jsonl"});
+        let record = Transcript::capture(&node, None).unwrap();
+        let mut adopted = node.clone();
+        adopted.as_object_mut().unwrap().remove("transcript_path");
+        let mut reused_pid = record.clone();
+        reused_pid.process_start.0 ^= 1;
+        reused_pid.restore(&mut adopted);
+        assert!(adopted["transcript_path"].is_null());
+        adopted["session_id"] = json!("another-session");
+        record.restore(&mut adopted);
+        assert!(adopted["transcript_path"].is_null());
+        adopted["session_id"] = json!("session");
+        record.restore(&mut adopted);
+        assert_eq!(adopted["transcript_path"], node["transcript_path"]);
+    }
+
+    #[test]
+    fn owner_state_round_trip_keeps_the_current_agent_receipt() {
+        let directory = std::env::temp_dir().join(format!("gft-attention-test-{}", uuid::Uuid::new_v4()));
+        std::fs::create_dir(&directory).unwrap();
+        let descriptor = directory.join("server.json");
+        let clock = ActivityClock::default();
+        let mut graph = Graph::with_activity_clock(NodeSettings::default(), clock.clone());
+        graph.add(1, "Task".into());
+        for event in ["SessionStart", "UserPromptSubmit", "Stop"] {
+            graph.dispatch(1, "agent.event", &json!({"provider":"pi","event":event,"pid":10})).unwrap();
+        }
+        let event = graph.nodes["t1"]["attention"]["event"].clone();
+        for seen in [false, true] {
+            if seen { graph.dispatch(1, "agent.seen", &json!({"event":event})).unwrap(); }
+            let mut state = OwnerState::new("test-owner", &directory, 2, graffitty_protocol::pane_id::CHROMIUM_BASE + 1, &HashMap::new());
+            graph.add(2, "Short-lived task".into());
+            graph.remove(2);
+            state.activity_revision = clock.current();
+            state.catalog_revision = 25;
+            state.agent_attention.insert(1, graph.attention_state(1).unwrap());
+            save(&descriptor, &state).unwrap();
+            let loaded = load(&descriptor).unwrap();
+            assert_eq!(loaded.version, 1);
+            assert_eq!(loaded.catalog_revision, 25);
+            let adopted_clock = ActivityClock::default();
+            adopted_clock.resume_after(loaded.activity_revision);
+            let mut adopted = Graph::with_activity_clock(NodeSettings::default(), adopted_clock);
+            adopted.add(1, "Adopted task".into());
+            assert!(adopted.nodes["t1"]["activity_revision"].as_u64().unwrap() > state.activity_revision);
+            adopted.restore_attention_state(1, &loaded.agent_attention[&1]).unwrap();
+            assert_eq!(adopted.nodes["t1"]["attention"], graph.nodes["t1"]["attention"]);
+            adopted.observe_agent(1, &json!({"provider":"pi","pid":10,"status":"unknown"}));
+            assert_eq!(adopted.nodes["t1"]["attention"]["seen"], seen);
+            assert_eq!(adopted.nodes["t1"]["attention"]["event"], event);
+        }
+        // Optional app data is absent for panes with no agent; it is not a
+        // separate schema generation or a reason to reject their owner state.
+        let mut empty = serde_json::to_value(OwnerState::new("test-owner", &directory, 1, graffitty_protocol::pane_id::CHROMIUM_BASE + 1, &HashMap::new())).unwrap();
+        empty.as_object_mut().unwrap().remove("agent_attention");
+        let empty: OwnerState = serde_json::from_value(empty).unwrap();
+        assert!(empty.agent_attention.is_empty());
+        std::fs::remove_dir_all(directory).unwrap();
     }
 }

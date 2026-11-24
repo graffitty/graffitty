@@ -8,6 +8,34 @@ Build nodes that exchange messages and session context through explicit connecti
 
 Use the SDK types and CLI help for individual fields and options.
 
+## Shared read receipts
+
+Agent unread state belongs to the session server. Graph nodes and session agent
+summaries expose optional `attention`: `{event, kind, seen}`, where `event` is a
+unique opaque token and `kind` is `completed` or `waiting`.
+
+A frontend that displays the pane sends `agent.seen` with `{target, event}` through
+authenticated server control. The target is the server's pane ID, so the receipt
+can finish after the frontend switches sessions. The server marks only the matching current event as seen and publishes
+the receipt to every client. Duplicate or superseded receipts have no effect.
+Read receipts do not change the agent's working, waiting or idle status.
+Graph nodes and session catalog entries carry the same `activity_revision`. One
+sequence per server epoch orders activity across pane ID reuse, workspace moves,
+and live owner restarts. Each full `session_list` catalog also carries a server
+`revision` that advances when its contents change and survives owner handover.
+Catalog and activity revisions share the same sequence. An omitted agent stays
+closed unless a later graph update reports it again.
+Across windows, the latest catalog for the server epoch determines membership
+and the session to open when selecting a background agent.
+The client uses the newer revision for the panel and tab marker. A visible window
+can read only the event its own session view received. A disconnected window
+can retry its displayed event through another connection to the same server.
+
+The client projects a pending receipt immediately and retries until the server
+confirms it. The agent panel and tab badges use this same projection; focus and
+sound playback remain local. A new attention event replaces the old receipt, so
+delayed packets and client clock differences cannot hide a newer result.
+
 ## Connections are permissions
 
 A connection from A's output to B's input determines what B receives or can read:
@@ -22,9 +50,16 @@ A connection from A's output to B's input determines what B receives or can read
 
 - **Turn completed is not approval.** Check the result before acting on it.
 - Waiting and Error do not grant transcript access.
+- A recorded Codex quota failure emits Error once, including when a retry starts between discovery polls. The failed turn leaves no unread completion. Reattaching restores the recorded status without replaying old failures.
+- For a discovered Codex completion, the wire reads the answer for the completed turn. Local discovery records its byte offset, and daemon discovery identifies it by native turn ID. With Read permission, the queued session reference exposes the byte offset at the end of that completion. When daemon metadata arrives before the rollout record, the owner retries the matching turn up to eight times and delivers completions for that pane in order.
+- When a live tab moves to another workspace, pending turn outcomes follow the source pane. A message already queued in Codex follows the receiver with its delivery history. Moving both ends of the wire preserves the submission. Splitting the wire requests cancellation from the original Codex conversation. If Codex has switched threads, the owner keeps the submission ID and retries against the original thread, spacing attempts up to 30 seconds apart. If the original process exits or its PID is reused, the journal records the cancellation as unconfirmed and releases the submission slot. When a delete is already in flight, the journal waits for its reply so a confirmed deletion remains visible even if a queue poll observes process exit first. Delivery still requires an original wire that moved with both endpoints and remains authorized. Replacing the receiving agent cancels its pending outcomes just as it clears queued messages. A custom node that explicitly resumes its inbox keeps both. Re-registering the same Claude conversation preserves its inbox when the hook cannot supply a PID. Returning to the OpenCode home screen closes the selected conversation and clears its unread receipt.
+- Local Codex sessions use the rollout’s turn records. A token-count update at 100% usage supplies no turn outcome. An older client that records only a turn start leaves discovery waiting for the next lifecycle record. A plain completion from a client that omitted its failure details is indistinguishable from success.
+- An expired Claude login enters Waiting. The terminal report and the authentication hook share one Waiting notification per transition. The failure hook also emits Error.
 - An interrupted turn emits neither completion nor failure.
 - An idle agent is not necessarily waiting for human input.
 - Connections stay within one tab. Moving a connected group carries its connections with it, including paused ones.
+
+A red × marks a failed or cancelled delivery. It follows the wire that carried the message as you pan or zoom. If you remove that wire before cancellation finishes, the × follows its last visible path when available. Reconnecting the same ports starts a new wire with its own indicators.
 
 ### Wire patterns
 
@@ -51,15 +86,20 @@ Inspect the graph before granting access:
 ```sh
 gft graph list
 gft graph adjacent
-gft graph connect --from %1 --to %2 --send --turn-completed
-gft graph read --node %1
+gft graph connect --from t1 --to t2 --send --turn-completed
+gft graph read --node t1
 ```
 
 - `graph read` returns a session-file reference by default, avoiding a full transcript in the model's context.
 - Add `--offset 0` to read bounded content; continue from the returned `next_offset`.
+- For Claude, use the actual user turns to identify the latest prompt. A fork can contain a `last-prompt` record copied from its parent even when its own turns are missing.
 - Removing a connection revokes future graph access. It cannot revoke a file path already disclosed to a local process. **The graph is not an OS sandbox.**
 
 ## Launch a connected agent
+
+A server restart preserves connections between surviving holder-backed terminals. A Read connection can resume at its previous byte offset when the same provider process and conversation survive. The server verifies the process creation time before restoring the private transcript path.
+
+New pane shells inherit `CLAUDE_CONFIG_DIR` and clear the launching Claude process's child-session markers. This lets an interactive Claude agent in the pane save its own transcript for Read connections.
 
 To launch a connected agent from an integrated agent pane:
 

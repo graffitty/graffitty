@@ -734,7 +734,7 @@ func _open_workspace(key: String, fly := true, pane := "") -> void:
 	federation.selected = transport
 	if transport.workspace.is_empty():
 		open_when_ready = key
-		if transport.available_sessions.is_empty(): transport.send_action("session_new", -1, {})
+		if transport.available_sessions.is_empty(): transport.send_action("session_new", -1, {"if_empty": true})
 	elif transport.topology.tabs.is_empty() or not transport.session_view_ready(transport.workspace):
 		open_when_ready = key
 	elif view.host != null:

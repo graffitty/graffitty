@@ -47,7 +47,7 @@ test("mismatched response IDs cannot satisfy a request", async t => {
 test("server permission errors and cancellation reach the caller", async t => {
   const rpc = await endpoint(t, (socket, request) => socket.end(JSON.stringify({ id: request.id,
     error: { message: "Read permission denied" } }) + "\n"));
-  await assert.rejects(rpc("graph.read", { node: "%2" }), /Read permission denied/);
+  await assert.rejects(rpc("graph.read", { node: "t2" }), /Read permission denied/);
   await assert.rejects(rpc("graph.list", {}, AbortSignal.abort()), /aborted/);
   await assert.rejects(rpc("graph.send", { text: "x".repeat(4 * 1024 * 1024) }), /too large/);
 });

@@ -1,7 +1,8 @@
 extends "main-area-tiling.gd"
 
+
 func terminal(key: String) -> Control:
-	return host.sessions[int(key.substr(1))].term
+	return host.sessions[PaneAddress.id(key)].term
 
 func frame() -> Dictionary:
 	var view: Control = host.workspace_view

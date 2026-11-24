@@ -109,8 +109,9 @@ class Peer:
 
 
 class Owner:
-    def __init__(self, network=False):
+    def __init__(self, network=False, empty=False):
         self.network = network
+        self.empty = empty
 
     def __enter__(self):
         evidence = os.environ.get("GRAFFITTY_SCENE_EVIDENCE")
@@ -153,8 +154,9 @@ for number,fd in [(-10,0),(-11,1)]:
                 raise RuntimeError((self.path / "server.log").read_text())
             time.sleep(.025)
         try:
-            self.peer = Peer(json.loads(self.descriptor.read_text()))
-            self.peer.until(b"@@READY@@")
+            self.peer = None if self.empty else Peer(json.loads(self.descriptor.read_text()))
+            if self.peer is not None:
+                self.peer.until(b"@@READY@@")
         except BaseException:
             self.process.terminate()
             self.process.wait(timeout=10)
@@ -179,7 +181,8 @@ for number,fd in [(-10,0),(-11,1)]:
         return self.output(command)
 
     def __exit__(self, *_):
-        self.peer.socket.close()
+        if self.peer is not None:
+            self.peer.socket.close()
         self.process.terminate()
         self.process.wait(timeout=10)
         self.log.close()

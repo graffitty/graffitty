@@ -108,7 +108,7 @@ def run(args):
             f.rpc('chromium.restart', chromium=page)
             replacement = settle(f, sid)
             assert replacement != host
-            assert evaluate(f.rpc, page, "let n=0;function tick(){document.body.style.background='rgb('+(170+n++%70)+',0,0)';requestAnimationFrame(tick)}tick();true")
+            assert evaluate(f.rpc, page, "let n=0;function tick(){document.body.style.background='rgb('+(170+n++t70)+',0,0)';requestAnimationFrame(tick)}tick();true")
             checks['compositor_restart_decode'] = decoded(f, sid, 'compositor-recovered')
         else:
             existing = f.stream(sid)

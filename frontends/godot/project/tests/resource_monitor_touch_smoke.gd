@@ -32,8 +32,8 @@ func slide(from: Vector2, to: Vector2, hold := 0.0, steps := 6) -> void:
 func run() -> void:
 	setup(true)
 	Input.emulate_mouse_from_touch = true
-	host.workspace_layout.tabs = [{"id": 1, "tree": {"windows": [PaneTree.leaf("%1"), PaneTree.leaf("%2")]}}]
-	host.pane_focus = "%2"
+	host.workspace_layout.tabs = [{"id": 1, "tree": {"windows": [PaneTree.leaf("t1"), PaneTree.leaf("t2")]}}]
+	host.pane_focus = "t2"
 	host.focused_key = ""
 	app.mods.publish_window(host)
 	var dialog: Window = PanelWindow.open(host, "resource-monitor")

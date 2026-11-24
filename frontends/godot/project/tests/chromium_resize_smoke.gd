@@ -1,4 +1,5 @@
 extends "../../../../tests/llm-e2e/replay/replay.gd"
+
 ## Chromium reflows with its pane rather than scaling a fixed-size page image.
 const Layout := preload("res://scenes/WorkspaceLayout.gd")
 
@@ -14,7 +15,7 @@ func play() -> void:
 		chromium.close()
 		return
 	var view: Control = host.workspace_view
-	var key := "%%%d" % chromium.session_id
+	var key := PaneAddress.key(chromium.session_id)
 	var group: Dictionary = host.workspace_layout.tab(host.workspace_layout.active)
 	group.tree["tiling"] = false
 	group.tree["physics"] = false

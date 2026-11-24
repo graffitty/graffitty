@@ -66,9 +66,11 @@ pub fn description(server: &Server, key: &str) -> Value {
                 .map(|b| b.tab),
         )
         .collect();
+    let agents = agents(server, key);
+    let tree = agent_tree(server, key, &agents);
     json!({"id":info.id.to_string(), "name":info.name, "automatic_name":automatic,
         "windows":tabs.len(), "panes":panes.len(), "attached":server.frontend.has_owner(key),
-        "agents":agents(server, key)})
+        "agents":agents, "agent_tree":tree})
 }
 
 const AGENT_APPS: [&str; 4] = ["pi", "claude", "codex", "opencode"];
@@ -86,36 +88,136 @@ fn agents(server: &Server, key: &str) -> Vec<Value> {
     let mut titles = server.agent_title_cache.borrow_mut();
     titles.retain(|pane, _| server.sessions.get(pane).is_some_and(|s| !s.exited));
     let mut result: Vec<Value> = graph.nodes.iter().filter_map(|(node, value)| {
-        let pane: u64 = node.strip_prefix('%')?.parse().ok()?;
+        let pane: u64 = node.strip_prefix('t')?.parse().ok()?;
         let session = server.sessions.get(&pane).filter(|s| s.workspace == key && !s.exited)?;
-        let provider = value["provider"].as_str().unwrap_or("");
-        let program = value.get("program_status").filter(|p| p.is_object()).map(|p| json!({
-            "state": p["state"], "app": p.get("app").cloned().unwrap_or(json!("")),
-            "title": p.get("title").cloned().unwrap_or(json!("")), "msg": p.get("msg").cloned().unwrap_or(json!("")),
-        }));
-        let app = program.as_ref().and_then(|p| p["app"].as_str()).unwrap_or("");
-        if !AGENT_APPS.contains(&provider) && !AGENT_APPS.contains(&app) { return None; }
         let status = value["status"].as_str().unwrap_or("");
         let entry = titles.entry(pane).or_default();
         if entry.0 != status || entry.1.is_empty() || !session.pinned_title.is_empty() {
             *entry = (status.to_owned(), turn_title(&session.title(), pane));
         }
-        Some(json!({"pane": pane, "provider": provider, "status": value["status"],
-            "status_history": value["status_history"].as_array().and_then(|h| h.last()).into_iter().collect::<Vec<_>>(),
-            "title": entry.1, "program": program}))
+        agent_summary(pane, value, &entry.1)
     }).collect();
     result.sort_by_key(|agent| agent["pane"].as_u64());
     result
 }
 
-/// A title without animated leading glyphs (spinners, stars); its `%N`
+/// Keep the previous label while a terminal or webpage animates its automatic title.
+pub(crate) struct CatalogTitle {
+    published: String,
+    candidate: String,
+    since: std::time::Instant,
+}
+
+impl CatalogTitle {
+    fn sample<'a>(
+        cache: &'a mut std::collections::HashMap<u64, Self>,
+        pane: u64,
+        title: String,
+        pinned: bool,
+        now: std::time::Instant,
+    ) -> &'a str {
+        let entry = cache.entry(pane).or_insert_with(|| Self {
+            published: title.clone(), candidate: title.clone(), since: now,
+        });
+        if entry.candidate != title {
+            entry.candidate = title;
+            entry.since = now;
+        }
+        if entry.candidate != entry.published
+            && (pinned || now.duration_since(entry.since) >= std::time::Duration::from_secs(1))
+        {
+            entry.published.clone_from(&entry.candidate);
+        }
+        &entry.published
+    }
+}
+
+fn agent_app<'a>(provider: &'a Value, program: &'a Value) -> Option<&'a str> {
+    [provider.as_str(), program["app"].as_str()].into_iter().flatten().find(|app| AGENT_APPS.contains(app))
+}
+
+/// Only connected panes contribute to a background session's agent tree.
+fn agent_tree(server: &Server, workspace: &str, agents: &[Value]) -> Value {
+    use graffitty_protocol::pane_id::address;
+    use std::collections::{BTreeMap, BTreeSet};
+    let mut links = BTreeSet::new();
+    let mut nodes = BTreeMap::new();
+    let graph = server.graphs.get(workspace);
+    let revision = graph.map_or(0, |graph| graph.notification_revision().0);
+    if agents.is_empty() { return json!({"graph_revision":revision,"nodes":[],"edges":[]}); }
+    if let Some(graph) = graph {
+        for edge in graph.edges.values() {
+            if let (Some(from), Some(to)) = (edge["from"].as_str(), edge["to"].as_str()) {
+                links.insert((from.to_owned(), to.to_owned(), "graph"));
+            }
+        }
+    }
+    for pane in server.sessions.values().filter(|p| p.workspace == workspace && !p.exited) {
+        if let Some(parent) = pane.spawned_by {
+            links.insert((address(parent), address(pane.id), "spawned"));
+        }
+    }
+    for pane in server.chromiums.values().filter(|p| p.workspace == workspace && p.id != p.owner) {
+        links.insert((address(pane.owner), address(pane.id), "chromium"));
+    }
+    if !links.is_empty() {
+        let mut titles = server.pane_catalog_titles.borrow_mut();
+        let now = std::time::Instant::now();
+        let keys: BTreeSet<_> = links.iter().flat_map(|(a,b,_)| [a.as_str(), b.as_str()]).collect();
+        let summaries: BTreeMap<_,_> = agents.iter().filter_map(|a| Some((a["pane"].as_u64()?, a))).collect();
+        for pane in server.sessions.values().filter(|p| p.workspace == workspace && !p.exited) {
+            let key = address(pane.id);
+            if !keys.contains(key.as_str()) || server.filetrees.active.contains_key(&pane.id) { continue; }
+            let rect = server.workspace_state.pane_rect(workspace, pane.tab, &key).unwrap_or(pane.rect);
+            let node = if let Some((agent, provider)) = summaries.get(&pane.id)
+                .and_then(|agent| agent_app(&agent["provider"], &agent["program"]).map(|provider| (agent, provider))) {
+                json!({"key":key,"kind":"agent","provider":provider,"title":agent["title"],"rect":rect})
+            } else {
+                let title = CatalogTitle::sample(&mut titles, pane.id, pane.title(), !pane.pinned_title.is_empty(), now);
+                json!({"key":key,"kind":"terminal","title":title,
+                    "app":server.foreground_apps.get(&pane.id).and_then(|app| app["id"].as_str()).unwrap_or(""),"rect":rect})
+            };
+            nodes.insert(key, node);
+        }
+        for pane in server.chromiums.values().filter(|p| p.workspace == workspace) {
+            let key = address(pane.id);
+            if keys.contains(key.as_str()) {
+                let rect = server.workspace_state.pane_rect(workspace, pane.tab, &key).unwrap_or_default();
+                let title = CatalogTitle::sample(&mut titles, pane.id, pane.title(), !pane.pinned_title.is_empty(), now);
+                nodes.insert(key.clone(), json!({"key":key,"kind":"chromium","title":title,"rect":rect}));
+            }
+        }
+    }
+    let edges: Vec<_> = links.into_iter().filter(|(a,b,_)| nodes.contains_key(a) && nodes.contains_key(b))
+        .map(|(from,to,kind)| json!({"from":from,"to":to,"kind":kind})).collect();
+    json!({"graph_revision":revision,"nodes":nodes.into_values().collect::<Vec<_>>(),"edges":edges})
+}
+
+fn agent_summary(pane: u64, value: &Value, title: &str) -> Option<Value> {
+    if graffitty_workspace_core::graph::is_custom_node(value) { return None; }
+    let provider = value["provider"].as_str().unwrap_or("");
+    let program = value.get("program_status").filter(|p| p.is_object()).map(|p| json!({
+        "state": p["state"], "app": p.get("app").cloned().unwrap_or(json!("")),
+        "title": p.get("title").cloned().unwrap_or(json!("")), "msg": p.get("msg").cloned().unwrap_or(json!("")),
+    }));
+    // OSC clear removes the program identity while a completion can still await its receipt.
+    if agent_app(&value["provider"], &value["program_status"]).is_none()
+        && value["attention"]["seen"].as_bool() != Some(false) { return None; }
+    Some(json!({"pane": pane, "provider": provider, "status": value["status"],
+        "attention": value["attention"], "activity_revision": value["activity_revision"].as_u64().unwrap_or(0),
+        "status_history": value["status_history"].as_array().and_then(|h| h.last()).into_iter().collect::<Vec<_>>(),
+        "title": title, "program": program}))
+}
+
+/// A title without animated leading glyphs (spinners, stars); its `tN`
 /// fallback means "no title".
 fn turn_title(title: &str, pane: u64) -> String {
-    if title == format!("%{pane}") { return String::new(); }
+    if title == format!("t{pane}") { return String::new(); }
     title.trim_start_matches(|c: char| !c.is_alphanumeric()).trim().to_owned()
 }
 
 pub fn descriptions(server: &Server) -> Vec<Value> {
+    server.pane_catalog_titles.borrow_mut().retain(|id, _| server.sessions.contains_key(id) || server.chromiums.contains_key(id));
     let mut keys: Vec<_> = server.workspaces.iter().collect();
     keys.sort_by_key(|key| server.workspaces.info(key).id);
     keys.into_iter()
@@ -274,11 +376,81 @@ fn close_workspace(server: &mut Server, key: &str) -> Result<(), Error> {
 
 #[cfg(test)]
 mod tests {
+    use serde_json::json;
+
+    #[test]
+    fn catalog_uses_stable_automatic_titles_and_immediate_pins() {
+        use std::time::{Duration, Instant};
+        let mut cache = std::collections::HashMap::new();
+        let start = Instant::now();
+        let mut sample = |title: &str, pinned, ms| {
+            super::CatalogTitle::sample(&mut cache, 1, title.to_owned(), pinned, start + Duration::from_millis(ms)).to_owned()
+        };
+        assert_eq!(sample("Build logs", false, 0), "Build logs");
+        for n in 1..30 {
+            assert_eq!(sample(&format!("Progress {n}"), false, n * 100), "Build logs");
+        }
+        assert_eq!(sample("Done", false, 3000), "Build logs");
+        assert_eq!(sample("Done", false, 4000), "Done");
+        assert_eq!(sample("Pinned", true, 4020), "Pinned");
+    }
+
+    #[test]
+    fn agent_summary_matches_graph_receipts_for_hooks_and_osc_only_agents() {
+        for osc in [false, true] {
+            let mut graph = graffitty_workspace_core::graph::Graph::default();
+            graph.add(7, "Task".into());
+            if osc {
+                for state in ["working", "idle"] {
+                    graph.observe_program_status(7, Some(&json!({"app":"pi","state":state})));
+                }
+            } else {
+                for event in ["SessionStart", "UserPromptSubmit", "Stop"] {
+                    graph.dispatch(7, "agent.event", &json!({"provider":"pi","event":event})).unwrap();
+                }
+            }
+            let first = super::agent_summary(7, &graph.nodes["t7"], "Task").unwrap();
+            assert_eq!(first["attention"], graph.snapshot()["nodes"][0]["attention"]);
+            assert_eq!(first["attention"]["kind"], "completed");
+            assert_eq!(first["activity_revision"], graph.snapshot()["nodes"][0]["activity_revision"]);
+            graph.dispatch(7, "agent.seen", &json!({"event":first["attention"]["event"]})).unwrap();
+            let seen = super::agent_summary(7, &graph.nodes["t7"], "Task").unwrap();
+            assert_eq!(seen["attention"]["seen"], true);
+            assert!(seen["activity_revision"].as_u64().unwrap() > first["activity_revision"].as_u64().unwrap());
+            assert_eq!(seen["attention"]["event"], first["attention"]["event"]);
+            assert_eq!(seen["attention"], graph.snapshot()["nodes"][0]["attention"]);
+        }
+        assert!(super::agent_summary(1, &json!({"provider":"shell","status":"idle"}), "Shell").is_none());
+        assert!(super::agent_summary(1, &json!({"kind":"custom","provider":"custom","status":"waiting"}), "Node").is_none());
+    }
+
+    #[test]
+    fn cleared_osc_program_keeps_only_its_outstanding_receipt_in_the_catalog() {
+        let mut graph = graffitty_workspace_core::graph::Graph::default();
+        graph.add(7, "Shell".into());
+        for state in ["working", "idle"] {
+            graph.observe_program_status(7, Some(&json!({"app":"pi","state":state})));
+        }
+        let event = graph.nodes["t7"]["attention"].clone();
+        graph.observe_program_status(7, None);
+        let summary = super::agent_summary(7, &graph.nodes["t7"], "Shell").unwrap();
+        assert_eq!(summary["attention"], event);
+        assert_eq!(summary["activity_revision"], graph.nodes["t7"]["activity_revision"]);
+        assert!(super::agent_app(&summary["provider"], &summary["program"]).is_none());
+        graph.observe_program_status(7, Some(&json!({"app":"pi","state":"idle"})));
+        let restored = super::agent_summary(7, &graph.nodes["t7"], "Shell").unwrap();
+        assert_eq!(restored["attention"], event);
+        assert_eq!(super::agent_app(&restored["provider"], &restored["program"]), Some("pi"));
+        graph.observe_program_status(7, None);
+        graph.dispatch(7, "agent.seen", &json!({"event":event["event"]})).unwrap();
+        assert!(super::agent_summary(7, &graph.nodes["t7"], "Shell").is_none());
+    }
+
     #[test]
     fn turn_titles_drop_spinners_and_fallbacks() {
         assert_eq!(super::turn_title("⠐ Fix the build", 3), "Fix the build");
         assert_eq!(super::turn_title("✳ Claude Code", 3), "Claude Code");
         assert_eq!(super::turn_title("π Fix black", 3), "π Fix black");
-        assert_eq!(super::turn_title("%3", 3), "");
+        assert_eq!(super::turn_title("t3", 3), "");
     }
 }

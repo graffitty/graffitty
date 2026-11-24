@@ -1,4 +1,5 @@
 extends "../../tabs-and-panes/replays/main-area-tiling.gd"
+
 const Ports := preload("res://scenes/GraphPorts.gd")
 var graph: Node
 var links: Control
@@ -8,11 +9,11 @@ var review: String
 var other: String
 
 func connect_to(target: String) -> String:
-	var result: Dictionary = await graph.dispatch(int(source.substr(1)), "graph.connect", {"from": source, "to": target, "from_port": "send", "to_port": "receive", "send": true})
+	var result: Dictionary = await graph.dispatch(PaneAddress.id(source), "graph.connect", {"from": source, "to": target, "from_port": "send", "to_port": "receive", "send": true})
 	check(result.has("result"), "Fixture wire connects")
-	check(result.result.from == source and result.result.to == target, "Connection endpoints retain the real %N pane IDs")
+	check(result.result.from == source and result.result.to == target, "Connection endpoints retain the terminal pane IDs")
 	var key := Ports.edge_key(result.result)
-	check(key == source + "/send>" + target + "/receive", "Graph socket and edge IDs use %N with port suffixes")
+	check(key == source + "/send>" + target + "/receive", "Graph socket and edge IDs use terminal IDs with port suffixes")
 	var deadline := Time.get_ticks_msec() + 3000
 	while not graph.edges.has(key) and Time.get_ticks_msec() < deadline: await process_frame
 	check(graph.edges.has(key), "Acknowledged wire reaches the frontend topology mirror")
@@ -52,10 +53,10 @@ func play() -> void:
 	graph = host.agent_api.graph
 	var pids := {}
 	for key in [source, review, other]:
-		check(preload("res://scenes/PaneTargets.gd").valid(key), "The workspace and graph share a canonical %N pane identity")
-		pids[key] = host.sessions[int(key.substr(1))].term.get_shell_pid()
-		await graph.dispatch(int(key.substr(1)), "agent.event", {"provider": "adapter", "event": "SessionStart"})
-		await graph.dispatch(int(key.substr(1)), "agent.register", {"inputs": [{"id": "receive", "name": "Receive"}], "outputs": [{"id": "send", "name": "Send"}]})
+		check(preload("res://scenes/PaneTargets.gd").valid(key), "The workspace and graph share a canonical terminal pane identity")
+		pids[key] = host.sessions[PaneAddress.id(key)].term.get_shell_pid()
+		await graph.dispatch(PaneAddress.id(key), "agent.event", {"provider": "adapter", "event": "SessionStart"})
+		await graph.dispatch(PaneAddress.id(key), "agent.register", {"inputs": [{"id": "receive", "name": "Receive"}], "outputs": [{"id": "send", "name": "Send"}]})
 	await pinch_overview()
 	links = host.workspace_view.agent_links
 	tools = links.tools
@@ -99,7 +100,7 @@ func play() -> void:
 	key = await connect_to(review)
 	first = add_dot(key, Vector2(0, -65))
 	tools.selected = {first: true}
-	await graph.dispatch(int(source.substr(1)), "graph.disconnect", {"from": source, "to": review, "from_port": "send", "to_port": "receive"})
+	await graph.dispatch(PaneAddress.id(source), "graph.disconnect", {"from": source, "to": review, "from_port": "send", "to_port": "receive"})
 	var disconnect_deadline := Time.get_ticks_msec() + 3000
 	while graph.edges.has(key) and Time.get_ticks_msec() < disconnect_deadline: await process_frame
 	host.workspace_view.refresh()
@@ -110,4 +111,4 @@ func play() -> void:
 	host.workspace_view.refresh()
 	empty_routes()
 	for terminal in pids:
-		check(host.sessions[int(terminal.substr(1))].term.get_shell_pid() == pids[terminal], "Disconnect preserves the terminal shell")
+		check(host.sessions[PaneAddress.id(terminal)].term.get_shell_pid() == pids[terminal], "Disconnect preserves the terminal shell")

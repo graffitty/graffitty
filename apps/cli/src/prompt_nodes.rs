@@ -753,10 +753,10 @@ mod tests {
             (Some("/tmp/session.jsonl".into()), None, 3)
         );
         assert_eq!(
-            reader_fields(&fields("", "%1", "5")).unwrap(),
-            (None, Some("%1".into()), 5)
+            reader_fields(&fields("", "t1", "5")).unwrap(),
+            (None, Some("t1".into()), 5)
         );
-        assert!(reader_fields(&fields("file", "%1", "5")).is_err());
+        assert!(reader_fields(&fields("file", "t1", "5")).is_err());
         for invalid in ["0", "-1", "abc", "", "1.5"] {
             assert!(reader_fields(&fields("", "", invalid)).is_err());
         }

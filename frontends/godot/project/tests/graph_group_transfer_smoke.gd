@@ -1,4 +1,5 @@
 extends "res://tests/tab_window_session_smoke.gd"
+
 ## Real server membership plus the exact canvas preview committed on drop.
 
 func end_drag(point: Vector2) -> void:
@@ -55,14 +56,14 @@ func run() -> void:
 	for id in [first, second]:
 		await connection.remote_call(id, "agent.event", {"provider": "adapter", "event": "SessionStart"})
 		await connection.remote_call(id, "agent.register", {"name": "Test", "inputs": [{"id": "in"}], "outputs": [{"id": "out"}]})
-	var edge := {"from": "%%%d" % first, "to": "%%%d" % second, "from_port": "out", "to_port": "in"}
+	var edge := {"from": PaneAddress.key(first), "to": PaneAddress.key(second), "from_port": "out", "to_port": "in"}
 	var linked: Dictionary = await connection.remote_call(first, "graph.connect", edge)
 	check(not linked.has("error"), "Same-tab graph connection succeeds")
 	await connection.request_action("sync", {})
 	await settled(host)
 	host.select_workspace(source, true)
-	var key := "%%%d" % first
-	var peer := "%%%d" % second
+	var key := PaneAddress.key(first)
+	var peer := PaneAddress.key(second)
 	var tree: Dictionary = host.workspace_layout.tab(source).tree
 	tree.tiling = false
 	tree.physics = false
@@ -116,10 +117,10 @@ func run() -> void:
 		if member == key:
 			check(landed.is_equal_approx(expected[member]), "The dragged pane lands at its preview despite destination tiling and physics")
 		else:
-			var tile: Rect2 = host.workspace_view.pane_rects["%%%d" % destination]
+			var tile: Rect2 = host.workspace_view.pane_rects[PaneAddress.key(destination)]
 			check(landed.size.is_equal_approx(expected[member].size), "Physics preserves the carried pane's size: " + member)
 			check(landed.intersection(tile).get_area() < expected[member].intersection(tile).get_area(), "The carried pane reduces its overlap with the destination tile: " + member)
-	check(host.workspace_layout.containing("%%%d" % third) == source, "Unconnected pane stays behind")
+	check(host.workspace_layout.containing(PaneAddress.key(third)) == source, "Unconnected pane stays behind")
 	# Tab-bar drops also use the pointer-down snapshot, even if a neighbour
 	# changed while the header was still moving inside its original canvas.
 	var baseline: Dictionary = {key: expected[key], peer: expected[peer]}
@@ -148,10 +149,40 @@ func run() -> void:
 	await release_unchanged(host, offer, [key, peer], "Group filling its tab")
 	host.select_workspace(source, true)
 	await settled(host)
-	var sole := "%%%d" % third
+	var sole := PaneAddress.key(third)
 	offer = header_to_bar(host, sole)
 	check(offer.mode == Drag.BLOCKED and offer.hint < 0, "No new-tab slot for a tab's only pane")
 	await release_unchanged(host, offer, [sole], "Sole pane")
+	host.select_workspace(new_tab, true)
+	await settled(host)
+	var view: Control = host.workspace_view
+	var floating: Dictionary = host.workspace_layout.tab(new_tab).tree
+	floating.tiling = false
+	floating.physics = false
+	var area: Rect2 = view.content_rect()
+	for member in [key, peer]:
+		var item := Layout.find(floating, member)
+		item.graph_floating = true
+		item.rect = Rect2(area.end + Vector2(80 if member == key else 560, 80), Vector2(400, 300))
+	view.refresh()
+	host.session_backend.commit_workspace(host)
+	await settled(host)
+	var dragged: Control = view.panes[key]
+	var handle: Vector2 = view.pane_rects[key].position + Vector2(40, 22)
+	dragged.begin_header_drag(view.canvas_root.get_global_transform() * handle)
+	dragged._dragging = true
+	view.moving = key
+	var landing: Vector2 = area.get_center()
+	var screen: Vector2 = app.screen_point(host.get_window(), view.window_point(landing))
+	pointer_position = screen
+	dragged._drag_to(screen, landing - handle)
+	check(view.preview_plan.get("tree", {}).get("tiling", false), "Dragging a floating pane inside Main previews tiling")
+	view.finish_window_move(key)
+	dragged._cancel_drag()
+	await settled(host)
+	var returned: Dictionary = host.workspace_layout.tab(new_tab).tree
+	check(returned.tiling and Layout.main_keys(returned) == [key], "Only the manually returned pane joins Main")
+	check(Layout.find(returned, peer).graph_floating, "Its wired peer stays in the overview")
 	check(error_watch.errors.is_empty(), "No engine errors: " + str(error_watch.errors))
 	print("GRAPH_GROUP_TRANSFER failures=", JSON.stringify(failures))
 	wrapper.connection.disconnect_remote()

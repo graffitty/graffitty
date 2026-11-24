@@ -8,6 +8,7 @@
 //! Saves are rolling: the helper skips one that changed nothing and keeps
 //! history entries an interval apart, as herdr-core keeps one current
 //! `session.json` beside spaced snapshots.
+use graffitty_protocol::pane_id::address as pane_address;
 use crate::{Error, Server, workspace};
 use serde_json::{Value, json};
 use std::{
@@ -133,7 +134,7 @@ pub fn capture(server: &mut Server, names: &[String]) -> Result<Value, Error> {
                 // A running node that opted in relaunches from its own declaration,
                 // with the latest state it reported. Claude and Codex are found
                 // by the CLI's process discovery instead.
-                if let Some(node) = server.graphs.get(name).and_then(|g| g.nodes.get(&format!("%{}",s.id))) {
+                if let Some(node) = server.graphs.get(name).and_then(|g| g.nodes.get(&pane_address(s.id))) {
                     if let Some(restore) = node.get("restore").filter(|_| node["status"] != "offline" && pane.get("filetree").is_none()) {
                         let mut entry = restore.clone();
                         if node["pid"].as_i64().is_some_and(|pid| pid > 0) {
@@ -164,7 +165,7 @@ pub fn capture(server: &mut Server, names: &[String]) -> Result<Value, Error> {
             .filter_map(|pane| pane["id"].as_u64())
             .collect();
         let mut chromiums: Vec<_> = server.chromiums.values()
-            .filter(|b| &b.workspace == name && placed.contains(&format!("%{}", b.id)))
+            .filter(|b| &b.workspace == name && placed.contains(&pane_address(b.id)))
             .map(|b| {
                 let mut entry = b.snapshot();
                 entry["owner"] = if b.owner != b.id && terminals.contains(&b.owner) { json!(b.owner) } else { Value::Null };
@@ -235,9 +236,9 @@ fn restore_spawned(server: &mut Server, workspace: &str, value: &Value, ids: &st
         let links: Vec<Value> = serde_json::from_value(spawned.clone())?;
         for link in links {
             let pane = |field: &str| -> Result<u64, Error> {
-                let saved = link[field].as_i64().ok_or("Invalid spawned link")?;
-                let mapped = ids.get(&format!("%{saved}")).ok_or("Missing restored spawned pane")?;
-                mapped.strip_prefix('%').and_then(|id| id.parse().ok()).ok_or_else(|| "Invalid restored pane".into())
+                let saved = link[field].as_u64().ok_or("Invalid spawned link")?;
+                let mapped = ids.get(&pane_address(saved)).ok_or("Missing restored spawned pane")?;
+                mapped.strip_prefix('t').and_then(|id| id.parse().ok()).ok_or_else(|| "Invalid restored pane".into())
             };
             let (child, parent) = (pane("pane")?, pane("spawned_by")?);
             if child == parent { return Err("A pane cannot spawn itself".into()); }

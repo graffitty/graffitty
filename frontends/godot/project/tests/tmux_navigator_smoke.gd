@@ -1,5 +1,6 @@
 extends "../../../../tests/llm-e2e/suites/godot/tabs-and-panes/replays/main-area-tiling.gd"
 
+
 var socket := ""
 var strokes := 0
 
@@ -34,7 +35,7 @@ func play() -> void:
 	var left := tm(["display-message", "-p", "-t", "nav", "#{pane_id}"])
 	var right := tm(["split-window", "-h", "-P", "-F", "#{pane_id}"])
 	await hold(.3)
-	host.sessions[int(source.substr(1))].term.keystroke.connect(func(_cell, _unicode): strokes += 1)
+	host.sessions[PaneAddress.id(source)].term.keystroke.connect(func(_cell, _unicode): strokes += 1)
 	await keys("ctrl+h")
 	await until(func(): return tm(["display-message", "-p", "-t", "nav", "#{pane_id}"]) == left)
 	check(host.pane_focus == source, "Moving inside tmux stays in its Graffitty pane")

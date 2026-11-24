@@ -101,7 +101,7 @@ mod tests {
 
     #[test]
     fn structured_dispatch_details_survive_without_reclassifying_io_failures() {
-        let details = json!({"code":"read_denied","message":"Permission required","node":"%8"});
+        let details = json!({"code":"read_denied","message":"Permission required","node":"t8"});
         let typed: Error = Box::new(DispatchError(details.clone()));
         assert_eq!(error_details(&typed), details);
         let io: Error = std::io::Error::other("Chromium belongs to another terminal").into();

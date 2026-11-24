@@ -181,8 +181,8 @@ impl GraphClientCore {
         })())
     }
     #[func]
-    fn journal_snapshot(&self, edge: GString) -> VarDictionary {
-        to_variant(&serde_json::to_value(self.state.journal.snapshot(&edge.to_string())).unwrap())
+    fn journal_snapshot(&self, edge: GString, created_revision: i64) -> VarDictionary {
+        to_variant(&serde_json::to_value(self.state.journal.scoped_snapshot(&edge.to_string(), u64::try_from(created_revision).ok())).unwrap())
             .to()
     }
     #[func]

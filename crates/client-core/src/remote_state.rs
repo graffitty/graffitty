@@ -118,16 +118,10 @@ impl Field {
         if matches!(self, Self::Literal | Self::Queues | Self::ByEdge) {
             return text.into();
         }
-        if let Some(rest) = text.strip_prefix('%') {
-            let (number, suffix) = rest
-                .split_once('/')
-                .map(|(n, s)| (n, format!("/{s}")))
-                .unwrap_or((rest, String::new()));
-            if !number.is_empty() && number.bytes().all(|b| b.is_ascii_digit()) {
-                if let Ok(number) = number.parse::<i64>() {
-                    return format!("%{}{suffix}", id(number));
-                }
-            }
+        let (key, suffix) = text.split_once('/').unwrap_or((text, ""));
+        if let Some(surface) = graffitty_protocol::pane_id::parse(key) {
+            let mapped = graffitty_protocol::pane_id::address(id(surface as i64) as u64);
+            return if suffix.is_empty() { mapped } else { format!("{mapped}/{suffix}") };
         }
         if matches!(self, Self::Target | Self::Tab) {
             if let Some(rest) = text.strip_prefix('@') {
@@ -210,7 +204,7 @@ pub fn map_value(value: &serde_json::Value, field: Field, id: &mut dyn FnMut(i64
         Value::Array(items) => Value::Array(items.iter().map(|value| map_value(value,field,id)).collect()),
         Value::Object(object) => Value::Object(object.iter().map(|(key,value)| {
             let mapped = match field {Field::Queues=>Field::Node,Field::ByEdge=>Field::Edge,_=>Field::Literal}.map_with(key,id);
-            let value = if matches!(key.as_str(),"payload" | "content" | "renderings") {value.clone()}
+            let value = if matches!(key.as_str(),"payload" | "content" | "renderings" | "manifest" | "inputs" | "outputs") {value.clone()}
                 else {map_value(value,Field::from_key(key),id)};
             (mapped,value)
         }).collect()),
@@ -267,18 +261,32 @@ mod tests {
     #[test]
     fn identities_roundtrip_without_remapping_titles_or_pids() {
         let mut ns = Namespace::default();
-        ns.bind(WireId(0), LocalId(70));
+        ns.bind(WireId(7), LocalId(70));
         ns.bind(WireId(8), LocalId(80));
-        let edge = Field::Edge.map("%0/out>%8/in", |n| ns.local(WireId(n)).unwrap().0);
-        assert_eq!(edge, "%70/out>%80/in");
+        let edge = Field::Edge.map("t7/out>t8/in", |n| ns.local(WireId(n)).unwrap().0);
+        assert_eq!(edge, "t70/out>t80/in");
         assert_eq!(
             Field::Edge.map(&edge, |n| ns.wire(LocalId(n)).0),
-            "%0/out>%8/in"
+            "t7/out>t8/in"
         );
-        assert_eq!(Field::Literal.map("%0", |_| 999), "%0");
+        assert_eq!(Field::Literal.map("t0", |_| 999), "t0");
         assert_eq!(Field::Tab.map("@8.1", |_| 80), "@80.1");
         assert_eq!(Field::Node.map("%oops", |_| 999), "%oops");
     }
+    #[test]
+    fn custom_port_names_survive_federation() {
+        let ports = serde_json::json!([{"id":"t1"},{"id":"c1"}]);
+        let graph = serde_json::json!({
+            "nodes":[{"node":"t1","manifest":{"outputs":ports},"inputs":ports}],
+            "edges":[{"from":"t1","from_port":"c1","to":"t2","to_port":"t1"}],
+        });
+        let mapped = map_value(&graph, Field::Literal, &mut |id| id + 8);
+        assert_eq!(mapped["nodes"][0]["node"], "t9");
+        assert_eq!(mapped["nodes"][0]["manifest"], graph["nodes"][0]["manifest"]);
+        assert_eq!(mapped["nodes"][0]["inputs"], ports);
+        assert_eq!(mapped["edges"][0], serde_json::json!({"from":"t9","from_port":"c1","to":"t10","to_port":"t1"}));
+    }
+
     #[test]
     fn final_packets_drain_and_only_transient_failures_retry() {
         assert_eq!(

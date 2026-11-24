@@ -1,4 +1,5 @@
 extends "../../../../tests/llm-e2e/replay/replay.gd"
+
 ## Assertions run before yielding a frame: a timer cannot make these pass.
 const Monitor := preload("res://scenes/TerminalResourceMonitor.gd")
 
@@ -12,7 +13,7 @@ func play() -> void:
 	await camera_at_rest()
 	var view: Control = host.workspace_view
 	var key: String = host.pane_focus
-	var id := int(key.substr(1))
+	var id := PaneAddress.id(key)
 	var graph: Node = host.agent_api.graph
 	graph.set_process(false)
 	view.show_overview()

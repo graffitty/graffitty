@@ -1,4 +1,5 @@
 extends "../../tabs-and-panes/replays/main-area-tiling.gd"
+
 ## Fixtures use the owner API; every transfer/cancel uses real pointer/key events.
 var members: Array[String] = []
 var pids := {}
@@ -14,7 +15,7 @@ func connect_request(from: String, to: String, muted := false) -> Dictionary:
 
 func stable_shells() -> void:
 	for key in pids:
-		check(host.sessions[int(key.substr(1))].term.get_shell_pid() == pids[key], "Same shell and pane identity: " + key)
+		check(host.sessions[PaneAddress.id(key)].term.get_shell_pid() == pids[key], "Same shell and pane identity: " + key)
 
 func play() -> void:
 	await say("Prepare a connected group")
@@ -25,15 +26,15 @@ func play() -> void:
 	members.append(host.pane_focus)
 	for i in 3:
 		var reply: Dictionary = await connection.request_action("create", {"kind": "pane", "session": int(members[0].substr(1))})
-		members.append("%%%d" % int(reply.created))
+		members.append(PaneAddress.key(int(reply.created)))
 	var created: Dictionary = await connection.request_action("create", {"kind": "tab"})
 	var destination := int(created.created)
-	var target := "%%%d" % destination
+	var target := PaneAddress.key(destination)
 	await owner_at_rest()
 	var all_keys: Array = members + [target]
 	var names := ["ALPHA", "BRAVO", "CHARLIE", "UNRELATED", "TARGET"]
 	for i in all_keys.size():
-		var id := int(str(all_keys[i]).substr(1))
+		var id := PaneAddress.id(str(all_keys[i]))
 		await host.agent_api.dispatch(id, "window.set_title", {"title": names[i]})
 		pids[all_keys[i]] = host.sessions[id].term.get_shell_pid()
 		await graph.dispatch(id, "agent.event", {"provider": "adapter", "event": "SessionStart"})

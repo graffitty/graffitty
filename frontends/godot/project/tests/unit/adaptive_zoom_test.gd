@@ -102,7 +102,7 @@ func test_main_group_only_applies_to_tiled_main_panes() -> void:
 	var host := MainHost.new()
 	host.workspace_view = MainView.new()
 	host.workspace_layout.tabs = [{"id": 0, "tree": {"tiling": true, "windows": [
-		{"pane": "%1"}, {"pane": "%2", "stashed": true}, {"pane": "%3", "graph_floating": true}]}}]
+		{"pane": "t1"}, {"pane": "t2", "stashed": true}, {"pane": "t3", "graph_floating": true}]}}]
 	var world := FloatingWorld.new()
 	world.host = host
 	expect(world._adaptive_main_rect() == host.workspace_view.content_rect(), "Tiled focus selects all Main")
@@ -122,8 +122,8 @@ func test_main_group_contains_typing_pane_zoom_past_main_edges() -> void:
 	var host := MainHost.new()
 	host.workspace_view = MainView.new()
 	host.workspace_layout.tabs = [{"id": 0, "tree": {"tiling": true, "windows": [
-		{"pane": "%1"}, {"pane": "%2"}, {"pane": "%3", "stashed": true}]}}]
-	host.workspace_view.zoomed = {"%1": Rect2(-60, 0, 1320, 440), "%3": Rect2(1500, 0, 300, 300)}
+		{"pane": "t1"}, {"pane": "t2"}, {"pane": "t3", "stashed": true}]}}]
+	host.workspace_view.zoomed = {"t1": Rect2(-60, 0, 1320, 440), "t3": Rect2(1500, 0, 300, 300)}
 	var world := FloatingWorld.new()
 	world.host = host
 	expect(world._adaptive_main_rect() == Rect2(-60, 0, 1320, 800), "Main frames the magnified tile as drawn")
@@ -138,9 +138,9 @@ func test_main_group_contains_typing_pane_zoom_past_main_edges() -> void:
 func test_main_relations_include_filetrees_of_other_tiled_panes() -> void:
 	var host := MainHost.new()
 	host.workspace_view = MainView.new()
-	host.workspace_view.pane_rects = {"%3": Rect2(1216, 0, 300, 800)}
+	host.workspace_view.pane_rects = {"t3": Rect2(1216, 0, 300, 800)}
 	host.workspace_layout.tabs = [{"id": 0, "tree": {"tiling": true, "windows": [
-		{"pane": "%1"}, {"pane": "%2"}, {"pane": "%3", "stashed": true}]}}]
+		{"pane": "t1"}, {"pane": "t2"}, {"pane": "t3", "stashed": true}]}}]
 	var tree := Node.new()
 	tree.set_meta("filetree_owner", 2)
 	host.sessions[3] = {"term": tree}
@@ -148,7 +148,7 @@ func test_main_relations_include_filetrees_of_other_tiled_panes() -> void:
 	world.host = host
 	world.fx_cfg = Effects.new()
 	var related: Array = world._adaptive_companions()
-	expect(related.size() == 1 and related[0].rect == host.workspace_view.pane_rects["%3"], "Main includes an external tree owned by another tiled pane")
+	expect(related.size() == 1 and related[0].rect == host.workspace_view.pane_rects["t3"], "Main includes an external tree owned by another tiled pane")
 	host.active_session_id = 2
 	expect(world._adaptive_companions() == related, "Changing focus inside Main leaves the group stable")
 	world.fx_cfg.set_option("scene.camera", "adaptive_group", {"filetree": false})

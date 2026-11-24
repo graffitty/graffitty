@@ -1,4 +1,5 @@
 extends "shared_chromium_gpu.gd"
+
 ## Real frontend input routing; no desktop-wide events or clipboard access.
 ## CDP sets up/observes the page, but never injects the input being tested.
 var browser: Node
@@ -70,7 +71,7 @@ func play() -> void:
 	<button id=button onclick="clicks++;document.title='clicked-'+clicks">Click</button>
 	<script>window.clicks=0;window.seen=[];document.addEventListener('keydown',e=>seen.push({target:e.target.id,key:e.key,meta:e.metaKey,ctrl:e.ctrlKey,shift:e.shiftKey}));</script>"""
 	check(await evaluate("document.open();document.write(%s);document.close();true" % JSON.stringify(page)) == true, "Real renderer loads input fixture")
-	var key := "%%%d" % browser.session_id
+	var key := PaneAddress.key(browser.session_id)
 	host.focus_pane(key)
 	host.workspace_view.toggle_fit_pane(key)
 	await camera_at_rest()

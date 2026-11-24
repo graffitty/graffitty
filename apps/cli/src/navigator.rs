@@ -16,7 +16,7 @@ pub struct SelectPane {
     /// Select the pane to the right.
     #[usage(short = 'R')]
     pub right: bool,
-    /// Select a pane (%ID or :tab.pane); with a direction, use it as the starting pane.
+    /// Select a pane (tN or cN or :tab.pane); with a direction, use it as the starting pane.
     #[usage(short = 't', long)]
     pub target: Option<String>,
     /// Originating tmux client's terminal; supplied by the tmux key binding.

@@ -25,18 +25,18 @@ local send = require("graffitty.send")
 local calls = {}
 send.rpc = function(method, params)
   table.insert(calls, { method, params })
-  return { pane = "%99" }
+  return { pane = "t99" }
 end
 vim.keymap.set("n", "-", function() send.send_to_pane() end)
 vim.keymap.set("n", "_", function() send.send_to_pane({ count_is_uid = true, add_newline = false }) end)
 vim.cmd.normal("12-")
 eq(calls[#calls][2].target, ":1.2")
 vim.cmd.normal("5_")
-eq(calls[#calls][2].target, "%5")
+eq(calls[#calls][2].target, "t5")
 eq(calls[#calls][2].enter, false)
 vim.cmd.normal("-")
 send.send_to_pane({ content = { "one", "two" } })
-eq(calls[#calls], { "pane.send", { target = "%99", text = "one\ntwo", enter = true } })
+eq(calls[#calls], { "pane.send", { target = "t99", text = "one\ntwo", enter = true } })
 send.send_to_pane({ pane_identifier = ".2", content = "literal ' $()" })
 eq(calls[#calls][2].target, ".2")
 print("GRAFFITTY_SEND_PASS")

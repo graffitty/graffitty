@@ -208,6 +208,65 @@ class TerminalHolderTests(unittest.TestCase):
         self.assertEqual(len(sessions), 1)
         self.assertNotEqual(sessions[0].get("name"), "one")
 
+    def test_restart_preserves_read_wiring(self):
+        sys.path.insert(0, str(ROOT / "tests/support"))
+        from private_session_e2e import PrivateClient
+
+        self.start_server()
+        pid = self.new_pane("one")
+        transcript = self.root / "source.jsonl"
+        transcript.write_text("source marker\n")
+
+        def read(peer):
+            reply = peer.action("rpc", second, method="graph.read",
+                                params={"node": f"t{first}", "offset": 0})
+            self.assertEqual(reply["type"], "ack", reply)
+            self.assertEqual(reply["result"]["text"], transcript.read_text())
+
+        peer = PrivateClient(json.loads(self.descriptor.read_text())["local"], "one")
+        try:
+            first = peer.topology["panes"][0]["id"]
+            second = peer.action("create", first, kind="pane")["created"]
+            for pane in (first, second):
+                event = {"provider": "codex", "event": "SessionStart"}
+                if pane == first:
+                    event.update(pid=pid, session_id="source", transport="inbox",
+                                 transcript_path=str(transcript))
+                reply = peer.action("rpc", pane, method="agent.event", params=event)
+                self.assertEqual(reply["type"], "ack", reply)
+            edge = {"from": f"t{first}", "to": f"t{second}", "read": True}
+            reply = peer.action("rpc", first, method="graph.connect", params=edge)
+            self.assertEqual(reply["type"], "ack", reply)
+            read(peer)
+            catalog_revision = peer.catalog["revision"]
+        finally:
+            peer.socket.close()
+
+        for restart in range(2):
+            self.gft("server", "restart")
+            peer = PrivateClient(json.loads(self.descriptor.read_text())["local"], "one")
+            try:
+                self.assertGreater(peer.catalog["revision"], catalog_revision)
+                catalog_revision = peer.catalog["revision"]
+                wires = peer.topology["graph"]["edges"]
+                self.assertEqual([{key: wire[key] for key in edge} for wire in wires], [edge])
+                read(peer)
+                self.assertNotIn(str(transcript), json.dumps(peer.topology))
+                if restart == 0:
+                    peer.action("rpc", first, method="agent.event",
+                                params={"event": "SessionStart", "provider": "codex",
+                                        "pid": pid, "session_id": "source", "transcript_path": None,
+                                        "transport": "inbox"})
+                    read(peer)
+                if restart == 1:
+                    peer.action("rpc", first, method="agent.event",
+                                params={"event": "SessionStart", "provider": "codex",
+                                        "pid": pid, "session_id": "replacement"})
+                    denied = peer.action("rpc", second, method="graph.read", params={"node": f"t{first}"})
+                    self.assertEqual(denied["type"], "error", denied)
+            finally:
+                peer.socket.close()
+
     def test_planned_restart_keeps_programs_and_screens(self):
         pane, holder = self.started()
         first = self.server_pid()
@@ -219,6 +278,27 @@ class TerminalHolderTests(unittest.TestCase):
         # Restart twice: a server that adopted terminals must be able to hand them over again.
         self.gft("server", "restart")
         self.assert_kept(pane, holder, 2)
+
+    def test_pane_started_by_claude_has_independent_session(self):
+        parent_keys = {
+            "CLAUDECODE", "CLAUDE_PID", "CLAUDE_CODE_CHILD_SESSION",
+            "CLAUDE_CODE_CHILD_NOTES_DIR", "CLAUDE_CODE_SESSION_ID",
+            "CLAUDE_CODE_SESSION_ATTENDED", "CLAUDE_CODE_MESSAGING_SOCKET",
+            "CLAUDE_CODE_MESSAGING_TOKEN",
+        }
+        self.env.update(dict.fromkeys(parent_keys, "1"))
+        self.env["CLAUDE_CONFIG_DIR"] = str(self.root / "profile")
+        driver = Path(self.env["SHELL"])
+        driver.write_text(
+            '#!/bin/sh\nenv | cut -d= -f1 > "$HOLD_DIR/keys"\n'
+            'echo "$CLAUDE_CONFIG_DIR" > "$HOLD_DIR/profile-path"\n'
+            + DRIVER.partition("\n")[2]
+        )
+        self.start_server()
+        self.new_pane("independent")
+        keys = (self.root / "keys").read_text().splitlines()
+        self.assertEqual(parent_keys.intersection(keys), set())
+        self.assertEqual((self.root / "profile-path").read_text().strip(), self.env["CLAUDE_CONFIG_DIR"])
 
     def test_restart_keeps_the_servers_environment_not_the_callers(self):
         # An agent (or a pane's shell) that restarts the server must not become
@@ -325,6 +405,27 @@ class TerminalHolderTests(unittest.TestCase):
         self.wait(lambda: not alive(pane), "the old session's program to end")
         self.wait(lambda: not alive(holder), "the drained old holder to exit")
         self.assertTrue(alive(newer))
+
+    @unittest.skipUnless(os.environ.get("GRAFFITTY_TEST_003_CLI"), "requires a 0.0.3 release binary")
+    def test_003_holder_adopts_typed_address(self):
+        self.cli = self.root / "installation/tools/gft"
+        self.cli.parent.mkdir(parents=True)
+        shutil.copy(os.environ["GRAFFITTY_TEST_003_CLI"], self.cli)
+        pane, holder = self.started()
+        self.assertIn("GRAFFITTY_PANE=%1", (self.root / f"{pane}.env").read_text())
+        self.gft("internal", "update", "prepare")
+        staged = self.cli.with_suffix(".new")
+        shutil.copy(CLI, staged)
+        os.replace(staged, self.cli)
+        self.gft("internal", "update", "finish")
+        self.assert_kept(pane, holder, 1)
+        self.assertIn("t1", self.gft("pane", "pid", "%1", pane=pane))
+        self.gft("server", "restart")
+        self.assert_kept(pane, holder, 2)
+        self.assertIn("t1", self.gft("pane", "pid", "%1", pane=pane))
+        newer = self.new_pane("two")
+        self.assertIn("GRAFFITTY_PANE=t2", (self.root / f"{newer}.env").read_text())
+        self.assertIn('"error"', self.gft("pane", "pid", "%1", pane=newer, check=False))
 
     def test_versioned_installation_restarts_as_the_version_an_upgrade_made_current(self):
         # The Linux layout: one directory per version, and a `current` link to the one in use.

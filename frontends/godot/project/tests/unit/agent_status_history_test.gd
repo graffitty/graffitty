@@ -34,7 +34,7 @@ class API extends Node:
 	var graph := preload("res://scenes/AgentGraph.gd").new()
 
 class Host extends Node:
-	func is_terminal_pane(key: String) -> bool: return key == "%1"
+	func is_terminal_pane(key: String) -> bool: return key == "t1"
 	var agent_api: Node
 	var workspace_layout := preload("res://scenes/WorkspaceLayout.gd").new()
 	func resource_monitor_for(_id: int) -> Node: return null
@@ -69,19 +69,19 @@ func test_workspace_restores_history_from_server_snapshot() -> void:
 	var view := preload("res://scenes/WorkspaceView.gd").new()
 	view.host = host
 	var strip := Control.new()
-	view.status_strips["%1"] = strip
-	api.graph.changed.connect(view._refresh_status.bind("%1"))
+	view.status_strips["t1"] = strip
+	api.graph.changed.connect(view._refresh_status.bind("t1"))
 	var connection := Node.new()
 	var history := [{"at": "2030-01-01T00:31:15+00:00", "provider": "claude", "status": "waiting"}]
-	var snapshot := {"nodes": [{"node": "%1", "provider": "claude", "status": "waiting", "status_history": history}]}
+	var snapshot := {"nodes": [{"node": "t1", "provider": "claude", "status": "waiting", "status_history": history}]}
 	api.graph.import_remote(connection, snapshot)
-	var shown: Dictionary = view.pane_status["%1"].agent
+	var shown: Dictionary = view.pane_status["t1"].agent
 	expect(shown.since == Badge.unix_time(history[0].at), "The owning server's snapshot reaches the actual status strip")
 	expect(shown.tooltip.contains("Waiting (Claude)"), "Imported history appears in the badge tooltip")
 	api.graph.import_remote(connection, {})
-	expect(view.pane_status["%1"].agent == null, "Disconnect clears the presentation history")
+	expect(view.pane_status["t1"].agent == null, "Disconnect clears the presentation history")
 	api.graph.import_remote(connection, snapshot)
-	expect(view.pane_status["%1"].agent.tooltip == shown.tooltip, "Reconnecting restores the server's original times without inventing transitions")
+	expect(view.pane_status["t1"].agent.tooltip == shown.tooltip, "Reconnecting restores the server's original times without inventing transitions")
 	strip.free()
 	view.free()
 	host.free()

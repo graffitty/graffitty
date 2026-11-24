@@ -1,5 +1,6 @@
 extends "main-area-tiling.gd"
 
+
 func controls(key: String, tiled: bool) -> void:
 	var header: Control = host.workspace_view.panes[key].header
 	await on_header(key, "split_right")
@@ -23,7 +24,7 @@ func play() -> void:
 	if not view.physics_enabled():
 		await view_menu("Floating Pane Physics")
 	var first: String = host.pane_focus
-	var pid: int = host.sessions[int(first.substr(1))].term.get_shell_pid()
+	var pid: int = host.sessions[PaneAddress.id(first)].term.get_shell_pid()
 	view.set_window_rect(first, Rect2(220, 200, 460, 300), true)
 	await hold(0.3)
 	await say("Floating pane: directional icons add right or below")
@@ -62,4 +63,4 @@ func play() -> void:
 	view.inspect_pane(fourth)
 	await camera_at_rest()
 	await controls(fourth, false)
-	check(host.sessions[int(first.substr(1))].term.get_shell_pid() == pid, "Original shell survives creation and mode changes")
+	check(host.sessions[PaneAddress.id(first)].term.get_shell_pid() == pid, "Original shell survives creation and mode changes")

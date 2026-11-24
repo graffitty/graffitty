@@ -1,4 +1,6 @@
 extends RefCounted
+
+const PaneAddress := preload("res://scenes/PaneAddress.gd")
 ## Device-local navigation, keyed by server/session and owner IDs rather than
 ## the presentation IDs allocated again whenever a transport is replaced.
 const Layout := preload("res://scenes/WorkspaceLayout.gd")
@@ -67,7 +69,7 @@ func capture(host: Node, transports: Array) -> void:
 			if group.is_empty(): continue
 			var wire: int = transport.wire_id(id)
 			var focused := str(group.get("focused", ""))
-			var saved := {"focused": transport.wire_id(int(focused.substr(1))) if focused.begins_with("%") else -1}
+			var saved := {"focused": transport.wire_id(PaneAddress.id(focused)) if PaneAddress.id(focused) > 0 else -1}
 			if group.has("navigation"): saved.navigation = group.navigation.duplicate(true)
 			tabs[str(wire)] = saved
 			if host.workspace_layout.active == id: active = wire
@@ -94,7 +96,7 @@ func restore_tab(transport: Node, group: Dictionary) -> void:
 	if not _id(focused): return
 	# Closed or hidden panes cannot regain focus through a saved preference.
 	for key in Layout.keys(group.tree, true):
-		if key.begins_with("%") and transport.wire_id(int(key.substr(1))) == int(focused):
+		if PaneAddress.id(key) > 0 and transport.wire_id(PaneAddress.id(key)) == int(focused):
 			group.focused = key
 			break
 

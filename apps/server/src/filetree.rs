@@ -1,4 +1,5 @@
 //! Connected Neovim file trees. OSC metadata drives updates; no lsof subprocesses.
+use graffitty_protocol::pane_id::address as pane_address;
 use crate::{Error, Server, api, workspace};
 use graffitty_workspace_core::{
     state::Edit,
@@ -321,7 +322,7 @@ pub fn toggle(server: &mut Server, caller: u64, params: &Value) -> Result<Value,
         .map(|(id, _)| *id)
     {
         server.close(pane);
-        return Ok(json!({"closed":format!("%{pane}"),"focus":format!("%{source}")}));
+        return Ok(json!({"closed":pane_address(pane),"focus":pane_address(source)}));
     }
     let session = server
         .sessions
@@ -348,7 +349,7 @@ pub fn toggle(server: &mut Server, caller: u64, params: &Value) -> Result<Value,
     workspace::sync(server, &name)?;
     let before = server.workspace_state.snapshot(&name);
     let mut layout = before.layout.tabs[&tab].clone();
-    let source_key = format!("%{source}");
+    let source_key = pane_address(source);
     if !server.filetrees.loaded {
         server.filetrees.sizes = fs::read(server.descriptor.with_extension("filetree-sizes.json"))
             .ok()
@@ -462,7 +463,7 @@ pub fn toggle(server: &mut Server, caller: u64, params: &Value) -> Result<Value,
                 &mut layout,
                 before.tabs[&tab].area,
                 &source_key,
-                &format!("%{pane}"),
+                &pane_address(pane),
                 size,
                 params["focus"] == true,
             )?;
@@ -491,8 +492,8 @@ pub fn toggle(server: &mut Server, caller: u64, params: &Value) -> Result<Value,
             server.filetrees.active.insert(pane, tree);
             hold_effects(server, source, pane);
             Ok(
-                json!({"pane":format!("%{pane}"),"owner":source_key,"address":address,
-                "focus":format!("%{}",if params["focus"] == true {pane} else {source})}),
+                json!({"pane":pane_address(pane),"owner":source_key,"address":address,
+                "focus":format!("t{}",if params["focus"] == true {pane} else {source})}),
             )
         }
         Err(error) => {
@@ -552,7 +553,7 @@ pub fn closing(server: &mut Server, pane: u64) {
         let tab = session.tab;
         let state = server.workspace_state.snapshot(&name);
         if let Some(mut layout) = state.layout.tabs.get(&tab).cloned() {
-            let key = format!("%{pane}");
+            let key = pane_address(pane);
             if let Some(rect) = layout.arrange(state.tabs[&tab].area).get(&key) {
                 server
                     .filetrees
@@ -563,7 +564,7 @@ pub fn closing(server: &mut Server, pane: u64) {
                     let _ = fs::write(path, bytes);
                 }
             }
-            layout.focused = format!("%{}", tree.owner);
+            layout.focused = pane_address(tree.owner);
             let _ = server.workspace_state.edit(
                 &name,
                 state.revision,
@@ -600,7 +601,7 @@ pub fn poll(server: &mut Server) {
             tree.layout_revision = state.revision;
             if let Some(tab) = server.sessions.get(id).map(|s| s.tab) {
                 if let Some(mut layout) = state.layout.tabs.get(&tab).cloned() {
-                    let key = format!("%{id}");
+                    let key = pane_address(*id);
                     if let Some(rect) = layout.arrange(state.tabs[&tab].area).get(&key) {
                         server
                             .filetrees
@@ -686,13 +687,13 @@ pub fn open_file(server: &mut Server, caller: u64, params: &Value) -> Result<Val
     if let Some((id, address)) = &tree.editor {
         if server.sessions.contains_key(id) {
             crate::regroup::validate_association(server, caller, *id)?;
-            let result = json!({"pane":format!("%{id}"),"kind":"terminal","address":address,"created":false});
+            let result = json!({"pane":pane_address(*id),"kind":"terminal","address":address,"created":false});
             let session = &server.sessions[id];
             let name = session.workspace.clone();
             let tab = session.tab;
             let state = server.workspace_state.snapshot(&name);
             let mut layout = state.layout.tabs[&tab].clone();
-            layout.focused = format!("%{id}");
+            layout.focused = pane_address(*id);
             server.workspace_state.edit(
                 &name,
                 state.revision,
@@ -742,8 +743,8 @@ pub fn open_file(server: &mut Server, caller: u64, params: &Value) -> Result<Val
         place_viewer(
             &mut layout,
             before.tabs[&tab].area,
-            &format!("%{source}"),
-            &format!("%{pane}"),
+            &pane_address(source),
+            &pane_address(pane),
             false,
         )?;
         workspace::sync(server, &name)?;
@@ -765,7 +766,7 @@ pub fn open_file(server: &mut Server, caller: u64, params: &Value) -> Result<Val
     }
     server.sessions.get_mut(&pane).unwrap().builtin_title = "File viewer".into();
     server.filetrees.active.get_mut(&caller).unwrap().editor = Some((pane, address.clone()));
-    Ok(json!({"pane":format!("%{pane}"),"kind":"terminal","address":address,"created":true}))
+    Ok(json!({"pane":pane_address(pane),"kind":"terminal","address":address,"created":true}))
 }
 
 /// A custom filetree's Neovim also edits files. With the bundled filetree the
@@ -928,19 +929,19 @@ fn open_in_chromium(
     let pane = if let Some(id) = existing {
         // Ticket zero is reserved for internal commands with no RPC waiter.
         server.chromiums[&id].command(0, "tab-new".into(), json!({"url":url}))?;
-        layout.focused = format!("%{id}");
+        layout.focused = pane_address(id);
         id
     } else {
         if server.chromiums.len() >= 32 {
             return Err("Server chromium limit reached".into());
         }
-        let id = server.next;
+        let id = server.chromium_identity(None, None)?;
         // Validate placement before starting a new process.
         place_viewer(
             &mut layout,
             before.tabs[&tab].area,
-            &format!("%{source}"),
-            &format!("%{id}"),
+            &pane_address(source),
+            &pane_address(id),
             beside,
         )?;
         let chromium = crate::chromium::Chromium::new(
@@ -953,7 +954,7 @@ fn open_in_chromium(
             &server.settings.chromium,
             std::sync::Arc::clone(&server.resources),
         )?;
-        server.next += 1;
+        server.next_chromium = id + 1;
         server.chromiums.insert(id, chromium);
         id
     };
@@ -985,7 +986,7 @@ fn open_in_chromium(
     }
     server.chromiums.get_mut(&pane).unwrap().owner = controller;
     Ok(
-        json!({"pane":format!("%{pane}"),"chromium":format!("%{pane}"),"kind":"chromium","created":existing.is_none()}),
+        json!({"pane":pane_address(pane),"chromium":pane_address(pane),"kind":"chromium","created":existing.is_none()}),
     )
 }
 
@@ -1032,7 +1033,7 @@ pub fn send(server: &mut Server, caller: u64, params: &Value) -> Result<Value, E
     let target = params["target"].as_str().unwrap_or("connected");
     let target = if target == "connected" {
         format!(
-            "%{}",
+            "t{}",
             server
                 .filetrees
                 .active
@@ -1127,24 +1128,24 @@ mod tests {
         let mut layout = TabLayout {
             enabled: true,
             windows: vec![
-                Window::new("%1", [0., 0., 800., 600.]),
-                Window::new("%2", [0., 0., 800., 600.]),
+                Window::new("t1", [0., 0., 800., 600.]),
+                Window::new("t2", [0., 0., 800., 600.]),
             ],
             ..Default::default()
         };
         let area = [0., 0., 1600., 800.];
         let before = layout.arrange(area);
-        place(&mut layout, area, "%1", "%3", [250., 600.], false).unwrap();
+        place(&mut layout, area, "t1", "t3", [250., 600.], false).unwrap();
         let after = layout.arrange(area);
-        assert_eq!(before["%2"], after["%2"]);
-        assert!((after["%3"][2] - 250.).abs() < 1.);
-        assert_eq!(layout.focused, "%1");
-        layout.remove("%3");
+        assert_eq!(before["t2"], after["t2"]);
+        assert!((after["t3"][2] - 250.).abs() < 1.);
+        assert_eq!(layout.focused, "t1");
+        layout.remove("t3");
         assert_eq!(layout.arrange(area), before);
         layout.windows[0].stashed = true;
-        place(&mut layout, area, "%1", "%4", [280., 450.], true).unwrap();
-        assert!(layout.window("%4").unwrap().stashed);
-        assert_eq!(&layout.window("%4").unwrap().rect[2..], &[280., 450.]);
+        place(&mut layout, area, "t1", "t4", [280., 450.], true).unwrap();
+        assert!(layout.window("t4").unwrap().stashed);
+        assert_eq!(&layout.window("t4").unwrap().rect[2..], &[280., 450.]);
     }
     #[test]
     fn viewer_splits_above_or_beside_owner_without_changing_filetree() {
@@ -1152,22 +1153,22 @@ mod tests {
         for beside in [false, true] {
             let mut layout = TabLayout {
                 enabled: true,
-                windows: vec![Window::new("%1", area)],
+                windows: vec![Window::new("t1", area)],
                 ..Default::default()
             };
-            place(&mut layout, area, "%1", "%2", [300., 800.], false).unwrap();
+            place(&mut layout, area, "t1", "t2", [300., 800.], false).unwrap();
             let before = layout.arrange(area);
-            place_viewer(&mut layout, area, "%1", "%3", beside).unwrap();
+            place_viewer(&mut layout, area, "t1", "t3", beside).unwrap();
             let after = layout.arrange(area);
-            assert_eq!(after["%2"], before["%2"]);
+            assert_eq!(after["t2"], before["t2"]);
             if beside {
-                assert_eq!(after["%3"][1], after["%1"][1]);
-                assert!(after["%1"][0] + after["%1"][2] <= after["%3"][0]);
+                assert_eq!(after["t3"][1], after["t1"][1]);
+                assert!(after["t1"][0] + after["t1"][2] <= after["t3"][0]);
             } else {
-                assert_eq!(after["%3"][0], after["%1"][0]);
-                assert!(after["%3"][1] + after["%3"][3] <= after["%1"][1]);
+                assert_eq!(after["t3"][0], after["t1"][0]);
+                assert!(after["t3"][1] + after["t3"][3] <= after["t1"][1]);
             }
-            layout.remove("%3");
+            layout.remove("t3");
             assert_eq!(layout.arrange(area), before);
         }
     }

@@ -1,4 +1,6 @@
 extends SceneTree
+
+const PaneAddress := preload("res://scenes/PaneAddress.gd")
 const Graph := preload("res://tests/support/ServerGraph.gd")
 const Overlay := preload("res://scenes/AgentGraphOverlay.gd")
 var failures := 0
@@ -14,16 +16,16 @@ func run() -> void:
 	var canvas := Control.new()
 	canvas.size = Vector2(1000, 700)
 	root.add_child(canvas)
-	var rects := {"%1": Rect2(550, 50, 200, 150), "%2": Rect2(60, 450, 150, 100), "%3": Rect2(250, 350, 150, 100), "%4": Rect2(300, 10, 150, 100)}
+	var rects := {"t1": Rect2(550, 50, 200, 150), "t2": Rect2(60, 450, 150, 100), "t3": Rect2(250, 350, 150, 100), "t4": Rect2(300, 10, 150, 100)}
 	for i in range(1, 5):
-		var id := "%%%d" % i
+		var id := PaneAddress.key(i)
 		graph.nodes[id] = {"provider":"adapter"}
 		graph.register_ports(id, {"name":id,"inputs":[{"id":"in","name":"Receive"}],"outputs":[{"id":"out","color":["#89ddbd","#8ecaff","#ffd47a","#ee8585"][i-1]}]})
 		var panel := Panel.new()
 		canvas.add_child(panel)
 		panel.position = rects[id].position
 		panel.size = rects[id].size
-	for i in [2,3,4]: graph.connect_nodes({"from":"%%%d" % i,"from_port":"out","to":"%1","to_port":"in"})
+	for i in [2,3,4]: graph.connect_nodes({"from":PaneAddress.key(i),"from_port":"out","to":"t1","to_port":"in"})
 	var overlay := Overlay.new()
 	canvas.add_child(overlay)
 	overlay.size = canvas.size
@@ -31,12 +33,12 @@ func run() -> void:
 	overlay.sync(rects,graph.edges.values(),func(p):return p,true)
 	for link in overlay.links:
 		var tangent: Vector2 = (link.b - link.controls[2]).normalized()
-		check(tangent.y < 0 if link.source != "%4" else tangent.y > 0, "Wire reaches input from its source's side: " + link.source)
+		check(tangent.y < 0 if link.source != "t4" else tangent.y > 0, "Wire reaches input from its source's side: " + link.source)
 	if DisplayServer.get_name() != "headless":
 		await RenderingServer.frame_post_draw
 		root.get_texture().get_image().save_png("/tmp/graffitty-natural-arrivals.png")
 	# Distinct source panes must not collapse into one return lane either.
-	for i in [2,3,4]: rects["%%%d" % i].position.x = 800 + i * 10
+	for i in [2,3,4]: rects[PaneAddress.key(i)].position.x = 800 + i * 10
 	overlay.sync(rects,graph.edges.values(),func(p):return p,true)
 	var approaches := {}
 	for link in overlay.links:

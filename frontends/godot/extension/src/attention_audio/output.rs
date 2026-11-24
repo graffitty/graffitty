@@ -1,7 +1,31 @@
 use std::{thread, time::Duration};
+#[cfg(not(target_os = "android"))]
+use std::sync::{Arc, atomic::{AtomicUsize, Ordering}, mpsc};
+
+#[derive(Debug, PartialEq, Eq)]
+pub enum Playback { Complete, Skipped }
 
 #[cfg(not(target_os = "android"))]
-pub fn play(pcm: Vec<[f32; 2]>, rate: u32) -> Result<(), String> {
+#[derive(Debug, PartialEq, Eq)]
+enum Attempt { Complete, NeverStarted, Stalled }
+
+#[cfg(not(target_os = "android"))]
+fn with_fresh_device(mut attempt: impl FnMut() -> Result<Attempt, String>) -> Result<Playback, String> {
+    let mut result = attempt()?;
+    if result == Attempt::NeverStarted {
+        result = attempt()?;
+    }
+    Ok(if result == Attempt::Complete { Playback::Complete } else { Playback::Skipped })
+}
+
+#[cfg(not(target_os = "android"))]
+pub fn play(pcm: Vec<[f32; 2]>, rate: u32) -> Result<Playback, String> {
+    let pcm: Arc<[[f32; 2]]> = pcm.into();
+    with_fresh_device(|| play_once(Arc::clone(&pcm), rate))
+}
+
+#[cfg(not(target_os = "android"))]
+fn play_once(pcm: Arc<[[f32; 2]]>, rate: u32) -> Result<Attempt, String> {
     use cpal::traits::{DeviceTrait, HostTrait};
     let device = cpal::default_host().default_output_device().ok_or("No audio output device")?;
     let supported = device.default_output_config().map_err(|e| e.to_string())?;
@@ -16,11 +40,11 @@ pub fn play(pcm: Vec<[f32; 2]>, rate: u32) -> Result<(), String> {
 
 #[cfg(not(target_os = "android"))]
 fn desktop<T: cpal::SizedSample + cpal::FromSample<f32>>(
-    device: &cpal::Device, config: &cpal::StreamConfig, pcm: Vec<[f32; 2]>, rate: u32,
-) -> Result<(), String> {
+    device: &cpal::Device, config: &cpal::StreamConfig, pcm: Arc<[[f32; 2]]>, rate: u32,
+) -> Result<Attempt, String> {
     use cpal::traits::{DeviceTrait, StreamTrait};
-    use std::sync::mpsc;
-    let duration = Duration::from_secs_f64(pcm.len() as f64 / rate as f64);
+    let progress = Arc::new(AtomicUsize::new(0));
+    let rendered = Arc::clone(&progress);
     let channels = config.channels as usize;
     let step = rate as f64 / config.sample_rate as f64;
     let (tx, rx) = mpsc::channel();
@@ -40,22 +64,45 @@ fn desktop<T: cpal::SizedSample + cpal::FromSample<f32>>(
             }
             cursor += step;
         }
+        rendered.store((cursor as usize).min(pcm.len()), Ordering::Relaxed);
         if cursor >= pcm.len() as f64 && !finished {
             finished = true;
             let _ = tx.send(Ok(()));
         }
     }, move |e| { let _ = errors.send(Err(e.to_string())); }, None).map_err(|e| e.to_string())?;
     stream.play().map_err(|e| e.to_string())?;
-    rx.recv_timeout(duration + Duration::from_secs(3)).map_err(|e| e.to_string())??;
+    if !wait_for_output(rx, &progress, Duration::from_secs(3))? {
+        // Close before deciding to retry: the callback may have run during teardown.
+        drop(stream);
+        return Ok(if progress.load(Ordering::Relaxed) == 0 { Attempt::NeverStarted } else { Attempt::Stalled });
+    }
     // Drain the last output buffer before dropping the device.
     thread::sleep(Duration::from_millis(250));
     drop(stream);
-    Ok(())
+    Ok(Attempt::Complete)
+}
+
+#[cfg(not(target_os = "android"))]
+fn wait_for_output(
+    completion: mpsc::Receiver<Result<(), String>>, progress: &AtomicUsize, timeout: Duration,
+) -> Result<bool, String> {
+    let mut previous = 0;
+    loop {
+        match completion.recv_timeout(timeout) {
+            Ok(result) => return result.map(|()| true),
+            Err(mpsc::RecvTimeoutError::Disconnected) => return Err("Audio output disconnected".into()),
+            Err(mpsc::RecvTimeoutError::Timeout) => {
+                let current = progress.load(Ordering::Relaxed);
+                if current == previous { return Ok(false); }
+                previous = current;
+            }
+        }
+    }
 }
 
 #[cfg(target_os = "android")]
 #[allow(non_snake_case)]
-pub fn play(pcm: Vec<[f32; 2]>, rate: u32) -> Result<(), String> {
+pub fn play(pcm: Vec<[f32; 2]>, rate: u32) -> Result<Playback, String> {
     use std::{ffi::c_void, ptr};
     // AAudio is available on every supported Android version. No Activity or
     // microphone permission is needed; opening happens only on this worker.
@@ -110,6 +157,36 @@ pub fn play(pcm: Vec<[f32; 2]>, rate: u32) -> Result<(), String> {
         })();
         AAudioStream_requestStop(stream);
         AAudioStream_close(stream);
-        result
+        result.map(|()| Playback::Complete)
+    }
+}
+
+#[cfg(all(test, not(target_os = "android")))]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn stalled_output_expires_and_device_failures_remain_errors() {
+        let progress = AtomicUsize::new(0);
+        let (tx, rx) = mpsc::channel();
+        assert!(!wait_for_output(rx, &progress, Duration::from_millis(1)).unwrap());
+        drop(tx);
+        let (tx, rx) = mpsc::channel();
+        tx.send(Err("device lost".into())).unwrap();
+        assert_eq!(wait_for_output(rx, &progress, Duration::ZERO), Err("device lost".into()));
+    }
+
+    #[test]
+    fn retry_only_when_no_frames_rendered() {
+        for (attempts, expected) in [
+            (vec![Attempt::NeverStarted, Attempt::Complete], Playback::Complete),
+            (vec![Attempt::NeverStarted, Attempt::NeverStarted], Playback::Skipped),
+            (vec![Attempt::Stalled], Playback::Skipped),
+            (vec![Attempt::Complete], Playback::Complete),
+        ] {
+            let mut results = attempts.into_iter();
+            assert_eq!(with_fresh_device(|| Ok(results.next().unwrap())).unwrap(), expected);
+            assert!(results.next().is_none());
+        }
     }
 }

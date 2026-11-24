@@ -55,6 +55,15 @@ impl Connection {
             Self::Network(peer) => peer.pending,
         }
     }
+    pub fn allow_authenticated_uploads(&mut self) {
+        if let Self::Network(peer) = self {
+            let limit = graffitty_protocol::file_transfer::MAX_UPLOAD_MESSAGE + graffitty_remote_auth::CHANNEL_OVERHEAD;
+            peer.socket.set_config(|config| {
+                config.max_message_size = Some(limit);
+                config.max_frame_size = Some(limit);
+            });
+        }
+    }
     pub fn is_local(&self) -> bool {
         matches!(self, Self::Local(_))
     }

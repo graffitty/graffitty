@@ -3,6 +3,15 @@
 Once connected, programs keep running on the server. **Detach** leaves them
 running. **Kill Session** ends the selected session and its programs.
 
+Connecting to a server with no sessions automatically opens its first shell.
+Simultaneous connections share that session. If the shell cannot start, choose
+**Retry** after fixing the server's shell configuration, or **Cancel** to return
+to Servers. Closing the last session deliberately does not start another shell.
+
+After a network interruption, the app redials immediately and returns to its session once the server is reachable. Failed dials back off from 250 ms to 30 seconds. Switching from Wi-Fi to cellular requires a working route to the same server, such as a VPN for a private address.
+
+A running `gft remote connect --no-gui --alias build` checks for silent connections with a heartbeat and restores its alias after a tunnel interruption. If a command loses its reply, check the remote pane before repeating it. The command may already have run.
+
 ## Know where data lives
 
 - **On the server:** programs, terminal contents, Chromium profiles, files, and graph work.
@@ -46,7 +55,7 @@ running. **Kill Session** ends the selected session and its programs.
 
 ```sh
 # Upload and paste the completed path, without Enter.
-gft terminal put --target 'build/%12' --paste screenshot.png
+gft terminal put --target 'build/t12' --paste screenshot.png
 
 # Upload only; print the destination path and byte count as JSON.
 gft terminal put -t 'build/work:1.2' --json screenshot.png
@@ -54,7 +63,7 @@ gft terminal put -t 'build/work:1.2' --json screenshot.png
 
 - Omit the target inside the destination Graffitty terminal.
 - Files must be no larger than **32 MiB**.
-- Paste actions also transfer clipboard images and paste their completed path.
-- Partial uploads never paste a path. Completed attachments remain until their terminal closes.
+- When you paste an image into a local terminal, Graffitty writes the file directly on this computer and pastes its quoted path. For a remote terminal, it uploads the image to the terminal’s owner first.
+- Remote uploads start at 4 KiB per chunk and adjust to the link, up to 1 MiB. Partial uploads never paste a path. Completed attachments remain until their terminal closes.
 - The receiving agent must support image paths as attachments.
 - An SSH shell inside a local pane is not an attached Graffitty server. Connect Graffitty to the computer running the agent first.

@@ -1,4 +1,6 @@
 extends SceneTree
+
+const PaneAddress := preload("res://scenes/PaneAddress.gd")
 const Graph := preload("res://tests/support/ServerGraph.gd")
 const Overlay := preload("res://scenes/AgentGraphOverlay.gd")
 const Layout := preload("res://scenes/WorkspaceLayout.gd")
@@ -7,7 +9,7 @@ var failures := 0
 class Host extends Node:
 	signal ui_changed
 	var workspace_layout := Layout.new()
-	var pane_focus := "%0"
+	var pane_focus := "t0"
 
 class View extends Control:
 	var host := Host.new()
@@ -54,12 +56,12 @@ func run() -> void:
 	root.add_child(graph)
 	graph.set_process(false)
 	# Advertised ports exercise the same server authority as the application.
-	for i in 3: graph.nodes["%%%d" % i] = {"provider": "adapter", "manifest": {"inputs": [{"id": "in", "color": "#8ecaff"}], "outputs": [{"id": "out", "mode": "send", "color": "#89ddbd"}]}}
+	for i in 3: graph.nodes[PaneAddress.key(i)] = {"provider": "adapter", "manifest": {"inputs": [{"id": "in", "color": "#8ecaff"}], "outputs": [{"id": "out", "mode": "send", "color": "#89ddbd"}]}}
 	var view := View.new()
 	root.add_child(view)
 	view.size = Vector2(1100, 800)
 	var windows: Array = []
-	for i in 3: windows.append({"pane": "%%%d" % i, "rect": Rect2(60 + i * 350, 200 + i * 110, 220, 160)})
+	for i in 3: windows.append({"pane": PaneAddress.key(i), "rect": Rect2(60 + i * 350, 200 + i * 110, 220, 160)})
 	view.host.workspace_layout.add(0, {"windows": windows, "tiling": false})
 	var overlay := Overlay.new()
 	view.add_child(overlay)
@@ -73,50 +75,50 @@ func run() -> void:
 	# Port dragging is exercised with real advertised ports in graph_ports_smoke.
 	# The server derives permissions from the advertised output.
 	tools.begin_edit()
-	graph.connect_nodes({"from": "%0", "to": "%1", "send": true, "contains": "queued"})
+	graph.connect_nodes({"from": "t0", "to": "t1", "send": true, "contains": "queued"})
 	tools.finish_edit()
 	tools.undo()
 	check(graph.edges.is_empty(), "Undo removes the new connection")
 	tools.redo()
-	check(graph.edges.has("%0/out>%1/in"), "Redo restores its settings")
+	check(graph.edges.has("t0/out>t1/in"), "Redo restores its settings")
 	view.refresh()
 	var link: Dictionary = overlay.links[0]
 	var middle: Vector2 = link.points[12]
 	var double := mouse(middle, true)
 	double.double_click = true
 	tools._input(double)
-	check(tools.visual().routes["%0/out>%1/in"].size() == 1, "Double-click inserts a visual reroute")
+	check(tools.visual().routes["t0/out>t1/in"].size() == 1, "Double-click inserts a visual reroute")
 	tools._input(mouse(middle, true))
 	tools._input(motion(middle + Vector2(0, 90)))
 	tools._input(mouse(middle + Vector2(0, 90), false))
-	check(tools.visual().reroutes[tools.visual().routes["%0/out>%1/in"][0]].position.distance_to(middle + Vector2(0, 90)) < 0.1, "Waypoint drag changes the wire path")
+	check(tools.visual().reroutes[tools.visual().routes["t0/out>t1/in"][0]].position.distance_to(middle + Vector2(0, 90)) < 0.1, "Waypoint drag changes the wire path")
 	check(graph.edges.size() == 1, "Rerouting does not create agents or permissions")
 	tools.undo()
-	check(tools.visual().reroutes[tools.visual().routes["%0/out>%1/in"][0]].position.distance_to(middle) < 0.1, "Waypoint movement is undoable")
+	check(tools.visual().reroutes[tools.visual().routes["t0/out>t1/in"][0]].position.distance_to(middle) < 0.1, "Waypoint movement is undoable")
 	# Pause cancels queued events; undo restores permissions, not old messages.
-	graph.connect_nodes(graph.edges["%0/out>%1/in"].merged({"send": true, "contains": "queued"}, true))
-	graph.enqueue("%0", "%1", "queued", "message")
+	graph.connect_nodes(graph.edges["t0/out>t1/in"].merged({"send": true, "contains": "queued"}, true))
+	graph.enqueue("t0", "t1", "queued", "message")
 	tools.begin_edit()
-	graph.connect_nodes(graph.edges["%0/out>%1/in"].merged({"muted": true}, true))
+	graph.connect_nodes(graph.edges["t0/out>t1/in"].merged({"muted": true}, true))
 	tools.finish_edit()
-	check(graph.queues["%1"].is_empty(), "Mute cancels pending work")
-	check(graph.enqueue("%0", "%1", "blocked", "message").has("error"), "Muted sends are rejected")
-	var context: Dictionary = await graph.lifecycle("%1", {"provider": "adapter", "event": "PreToolUse"})
+	check(graph.queues["t1"].is_empty(), "Mute cancels pending work")
+	check(graph.enqueue("t0", "t1", "blocked", "message").has("error"), "Muted sends are rejected")
+	var context: Dictionary = await graph.lifecycle("t1", {"provider": "adapter", "event": "PreToolUse"})
 	check(context.result.graph_changed and context.result.adjacent.incoming[0].muted, "Next hook teaches the muted connection")
-	await graph.lifecycle("%0", {"provider": "adapter", "event": "Stop", "text": "finished while paused"})
-	check(graph.queues["%1"].is_empty(), "Muted turn completion notifications are skipped")
+	await graph.lifecycle("t0", {"provider": "adapter", "event": "Stop", "text": "finished while paused"})
+	check(graph.queues["t1"].is_empty(), "Muted turn completion notifications are skipped")
 	tools.undo()
-	check(not graph.edges["%0/out>%1/in"].muted and graph.queues["%1"].is_empty(), "Undo mute restores settings without replaying cancelled work")
+	check(not graph.edges["t0/out>t1/in"].muted and graph.queues["t1"].is_empty(), "Undo mute restores settings without replaying cancelled work")
 	# Move the destination with the real Alt-drag interaction.
 	view.refresh()
-	tools._input(mouse(overlay.port_center("%1/in", false), true, MOUSE_BUTTON_LEFT, true))
+	tools._input(mouse(overlay.port_center("t1/in", false), true, MOUSE_BUTTON_LEFT, true))
 	check(tools.gesture.get("kind") == "reconnect", "Alt-drag starts a reconnect preview")
-	tools._input(motion(overlay.port_center("%2/in", false)))
-	tools._input(mouse(overlay.port_center("%2/in", false), false))
-	check(graph.edges.has("%0/out>%2/in") and not graph.edges.has("%0/out>%1/in"), "Reconnect moves the endpoint")
-	check(graph.edges["%0/out>%2/in"].send and graph.edges["%0/out>%2/in"].contains == "queued", "Reconnect retains permissions")
+	tools._input(motion(overlay.port_center("t2/in", false)))
+	tools._input(mouse(overlay.port_center("t2/in", false), false))
+	check(graph.edges.has("t0/out>t2/in") and not graph.edges.has("t0/out>t1/in"), "Reconnect moves the endpoint")
+	check(graph.edges["t0/out>t2/in"].send and graph.edges["t0/out>t2/in"].contains == "queued", "Reconnect retains permissions")
 	tools.undo()
-	check(graph.edges.has("%0/out>%1/in"), "Reconnect is undoable")
+	check(graph.edges.has("t0/out>t1/in"), "Reconnect is undoable")
 	view.refresh()
 	link = overlay.links[0]
 	middle = link.points[10]
@@ -125,22 +127,22 @@ func run() -> void:
 	tools._input(mouse(middle + Vector2(0, 50), false, MOUSE_BUTTON_RIGHT, true))
 	check(graph.edges.is_empty(), "Cut gesture disconnects intersected wires")
 	tools.undo()
-	check(graph.edges.has("%0/out>%1/in"), "Cut undo restores the edge")
+	check(graph.edges.has("t0/out>t1/in"), "Cut undo restores the edge")
 	# Fitting selected terminals remains available without grouping.
-	tools.selected = {"%0": true, "%1": true}
+	tools.selected = {"t0": true, "t1": true}
 	tools.fit_selected()
 	check(view.navigation_center == tools.bounds_for(tools.selection()).get_center(), "Fit selected centers the camera on the selection")
-	tools.selected = {"%0": true}
+	tools.selected = {"t0": true}
 	tools.fit_connected()
-	check(view.navigation_center == tools.bounds_for(["%0", "%1"]).get_center(), "Fit connected includes connected neighbors")
-	check(tools.related({"source": "%0", "target": "%1"}) and not tools.related({"source": "%1", "target": "%2"}), "Selection highlights incident links and dims unrelated links")
+	check(view.navigation_center == tools.bounds_for(["t0", "t1"]).get_center(), "Fit connected includes connected neighbors")
+	check(tools.related({"source": "t0", "target": "t1"}) and not tools.related({"source": "t1", "target": "t2"}), "Selection highlights incident links and dims unrelated links")
 	# Do not overwrite an external agent's newer edge edit with undo.
 	tools.begin_edit()
-	graph.disconnect_nodes("%0", "%1")
+	graph.disconnect_nodes("t0", "t1")
 	tools.finish_edit()
-	graph.connect_nodes({"from": "%0", "to": "%1", "muted": true})
+	graph.connect_nodes({"from": "t0", "to": "t1", "muted": true})
 	tools.undo()
-	check(graph.edges["%0/out>%1/in"].muted, "Undo preserves conflicting external changes")
+	check(graph.edges["t0/out>t1/in"].muted, "Undo preserves conflicting external changes")
 	# Source-derived topology: shared output cuts and downstream mute propagation.
 	var topology := preload("res://scenes/GraphVisualTopology.gd")
 	var data := {"routes": {}, "groups": []}
@@ -178,15 +180,15 @@ func run() -> void:
 	tools.visual().routes.clear()
 	tools.visual().reroutes.clear()
 	tools.selected.clear()
-	graph.connect_nodes({"from": "%0", "to": "%1", "send": true})
-	graph.connect_nodes({"from": "%0", "to": "%2", "send": true})
+	graph.connect_nodes({"from": "t0", "to": "t1", "send": true})
+	graph.connect_nodes({"from": "t0", "to": "t2", "send": true})
 	view.refresh()
-	var output_at: Vector2 = overlay.port_center("%0/out", true)
+	var output_at: Vector2 = overlay.port_center("t0/out", true)
 	var detach_drag := mouse(output_at, true)
 	detach_drag.ctrl_pressed = true
 	tools._input(detach_drag)
 	check(tools.gesture.kind == "reconnect" and tools.gesture.edges.size() == 2, "Ctrl-drag output picks every outgoing link")
-	check(tools.preview_detached("%0/out>%1/in") and graph.edges.size() == 2, "Detach preview leaves permissions intact until drop")
+	check(tools.preview_detached("t0/out>t1/in") and graph.edges.size() == 2, "Detach preview leaves permissions intact until drop")
 	var escape := InputEventKey.new()
 	escape.keycode = KEY_ESCAPE
 	escape.pressed = true
@@ -198,19 +200,19 @@ func run() -> void:
 	tools.undo()
 	check(graph.edges.size() == 2, "Batch reconnect undo restores all edges as one edit")
 	# Input sockets select the wire under the cursor, remembering the last hit.
-	graph.disconnect_nodes("%0", "%1")
-	graph.connect_nodes({"from": "%1", "to": "%2", "send": true})
+	graph.disconnect_nodes("t0", "t1")
+	graph.connect_nodes({"from": "t1", "to": "t2", "send": true})
 	view.refresh()
-	tools._input(mouse(overlay.port_center("%2/in", false), true))
+	tools._input(mouse(overlay.port_center("t2/in", false), true))
 	check(tools.gesture.kind == "pick_input", "Multi-input starts link selection instead of picking the first edge")
-	var incoming: Dictionary = overlay.links.filter(func(item): return item.source == "%1")[0]
+	var incoming: Dictionary = overlay.links.filter(func(item): return item.source == "t1")[0]
 	tools._input(motion(incoming.points[8]))
-	check(tools.gesture.kind == "reconnect" and tools.gesture.edge.from == "%1", "Following a multi-input wire selects that particular connection")
+	check(tools.gesture.kind == "reconnect" and tools.gesture.edge.from == "t1", "Following a multi-input wire selects that particular connection")
 	tools._input(escape)
 	# A gesture crosses two fan-out branches; the shared reroute is not an agent.
 	for edge in graph.edges.values().duplicate(): graph.disconnect_edge(edge)
-	graph.connect_nodes({"from": "%0", "to": "%1", "send": true})
-	graph.connect_nodes({"from": "%0", "to": "%2", "send": true})
+	graph.connect_nodes({"from": "t0", "to": "t1", "send": true})
+	graph.connect_nodes({"from": "t0", "to": "t2", "send": true})
 	view.refresh()
 	var wire_a: Dictionary = overlay.links[0]
 	var wire_b: Dictionary = overlay.links[1]
@@ -239,16 +241,16 @@ func run() -> void:
 	check(is_equal_approx(tools.camera_factor(Vector2.ZERO, 1.0, Vector2.ZERO, 2.0), 1.0), "Blender camera duration factor saturates on doubled zoom")
 	check(is_zero_approx(tools.camera_factor(Vector2.ZERO, 1.0, Vector2.ZERO, 1.0)), "Unchanged camera has zero animation factor")
 	check(preload("res://scenes/GraphLinkGeometry.gd").interaction_curve(Vector2.ZERO, Vector2(100, 200)).size() == 25, "Gesture intersection uses Blender's 25 CPU samples")
-	var old_route: Array = tools.visual().routes["%0/out>%1/in"].duplicate()
-	check(tools.reconnect(graph.edges["%0/out>%1/in"], "from", "%2/out"), "A shared branch can move to a different source")
-	check(tools.visual().routes["%2/out>%1/in"] != old_route and tools.visual().routes["%0/out>%2/in"] == old_route, "Source reconnect splits reroutes without changing the other branch")
+	var old_route: Array = tools.visual().routes["t0/out>t1/in"].duplicate()
+	check(tools.reconnect(graph.edges["t0/out>t1/in"], "from", "t2/out"), "A shared branch can move to a different source")
+	check(tools.visual().routes["t2/out>t1/in"] != old_route and tools.visual().routes["t0/out>t2/in"] == old_route, "Source reconnect splits reroutes without changing the other branch")
 	tools.undo()
 	# Each direction has its own displayed path and cut target.
 	for edge in graph.edges.values().duplicate(): graph.disconnect_edge(edge)
 	tools.visual().routes.clear()
 	tools.visual().reroutes.clear()
-	graph.connect_nodes({"from": "%0", "to": "%1", "send": true})
-	graph.connect_nodes({"from": "%1", "to": "%0", "send": true})
+	graph.connect_nodes({"from": "t0", "to": "t1", "send": true})
+	graph.connect_nodes({"from": "t1", "to": "t0", "send": true})
 	view.refresh()
 	var bidirectional: Dictionary = overlay.links[0]
 	check(overlay.links.size() == 2 and tools.visual_segments().size() == 2, "Bidirectional links have two independent displayed and selectable paths")
@@ -258,7 +260,7 @@ func run() -> void:
 	tools._input(cut_drag)
 	tools._input(motion(cut_at + Vector2(0, 40)))
 	tools._input(mouse(cut_at + Vector2(0, 40), false, MOUSE_BUTTON_RIGHT))
-	check(graph.edges.size() == 1 and graph.edges.has("%1/out>%0/in"), "Cut removes only the forward wire and preserves feedback")
+	check(graph.edges.size() == 1 and graph.edges.has("t1/out>t0/in"), "Cut removes only the forward wire and preserves feedback")
 	tools.undo()
 	check(graph.edges.size() == 2, "Cut undo restores the removed direction")
 	# Removed grouping cannot capture terminal keys or show controls.
@@ -303,13 +305,13 @@ func run() -> void:
 	check(not tools.handle_undo_shortcut(undo_key), "Unconsumed browser undo release reaches its owner")
 	check(tools.visual() == visual_before, "Browser editing shortcuts leave graph history intact")
 	view.text_focus = false
-	var feedback_source := overlay.port_center("%2/out", true)
-	var feedback_target := overlay.port_center("%0/in", false)
-	var feedback_preview: Dictionary = tools.route_points("%2/out>%0/in", feedback_source, feedback_target)
-	var lower_edge := maxf(overlay.pane_screen_bounds["%2"].end.y, overlay.pane_screen_bounds["%0"].end.y)
+	var feedback_source := overlay.port_center("t2/out", true)
+	var feedback_target := overlay.port_center("t0/in", false)
+	var feedback_preview: Dictionary = tools.route_points("t2/out>t0/in", feedback_source, feedback_target)
+	var lower_edge := maxf(overlay.pane_screen_bounds["t2"].end.y, overlay.pane_screen_bounds["t0"].end.y)
 	check(Array(feedback_preview.points).any(func(point): return is_equal_approx(point.y, lower_edge + 40.0)), "Feedback preview clears both endpoint panes by 40px")
-	var free_preview: Dictionary = tools.route_points("%2>", feedback_source, feedback_target)
-	check(Array(free_preview.points).any(func(point): return is_equal_approx(point.y, maxf(feedback_target.y, overlay.pane_screen_bounds["%2"].end.y) + 40.0)), "Unsnapped backward preview clears the source pane")
+	var free_preview: Dictionary = tools.route_points("t2>", feedback_source, feedback_target)
+	check(Array(free_preview.points).any(func(point): return is_equal_approx(point.y, maxf(feedback_target.y, overlay.pane_screen_bounds["t2"].end.y) + 40.0)), "Unsnapped backward preview clears the source pane")
 	view.refresh()
 	var rebuilds: int = overlay.geometry_rebuilds
 	for i in 20: view.refresh()

@@ -5,7 +5,7 @@ var failures: Array[String] = []
 
 class Host extends Node:
 	var application: Dictionary
-	var pane_focus := "%1"
+	var pane_focus := "t1"
 	func focus_pane(_key: String) -> void: pass
 
 func _initialize() -> void: _run.call_deferred()

@@ -5,25 +5,25 @@ const Links := preload("res://scenes/WorkspaceChromiumLinks.gd")
 func test_multiple_chromiums_follow_their_owner() -> void:
 	var links := Links.new()
 	var rects := {
-		"%1": Rect2(0, 0, 200, 200),
-		"%2": Rect2(0, 500, 200, 200),
-		"%3": Rect2(300, 0, 200, 100),
-		"%4": Rect2(300, 150, 200, 100),
+		"t1": Rect2(0, 0, 200, 200),
+		"t2": Rect2(0, 500, 200, 200),
+		"t3": Rect2(300, 0, 200, 100),
+		"t4": Rect2(300, 150, 200, 100),
 	}
-	var owners := {"%3": "%1", "%4": "%1"}
+	var owners := {"t3": "t1", "t4": "t1"}
 	links.sync(rects, owners)
 	expect(links.edges.size() == 2, "One terminal can have two chromium edges")
 	for edge in links.edges:
 		expect(is_equal_approx(edge[0].x, 200), "Edges start at the owning terminal perimeter")
 		expect(is_equal_approx(edge[-1].x, 300), "Edges end at each chromium perimeter")
 	var previous: Vector2 = links.edges[0][-1]
-	rects["%3"] = Rect2(500, 0, 200, 100)
+	rects["t3"] = Rect2(500, 0, 200, 100)
 	links.sync(rects, owners)
 	expect(links.edges[0][-1] != previous, "Moving a chromium updates its connector")
-	rects.erase("%3")
+	rects.erase("t3")
 	links.sync(rects, owners)
 	expect(links.edges.size() == 1, "Hiding a chromium removes only its edge")
-	rects.erase("%1")
+	rects.erase("t1")
 	links.sync(rects, owners)
 	expect(links.edges.is_empty(), "Hidden owners leave no dangling edges")
 	links.free()

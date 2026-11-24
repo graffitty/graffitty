@@ -214,7 +214,7 @@ fn push_history(history: &mut VecDeque<Snapshot>, state: Snapshot) {
 mod tests {
     use super::*;
     fn live(ids: &[u64]) -> Vec<(u64, Window)> {
-        ids.iter().map(|id| (1, Window::new(format!("%{id}"), [24., 60., 800., 500.]))).collect()
+        ids.iter().map(|id| (1, Window::new(format!("t{id}"), [24., 60., 800., 500.]))).collect()
     }
     fn move_pane(owner: &mut Authority, x: f32) {
         let mut state = owner.snapshot().clone();
@@ -224,15 +224,15 @@ mod tests {
     #[test]
     fn regroup_preserves_group_geometry_into_tiled_tab_and_is_atomic() {
         let mut owner = Authority::default();
-        owner.reconcile(&[(1, Window::new("%1", [50., 60., 400., 300.])),
-            (1, Window::new("%2", [700., 200., 500., 400.])),
-            (1, Window::new("%3", [10., 900., 400., 300.])),
-            (2, Window::new("%4", [0., 0., 600., 500.]))]).unwrap();
+        owner.reconcile(&[(1, Window::new("t1", [50., 60., 400., 300.])),
+            (1, Window::new("t2", [700., 200., 500., 400.])),
+            (1, Window::new("t3", [10., 900., 400., 300.])),
+            (2, Window::new("t4", [0., 0., 600., 500.]))]).unwrap();
         let mut state = owner.snapshot().clone();
         state.layout.tabs.get_mut(&2).unwrap().enabled = true;
         owner.apply(state.revision, Edit::Replace { state }).unwrap();
         let before = owner.snapshot().clone();
-        let keys = BTreeSet::from(["%1".into(), "%2".into()]);
+        let keys = BTreeSet::from(["t1".into(), "t2".into()]);
         owner.regroup(&keys, 1, 2, true).unwrap();
         let after = owner.snapshot();
         let rectangles = after.layout.tabs[&2].clone().arrange(after.tabs[&2].area);
@@ -243,16 +243,16 @@ mod tests {
         }
         assert_eq!(after.layout.tabs[&1].windows.len(), 1);
         let before = owner.snapshot().clone();
-        assert!(owner.regroup(&BTreeSet::from(["%1".into(), "%3".into()]), 1, 3, true).is_err());
+        assert!(owner.regroup(&BTreeSet::from(["t1".into(), "t3".into()]), 1, 3, true).is_err());
         assert_eq!(*owner.snapshot(), before);
         owner.regroup(&keys, 2, 3, true).unwrap();
-        assert_eq!(owner.snapshot().layout.tabs[&3].clone().arrange(owner.snapshot().tabs[&3].area)["%1"], originals["%1"]);
+        assert_eq!(owner.snapshot().layout.tabs[&3].clone().arrange(owner.snapshot().tabs[&3].area)["t1"], originals["t1"]);
     }
 
     #[test]
     fn closing_tabs_selects_a_surviving_neighbor_in_visual_order() {
         let tabs = |ids: &[u64]| ids.iter().map(|id|
-            (*id, Window::new(format!("%{id}"), [24., 60., 800., 500.]))
+            (*id, Window::new(format!("t{id}"), [24., 60., 800., 500.]))
         ).collect::<Vec<_>>();
         for (active, remaining, expected) in [
             (13, vec![8, 4, 2], Some(4)),
@@ -312,7 +312,7 @@ mod tests {
         let mut owner = Authority::default();
         owner.reconcile(&live(&[1])).unwrap();
         let mut state = owner.snapshot().clone();
-        state.layout.tabs.get_mut(&1).unwrap().windows.push(Window::new("%99", [0., 0., 80., 50.]));
+        state.layout.tabs.get_mut(&1).unwrap().windows.push(Window::new("t99", [0., 0., 80., 50.]));
         assert!(owner.apply(state.revision, Edit::Replace { state }).is_err());
         assert_eq!(owner.snapshot().layout.tabs[&1].windows.len(), 1);
     }
@@ -348,7 +348,7 @@ mod tests {
         owner.apply(owner.snapshot().revision, Edit::Defaults { enabled: false }).unwrap();
         assert!(owner.snapshot().layout.tabs[&1].enabled);
         let mut panes = live(&[1]);
-        panes.push((2, Window::new("%2", [24., 60., 800., 500.])));
+        panes.push((2, Window::new("t2", [24., 60., 800., 500.])));
         owner.reconcile(&panes).unwrap();
         assert!(!owner.snapshot().layout.tabs[&2].enabled);
         owner.apply(owner.snapshot().revision, Edit::Undo).unwrap();

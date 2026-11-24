@@ -244,7 +244,11 @@ func _save(in_new_window: bool) -> void:
 	_connect(settings, password, in_new_window)
 
 func _queue_connection(settings: Dictionary) -> void:
-	if _connected_client(settings) != null: return
+	if _connected_client(settings) != null:
+		selected = settings
+		keep_manager_open = false
+		_open(false)
+		return
 	_pending_connections.append(settings.duplicate(true))
 	_drain_connections()
 
@@ -270,12 +274,14 @@ func _open(in_new_window: bool) -> void:
 	if keep_manager_open and _connected_client(selected) != null: return
 	if _is_current() and client.connection.connected and not in_new_window:
 		hide()
+		client._remote_sessions_changed(true)
 		return
 	var connected := _connected_client(selected)
 	if connected != null and not in_new_window:
 		application.present_desktop_client(connected)
 		bind_client(connected)
 		hide()
+		connected._remote_sessions_changed(true)
 		return
 	var password := _password(selected)
 	if password.is_empty():

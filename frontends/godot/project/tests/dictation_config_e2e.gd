@@ -1,4 +1,6 @@
 extends SceneTree
+
+const PaneAddress := preload("res://scenes/PaneAddress.gd")
 ## Real touch controls, transport and Podman server; only microphone PCM is synthetic.
 var failures: Array[String] = []
 var manager: Node
@@ -65,7 +67,7 @@ func _run() -> void:
 	mic.capture.finished.connect(mic._capture_finished)
 	await process_frame
 	var host: Node = manager.view.host
-	var pane := int(host.pane_focus.substr(1))
+	var pane := PaneAddress.id(host.pane_focus)
 	var connection: Node = manager.federation.connections[0]
 	var settings: Dictionary = await connection.remote_call(pane, "dictation.settings", {})
 	var disabled := mode in ["default-disabled", "disabled"]

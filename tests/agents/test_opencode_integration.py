@@ -97,7 +97,7 @@ class OpenCodeIntegration(unittest.TestCase):
                 if method == "graph.ack":
                     self.queue = [e for e in self.queue if e["event_id"] != p["event_id"]]
                 if method == "graph.adjacent":
-                    result = {"incoming": [], "outgoing": [{"to": "%2", "send": True}]}
+                    result = {"incoming": [], "outgoing": [{"to": "t2", "send": True}]}
                 peer.sendall((json.dumps({"id": request["id"], "result": result}) + "\n").encode())
 
     def cli(self, *args, input=None):
@@ -204,7 +204,7 @@ class OpenCodeIntegration(unittest.TestCase):
         self.assertEqual(context.returncode, 0, context.stderr)
         self.assertIn("graffitty tool", context.stdout)
         self.assertNotIn("private-test-token", context.stdout)
-        result = self.plugin("tool", input={"sessionID": "ses_test", "method": "graph.send", "params": {"to": "%2", "text": "reply"}})
+        result = self.plugin("tool", input={"sessionID": "ses_test", "method": "graph.send", "params": {"to": "t2", "text": "reply"}})
         self.assertEqual(result.returncode, 0, result.stderr)
         self.assertEqual(self.requests[-1]["token"], "private-test-token")
 
@@ -271,7 +271,7 @@ class OpenCodeIntegration(unittest.TestCase):
 
     def test_typing_defers_native_queue_submission(self):
         request = self.reply(self.start(), self.snapshot([]))
-        self.queue = [{"event_id": "quiet", "source": "%2", "target": "%1", "text": "after typing"}]
+        self.queue = [{"event_id": "quiet", "source": "t2", "target": "t1", "text": "after typing"}]
         self.typing = True
         request = self.reply(request, self.snapshot([]))
         self.assertEqual(request["op"], "snapshot")
@@ -283,7 +283,7 @@ class OpenCodeIntegration(unittest.TestCase):
     def test_native_queue_ack_only_on_execution_and_cancel_on_revocation(self):
         request = self.start()
         request = self.reply(request, self.snapshot([]))
-        event = {"event_id": "queued-event", "source": "%2", "target": "%1", "run_id": "causal-run", "text": "Implement it", "sessions": []}
+        event = {"event_id": "queued-event", "source": "t2", "target": "t1", "run_id": "causal-run", "text": "Implement it", "sessions": []}
         self.queue = [event]
         request = self.reply(request, self.snapshot([], status="running"))
         self.assertEqual(request["op"], "prompt")

@@ -1,8 +1,9 @@
 extends "../../../../replay/replay.gd"
 
+
 func play() -> void:
 	await labelled_tabs(["TRAILS"])
-	var id: int = int(host.pane_focus.substr(1))
+	var id: int = PaneAddress.id(host.pane_focus)
 	var pid: int = host.sessions[id].term.get_shell_pid()
 	for world_path in ["", "flat-2d"]:
 		host.switch_world(world_path)

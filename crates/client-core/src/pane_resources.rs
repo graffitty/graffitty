@@ -185,11 +185,11 @@ mod tests {
 
     #[test]
     fn unknown_samples_are_never_zero() {
-        let starting = input(json!({"id": "a", "host": 1, "key": "%1", "kind": "terminal",
+        let starting = input(json!({"id": "a", "host": 1, "key": "t1", "kind": "terminal",
             "sample": {"status": "starting", "cpu_valid": false, "cpu_percent": 0.0, "memory_current": 0.0, "process_count": 0, "root_pid": 42}}));
-        let warming = input(json!({"id": "b", "host": 1, "key": "%2", "kind": "terminal",
+        let warming = input(json!({"id": "b", "host": 1, "key": "t2", "kind": "terminal",
             "sample": {"status": "running", "cpu_valid": false, "cpu_percent": 0.0, "memory_current": 1048576.0, "memory_valid": false, "process_count": 3, "root_pid": 43}}));
-        let none = input(json!({"id": "c", "host": 1, "key": "%3", "kind": "chromium", "sample": null}));
+        let none = input(json!({"id": "c", "host": 1, "key": "t3", "kind": "chromium", "sample": null}));
         let rows = &groups(&[starting, warming, none])[0].rows;
         assert_eq!((rows[0].cpu, rows[0].memory, rows[0].processes, rows[0].pid), (None, None, None, Some(42)));
         assert_eq!((rows[1].cpu, rows[1].memory, rows[1].processes), (None, None, Some(3)));
@@ -199,7 +199,7 @@ mod tests {
     #[test]
     fn connections_have_neutral_summaries_and_unique_members() {
         let pane = |id: &str, kind: &str, connected: Vec<&str>| input(json!({
-            "id": id, "host": 1, "key": format!("%{id}"), "kind": kind, "connected": connected,
+            "id": id, "host": 1, "key": format!("t{id}"), "kind": kind, "connected": connected,
             "sample": {"status": "running", "cpu_valid": true, "cpu_percent": 10,
                 "memory_current": 100, "process_count": 2, "root_pid": 42}}));
         let mut inputs = vec![pane("1", "agent", vec!["2", "2"]), pane("2", "filetree", vec!["3"]),
@@ -233,9 +233,9 @@ mod tests {
     #[test]
     fn measured_samples_and_icons() {
         let rows = groups(&[
-            input(json!({"id": "a", "host": 1, "key": "%1", "kind": "agent", "provider": "claude", "title": "fix",
+            input(json!({"id": "a", "host": 1, "key": "t1", "kind": "agent", "provider": "claude", "title": "fix",
                 "sample": {"status": "running", "cpu_valid": true, "cpu_percent": 12.5, "memory_current": 2097152.0, "process_count": 4, "root_pid": 7}})),
-            input(json!({"id": "b", "host": 1, "key": "%2", "kind": "terminal", "app": "/usr/bin/python3.12"})),
+            input(json!({"id": "b", "host": 1, "key": "t2", "kind": "terminal", "app": "/usr/bin/python3.12"})),
         ]);
         let a = &rows[0].rows[0];
         assert_eq!((a.icon.as_str(), a.cpu, a.memory, a.processes, a.pid), ("claude", Some(12.5), Some(2097152), Some(4), Some(7)));
@@ -245,7 +245,7 @@ mod tests {
     #[test]
     fn groups_by_server_and_session_and_dedupes_views() {
         let pane = |id: &str, server: &str, session: &str, focused: bool, host: u64| input(json!({
-            "id": id, "host": host, "key": "%1", "kind": "terminal", "server": server, "local": server.is_empty(),
+            "id": id, "host": host, "key": "t1", "kind": "terminal", "server": server, "local": server.is_empty(),
             "session": session, "focused": focused}));
         let result = groups(&[
             pane("x", "", "main", false, 1),

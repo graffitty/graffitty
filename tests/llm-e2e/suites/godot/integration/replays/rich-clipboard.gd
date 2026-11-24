@@ -1,4 +1,5 @@
 extends "input-routing.gd"
+
 const IntegrationUI = preload("res://scenes/TerminalIntegrationUI.gd")
 var directory: String
 var terminal: Node
@@ -35,7 +36,7 @@ func play() -> void:
 		print("CLIPBOARD_EVENT ", id, " ", event.type, " ", event.get("ticket", 0), " ", str(event.get("operation", {}).get("kind", ""))))
 	terminal = host.active_terminal()
 	var pid: int = terminal.get_shell_pid()
-	check(await host.set_pane_title("%%%d" % host.active_session_id, "Clipboard acceptance"), "Owner acknowledges the requesting pane title")
+	check(await host.set_pane_title(PaneAddress.key(host.active_session_id), "Clipboard acceptance"), "Owner acknowledges the requesting pane title")
 	for child in terminal.get_children():
 		if child is IntegrationUI: integration = child
 	if not check(integration != null, "Terminal owns its native consent handler"): return

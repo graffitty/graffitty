@@ -287,7 +287,7 @@ func until(predicate: Callable, description: String, timeout := 20.0) -> bool:
 	if not passed:
 		await snapshot("failed-" + str(beats.size()))
 		for id in host.sessions:
-			print("[demo terminal %", id, "] ", shell_text("%%%d" % id))
+			print("[demo terminal ", PaneAddress.key(id), "] ", shell_text(PaneAddress.key(id)))
 	return passed
 
 
@@ -504,7 +504,7 @@ func filetree_demo() -> void:
 	if not await until(func(): return host.sessions.size() == original_count + 2, "Text file opens in connected Neovim"): return
 	var editor := ""
 	for id in host.sessions:
-		var candidate := "%%%d" % id
+		var candidate := PaneAddress.key(id)
 		if candidate != source and candidate != tree: editor = candidate
 	if not await until(func(): return "Keep related work together." in shell_text(editor), "Neovim displays the text file"): return
 	host.focus_pane(editor)
@@ -541,7 +541,7 @@ func filetree_demo() -> void:
 	await say("Image viewer ready")
 	await snapshot("10-filetree-image")
 	await hold(0.7)
-	var chromium_key: String = "%%%d" % host.chromiums.keys()[0]
+	var chromium_key: String = PaneAddress.key(host.chromiums.keys()[0])
 	await enlarge_image(chromium_key)
 	await hold(0.4)
 	check(host.world.fx_typing < 0.01, "Mouse-driven file opening and resizing leave typing effects idle")

@@ -1,15 +1,16 @@
 extends "../../../../tests/llm-e2e/replay/replay.gd"
+
 const Layout := preload("res://scenes/WorkspaceLayout.gd")
 
 
 func play() -> void:
 	await camera_at_rest()
 	var view: Control = host.workspace_view
-	var first := "%%%d" % host.active_session_id
+	var first := PaneAddress.key(host.active_session_id)
 	host.create_terminal_window(first)
-	var second := "%%%d" % host.active_session_id
+	var second := PaneAddress.key(host.active_session_id)
 	host.create_terminal_window(second)
-	var third := "%%%d" % host.active_session_id
+	var third := PaneAddress.key(host.active_session_id)
 	var keys := [first, second, third]
 	var names := ["Planner", "Worker", "Reports"]
 	var tree: Dictionary = host.workspace_layout.tab(host.workspace_layout.active).tree
@@ -18,7 +19,7 @@ func play() -> void:
 	for i in keys.size():
 		var item: Dictionary = Layout.find(tree, keys[i])
 		item.rect = Rect2(Vector2(view.size.x * (-0.375 + i * 0.65), 360 if i == 1 else 200), Vector2(view.size.x * 0.45, 470))
-		var id := int(str(keys[i]).substr(1))
+		var id := PaneAddress.id(str(keys[i]))
 		await app.agent_api.dispatch(id, "window.set_title", {"title": names[i]})
 		host.sessions[id].term.send_text("printf '\\033[2J\\033[H%s\\n\\nNode editing demo workspace\\nConnect terminals directly in the canvas.\\n'\r" % names[i])
 	view.refresh()
@@ -36,8 +37,8 @@ func play() -> void:
 	check(wires.editing, "Zooming out reveals connection ports")
 	check(wires.ports.size() == 3, "Each real terminal has input and output ports")
 	for key in keys:
-		await graph.dispatch(int(key.substr(1)), "agent.event", {"provider": "adapter", "event": "SessionStart"})
-		await graph.dispatch(int(key.substr(1)), "agent.register", {"inputs": [{"id": "in", "name": "Receive"}], "outputs": [{"id": "send", "name": "Send"}]})
+		await graph.dispatch(PaneAddress.id(key), "agent.event", {"provider": "adapter", "event": "SessionStart"})
+		await graph.dispatch(PaneAddress.id(key), "agent.register", {"inputs": [{"id": "in", "name": "Receive"}], "outputs": [{"id": "send", "name": "Send"}]})
 	view.refresh()
 	await say("Drag Planner's Send output to Worker's Receive input")
 	await drag(wires.port_center(first + "/send", true), wires.port_center(second + "/in", false), 1.8)

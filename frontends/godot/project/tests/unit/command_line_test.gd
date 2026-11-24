@@ -1,4 +1,6 @@
 extends "res://tests/unit/test_case.gd"
+
+const PaneAddress := preload("res://scenes/PaneAddress.gd")
 const Model := preload("res://scenes/CommandLineModel.gd")
 const Layout := preload("res://scenes/WorkspaceLayout.gd")
 const Prefix := preload("res://scenes/WorkspacePrefix.gd")
@@ -65,11 +67,11 @@ func setup() -> Array:
 	var host := Host.new()
 	host.application = app
 	app.hosts = [host]
-	host.workspace_layout.add(9, {"windows": [{"pane": "%9"}, {"pane": "%12", "shown": false}]})
-	host.workspace_layout.add(31, {"pane": "%31"})
+	host.workspace_layout.add(9, {"windows": [{"pane": "t9"}, {"pane": "t12", "shown": false}]})
+	host.workspace_layout.add(31, {"pane": "t31"})
 	for id in range(40, 48):
-		host.workspace_layout.add(id, {"pane": "%%%d" % id})
-	host.titles = {"%9": "nvim", "%12": "Chromium · localhost:3000"}
+		host.workspace_layout.add(id, {"pane": PaneAddress.key(id)})
+	host.titles = {"t9": "nvim", "t12": "Chromium · localhost:3000"}
 	var noop := func(_host): pass
 	host.menu_entries = [
 		{"label": "Shell::New Pane Right", "action": "NewPaneRight"},
@@ -117,7 +119,7 @@ func test_number_mode_lists_tabs_and_one_based_panes() -> void:
 	expect(prefixed == ["1.1", "1.2", "10", "10.1"], "Then its panes from 1, and tab ten")
 	expect(model.rows.slice(1, 5).all(func(row): return row.tier == Model.Tier.PREFIX), "Those are prefix matches")
 	var pane: Dictionary = row_for(model, "1.2").candidate
-	expect(pane.key == "%12" and pane.detail == "%12" and pane.hidden, "Panes show their ID and hidden state")
+	expect(pane.key == "t12" and pane.detail == "t12" and pane.hidden, "Panes show their ID and hidden state")
 	expect(pane.title == "Chromium · localhost:3000", "Panes show their title")
 	expect(row_for(model, "1").candidate.detail == "@9", "Tabs show their stable ID")
 	model.set_text("99")
@@ -131,13 +133,13 @@ func test_ids_address_panes_and_tabs() -> void:
 	var fixture := setup()
 	var host: Host = fixture[1]
 	var model: Model = fixture[2]
-	model.set_text("%12")
+	model.set_text("t12")
 	var pane: Dictionary = model.rows[0].candidate
-	expect(pane.label == "%12" and pane.key == "%12" and pane.detail == "1.2", "%ID finds a pane and shows its position")
+	expect(pane.label == "t12" and pane.key == "t12" and pane.detail == "1.2", "%ID finds a pane and shows its position")
 	model.set_text("@31")
 	expect(model.rows[0].candidate.kind == "tab" and model.rows[0].candidate.id == 31, "@ID finds a tab")
 	model.set_text("@9.2")
-	expect(model.rows[0].candidate.key == "%12", "@ID.N numbers that tab's panes from 1")
+	expect(model.rows[0].candidate.key == "t12", "@ID.N numbers that tab's panes from 1")
 	host.free()
 	fixture[0].free()
 
@@ -149,13 +151,13 @@ func test_pane_candidates_follow_main_reading_order() -> void:
 	tree.tiling = true
 	tree.windows[0].stashed = true
 	tree.windows[1].shown = true
-	tree.windows.append({"pane": "%13"})
-	tree.tiles = {"axis": "h", "children": [{"pane": "%13"}, {"pane": "%12"}]}
+	tree.windows.append({"pane": "t13"})
+	tree.tiles = {"axis": "h", "children": [{"pane": "t13"}, {"pane": "t12"}]}
 	model.set_text("1.")
-	expect(row_for(model, "1.1").candidate.key == "%13", "First command-line number selects the left Main pane")
-	expect(row_for(model, "1.2").candidate.key == "%12", "Second command-line number selects the right Main pane")
-	expect(row_for(model, "1.3").candidate.key == "%9", "Stashed pane follows Main in command-line navigation")
-	model.set_text("%9")
+	expect(row_for(model, "1.1").candidate.key == "t13", "First command-line number selects the left Main pane")
+	expect(row_for(model, "1.2").candidate.key == "t12", "Second command-line number selects the right Main pane")
+	expect(row_for(model, "1.3").candidate.key == "t9", "Stashed pane follows Main in command-line navigation")
+	model.set_text("t9")
 	expect(model.rows[0].candidate.detail == "1.3", "Stable-ID results show the matching positional address")
 	host.free()
 	fixture[0].free()
@@ -246,13 +248,13 @@ func test_choice_follows_the_pane_across_renumbering() -> void:
 	var host: Host = fixture[1]
 	var model: Model = fixture[2]
 	model.set_text("1")
-	model.select(index_of(model, "%12"))
+	model.select(index_of(model, "t12"))
 	expect(model.accepted().candidate.label == "1.2", "1.2 is chosen")
 	host.workspace_layout.reorder(31, 0)
 	model.refresh()
 	var chosen: Dictionary = model.accepted().candidate
-	expect(chosen.key == "%12" and chosen.label == "2.2", "Another client reorders tabs: the same pane stays chosen under its new number")
-	expect(model.rows[model.selected].candidate.key == "%12", "It stays listed and highlighted although 2.2 no longer matches 1")
+	expect(chosen.key == "t12" and chosen.label == "2.2", "Another client reorders tabs: the same pane stays chosen under its new number")
+	expect(model.rows[model.selected].candidate.key == "t12", "It stays listed and highlighted although 2.2 no longer matches 1")
 	host.free()
 	fixture[0].free()
 
@@ -262,7 +264,7 @@ func test_tab_preview_follows_renumbering() -> void:
 	var model: Model = fixture[2]
 	model.set_text("1")
 	for attempt in 20:
-		if model.selected >= 0 and model.rows[model.selected].candidate.get("key", "") == "%12":
+		if model.selected >= 0 and model.rows[model.selected].candidate.get("key", "") == "t12":
 			break
 		model.cycle(1)
 	expect(model.text == "1.2", "Tab previews 1.2")
@@ -277,8 +279,8 @@ func test_closed_choice_never_falls_back_to_another_row() -> void:
 	var host: Host = fixture[1]
 	var model: Model = fixture[2]
 	model.set_text("1")
-	model.select(index_of(model, "%12"))
-	host.workspace_layout.take_pane("%12")
+	model.select(index_of(model, "t12"))
+	host.workspace_layout.take_pane("t12")
 	model.refresh()
 	expect(model.selected == -1 and model.accepted().is_empty(), "A closed choice runs nothing, not the new top row")
 	expect(model.status() == "The chosen row closed: choose again", "The line says why")
@@ -296,7 +298,7 @@ func test_execute_runs_targets_and_commands() -> void:
 	for text in ["2", "1.2", "find"]:
 		model.set_text(text)
 		model.execute(model.accepted())
-	expect(host.calls == [["tab", 31], ["pane", "%12"], ["command", "Edit::Find…"]], "Tabs select, panes reveal, commands run")
+	expect(host.calls == [["tab", 31], ["pane", "t12"], ["command", "Edit::Find…"]], "Tabs select, panes reveal, commands run")
 	host.free()
 	fixture[0].free()
 
@@ -324,9 +326,9 @@ func test_bindings_hint_their_commands() -> void:
 
 func test_prefix_keys_that_open_the_command_line() -> void:
 	expect(Prefix.command_line_text(typed(58)) == "", "Typed : opens an empty line")
-	expect(Prefix.command_line_text(typed(37, KEY_5, true)) == "%", "Typed % opens stable pane IDs directly")
-	expect(Prefix.command_line_text(typed(0, KEY_PERCENT)) == "%", "KEY_PERCENT without unicode opens pane IDs")
-	expect(Prefix.command_line_text(typed(0, KEY_5, true)) == "%", "Replayed Shift+5 opens pane IDs")
+	expect(Prefix.command_line_text(typed(37, KEY_5, true)) == "t", "Typed % opens stable pane IDs directly")
+	expect(Prefix.command_line_text(typed(0, KEY_PERCENT)) == "t", "KEY_PERCENT without unicode opens pane IDs")
+	expect(Prefix.command_line_text(typed(0, KEY_5, true)) == "t", "Replayed Shift+5 opens pane IDs")
 	expect(Prefix.command_line_text(typed(53, KEY_5, true)) == "5", "Layout text wins over Shift+5 fallback")
 	expect(Prefix.command_line_text(typed(55, KEY_7)) == "7", "A typed digit opens number mode")
 	expect(Prefix.command_line_text(typed(49, KEY_AMPERSAND, true)) == "1", "AZERTY's shifted digits count by character")
@@ -373,13 +375,13 @@ func test_placeholder_tracks_last_tab_and_its_last_pane() -> void:
 	var fixture := setup()
 	var host: Host = fixture[1]
 	var model: Model = fixture[2]
-	expect(model.placeholder_text() == "command   ·   10 tab   ·   10.1 pane   ·   %id   ·   @id   ·   $session", "Hint uses the last tab's position, not its stable ID")
+	expect(model.placeholder_text() == "command   ·   10 tab   ·   10.1 pane   ·   tN   ·   cN   ·   @id   ·   $session", "Hint uses the last tab's position, not its stable ID")
 	host.workspace_layout.reorder(9, 9)
 	expect("10.2 pane" in model.placeholder_text(), "Reordering counts the new last tab's panes, including hidden panes")
-	host.workspace_layout.take_pane("%12")
+	host.workspace_layout.take_pane("t12")
 	expect("10.1 pane" in model.placeholder_text(), "Closing a pane updates the last address")
 	host.workspace_layout.tabs.clear()
-	expect(model.placeholder_text() == "command   ·   %id   ·   @id   ·   $session", "Empty workspaces do not advertise a nonexistent target")
+	expect(model.placeholder_text() == "command   ·   tN   ·   cN   ·   @id   ·   $session", "Empty workspaces do not advertise a nonexistent target")
 	host.free()
 	fixture[0].free()
 

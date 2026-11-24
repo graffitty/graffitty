@@ -217,7 +217,7 @@ keyboard that supplies an image through `InputConnection.commitContent`.
   and ask the agent to describe a distinctive feature. A path or PTY receipt
   alone does not establish agent image recognition.
 - Exercise PNG/JPEG, a clipboard bitmap, a content URI and a file copied on
-  macOS. Try an image larger than one transport packet. Verify exact bytes for
+  macOS. Try a remote image larger than two 1 MiB upload chunks. Check that fast acknowledgments grow the chunk size and a slower link reduces it. Verify exact bytes for
   preserved formats and dimensions/content for normalized bitmaps.
 - Disconnect, switch servers, replace/close the pane and revoke URI access
   during transfer. Never paste an incomplete path into another pane or replay

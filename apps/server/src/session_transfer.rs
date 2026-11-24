@@ -45,8 +45,13 @@ pub fn apply(server: &mut Server, source: &str, request: &Value) -> Result<Value
         server.workspace_incarnations.insert(target.clone(), server.workspaces.info(&target).id.0);
         server.next = next;
     }
-    let mut from_graph = server.graphs.remove(source).unwrap_or_else(|| crate::graph::Graph::with_settings(server.settings.nodes.clone()));
-    from_graph.transfer_nodes_to(&terminals, server.graphs.entry(target.clone()).or_insert_with(|| crate::graph::Graph::with_settings(server.settings.nodes.clone())));
+    let mut from_graph = server.graphs.remove(source).unwrap_or_else(|| crate::graph::Graph::with_activity_clock(server.settings.nodes.clone(), server.activity_clock.clone()));
+    let destination = server.graphs.entry(target.clone()).or_insert_with(||
+        crate::graph::Graph::with_activity_clock(server.settings.nodes.clone(), server.activity_clock.clone()));
+    from_graph.transfer_nodes_to(&terminals, destination);
+    server.completions.transfer(source, &target, &terminals, destination);
+    for submission in server.native_pending.values_mut() { crate::native_delivery::move_record(&mut submission.record, source, &target, &terminals); }
+    server.workers.transfer_deliveries(source, &target, &terminals);
     let empty = !server.sessions.values().any(|s| s.workspace == source)
         && !server.chromiums.values().any(|b| b.workspace == source);
     if empty {

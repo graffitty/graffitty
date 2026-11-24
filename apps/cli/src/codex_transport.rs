@@ -1,5 +1,6 @@
 //! Queue delivery to verified existing Codex sessions. Never launches or rewrites Codex.
 use crate::agent_bridge::Result;
+use graffitty_protocol::{CodexCancelOutcome, CodexQueueStatus};
 use serde_json::{Value, json};
 use std::path::Path;
 
@@ -9,11 +10,33 @@ pub fn queue(target: &Value, text: &str, event_id: &str) -> Result<Value> {
 }
 
 pub fn cancel_queue(target: &Value, submission_id: &str) -> Result<Value> {
-    queue_request(target, "thread/queue/delete", json!({"queuedSubmissionId":submission_id}))
+    let deletion = queue_request(target, "thread/queue/delete", json!({"queuedSubmissionId":submission_id}));
+    match &deletion {
+        Ok(reply) if reply["deleted"] == true => return Ok(json!(CodexCancelOutcome::Deleted)),
+        Ok(reply) if reply["deleted"] == false => return Ok(json!(CodexCancelOutcome::Absent)),
+        Err(error) if error.is::<ProcessEnded>() => return Ok(json!(CodexCancelOutcome::ProcessEnded)),
+        _ => {}
+    }
+    // A lost reply can follow an effective delete. Only a complete queue
+    // listing for this same verified target can establish absence.
+    match queued_ids(target) {
+        Ok(ids) if ids.iter().all(|id| id != submission_id) => return Ok(json!(CodexCancelOutcome::Absent)),
+        Err(error) if error.is::<ProcessEnded>() => return Ok(json!(CodexCancelOutcome::ProcessEnded)),
+        _ => {}
+    }
+    deletion.and_then(|_| Err("Codex did not confirm queue deletion".into()))
+}
+
+pub fn queue_status(target: &Value) -> Result<Value> {
+    match queued_ids(target) {
+        Ok(queued_ids) => Ok(json!(CodexQueueStatus::Listed { queued_ids })),
+        Err(error) if error.is::<ProcessEnded>() => Ok(json!(CodexQueueStatus::ProcessEnded)),
+        Err(error) => Err(error),
+    }
 }
 
 /// Return a complete queue snapshot; errors must never be treated as an empty queue.
-pub fn queued_ids(target: &Value) -> Result<Value> {
+fn queued_ids(target: &Value) -> Result<Vec<String>> {
     let mut ids = Vec::new();
     let mut cursor = Value::Null;
     let mut seen = std::collections::HashSet::new();
@@ -23,11 +46,48 @@ pub fn queued_ids(target: &Value) -> Result<Value> {
             ids.push(item["id"].as_str().ok_or("Missing queued submission ID")?.to_owned());
         }
         cursor = page["nextCursor"].clone();
-        if cursor.is_null() { return Ok(json!({"queued_ids":ids})); }
+        if cursor.is_null() { return Ok(ids); }
         let next = cursor.as_str().ok_or("Invalid Codex queue cursor")?;
         if !seen.insert(next.to_owned()) { return Err("Repeated Codex queue cursor".into()); }
     }
     Err("Codex queue snapshot exceeded page limit".into())
+}
+
+#[derive(Debug)]
+struct ProcessEnded;
+impl std::fmt::Display for ProcessEnded {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result { f.write_str("Original Codex process ended") }
+}
+impl std::error::Error for ProcessEnded {}
+
+fn definitely_missing(pid: i64, error: &std::io::Error) -> bool {
+    #[cfg(unix)]
+    {
+        // A missing /proc entry or failed process inventory can reflect access
+        // restrictions. Confirm PID absence directly without sending a signal.
+        (error.kind() == std::io::ErrorKind::NotFound || error.raw_os_error() == Some(libc::ESRCH))
+            && unsafe { libc::kill(pid as libc::pid_t, 0) } == -1
+            && std::io::Error::last_os_error().raw_os_error() == Some(libc::ESRCH)
+    }
+    #[cfg(windows)]
+    {
+        let _ = pid;
+        // process() maps an exited PID or a confirmed process exit to NotFound.
+        error.kind() == std::io::ErrorKind::NotFound
+    }
+}
+
+fn verified_owner(target: &Value) -> Result<crate::sessions::Process> {
+    let pid = target["pid"].as_f64().filter(|n| n.fract() == 0.0 && *n > 0.0 && *n <= i32::MAX as f64)
+        .ok_or("Invalid Codex PID")? as i64;
+    let birth = target["started"].as_str().filter(|s| !s.is_empty()).ok_or("Codex process start time missing")?;
+    match crate::sessions::process(pid) {
+        Ok(owner) if owner.pid != pid || owner.started.is_empty() => Err("Could not verify Codex process identity".into()),
+        Ok(owner) if owner.started != birth || owner.state == "Z" => Err(ProcessEnded.into()),
+        Ok(owner) => Ok(owner),
+        Err(e) if definitely_missing(pid, &e) => Err(ProcessEnded.into()),
+        Err(e) => Err(e.into()),
+    }
 }
 
 fn queue_request(target: &Value, method: &str, mut params: Value) -> Result<Value> {
@@ -38,11 +98,7 @@ fn queue_request(target: &Value, method: &str, mut params: Value) -> Result<Valu
     use tungstenite::Message;
     let thread = target["session_id"].as_str().ok_or("Codex thread not resolved from process evidence")?;
     uuid::Uuid::parse_str(thread)?;
-    let pid = target["pid"].as_f64().ok_or("Codex PID missing")?;
-    let owner = crate::sessions::process(pid as i64)?;
-    if pid != owner.pid as f64 || target["started"].as_str() != Some(&owner.started) {
-        return Err("Codex process identity changed".into());
-    }
+    let owner = verified_owner(target)?;
     if target["discovery_transport"] == "codex_tui_listener" {
         let home = Path::new(target["provider_home"].as_str().ok_or("Codex home missing")?);
         let mut rpc = crate::codex_discovery::verify(target, home, owner.pid)?;
@@ -85,4 +141,31 @@ fn queue_request(target: &Value, method: &str, mut params: Value) -> Result<Valu
         }
     }
     Err("Codex queue did not respond".into())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::{io, process::{Command, Stdio}};
+
+    #[test]
+    fn cancellation_distinguishes_retired_processes_from_unavailable_identity_evidence() {
+        let pid = i64::from(std::process::id());
+        let current = crate::sessions::process(pid).unwrap();
+        let mut target = json!({"session_id":uuid::Uuid::new_v4().to_string(),"pid":pid,"started":current.started});
+        assert!(verified_owner(&target).is_ok());
+        assert!(!definitely_missing(pid, &io::ErrorKind::PermissionDenied.into()));
+        #[cfg(unix)]
+        assert!(!definitely_missing(pid, &io::ErrorKind::NotFound.into()), "hidden process metadata cannot prove exit");
+        target["started"] = Value::Null;
+        assert!(cancel_queue(&target, "submission").is_err());
+        target["started"] = json!("different birth");
+        assert_eq!(queue_status(&target).unwrap(), json!(CodexQueueStatus::ProcessEnded));
+        assert_eq!(cancel_queue(&target, "submission").unwrap(), json!(CodexCancelOutcome::ProcessEnded));
+        let mut child = Command::new(std::env::current_exe().unwrap()).arg("--list")
+            .stdout(Stdio::null()).stderr(Stdio::null()).spawn().unwrap();
+        target["pid"] = json!(child.id());
+        child.wait().unwrap();
+        assert_eq!(cancel_queue(&target, "submission").unwrap(), json!(CodexCancelOutcome::ProcessEnded));
+    }
 }

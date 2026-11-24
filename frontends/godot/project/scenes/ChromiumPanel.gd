@@ -111,7 +111,7 @@ func refresh() -> void:
 		if picker.get_meta("ids", []) != ids:
 			picker.clear()
 			for id in ids:
-				picker.add_item(tr("Chromium %d") % id, id)
+				picker.add_item(tr("Chromium %s") % preload("res://scenes/PaneAddress.gd").key(id), id)
 			picker.set_meta("ids", ids.duplicate())
 		picker.select(picker.get_item_index(active.session_id))
 

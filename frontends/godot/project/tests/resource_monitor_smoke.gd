@@ -5,8 +5,8 @@ const PaneTree := preload("res://scenes/WorkspaceLayout.gd")
 
 func run() -> void:
 	setup()
-	host.workspace_layout.tabs = [{"id": 1, "tree": {"windows": [PaneTree.leaf("%1"), PaneTree.leaf("%2")]}}]
-	host.pane_focus = "%2"
+	host.workspace_layout.tabs = [{"id": 1, "tree": {"windows": [PaneTree.leaf("t1"), PaneTree.leaf("t2")]}}]
+	host.pane_focus = "t2"
 	app.mods.publish_window(host)
 	var dialog: Window = PanelWindow.open(host, "resource-monitor")
 	await settle()
@@ -30,23 +30,23 @@ func run() -> void:
 	opaque._close_panel()
 	space.commit(dialog._desktop, space.plan(dialog._desktop, Vector2(640, 790)))
 	await settle()
-	for needle in ["Title", "CPU", "RAM", "#procs", "PID", "Server", "Session", "Pane %1", "Pane %2", "12%", "1M", "123", "This Computer", "Total · 2 panes", "24%", "2M", "4"]:
+	for needle in ["Title", "CPU", "RAM", "#procs", "PID", "Server", "Session", "Pane t1", "Pane t2", "12%", "1M", "123", "This Computer", "Total · 2 panes", "24%", "2M", "4"]:
 		check(has_text(dialog, needle), "Table shows %s: %s" % [needle, texts(dialog)])
 	host.sample.cpu = 30.0
 	host.sample.snapshot_changed.emit(host.sample.snapshot())
 	await settle()
 	check(has_text(dialog, "30%") and has_text(dialog, "60%"), "A new sample re-renders the rows and the total: %s" % [texts(dialog)])
-	host.workspace_layout.tabs = [{"id": 1, "tree": PaneTree.leaf("%1")}]
+	host.workspace_layout.tabs = [{"id": 1, "tree": PaneTree.leaf("t1")}]
 	host.ui_changed.emit()
 	await settle()
-	check(not has_text(dialog, "Pane %2") and has_text(dialog, "Total · 1 pane"), "A closed pane leaves the table")
+	check(not has_text(dialog, "Pane t2") and has_text(dialog, "Total · 1 pane"), "A closed pane leaves the table")
 	var row := ""
 	for key in dialog.view.hit_keys():
 		if str(key).begins_with("row-") and not "/" in str(key): row = str(key)
 	check(not row.is_empty(), "The pane has a row")
 	check(dialog.view.click(row), "The row takes a click")
 	pump()
-	check(host.focused_key == "%1", "Clicking a row focuses its pane")
+	check(host.focused_key == "t1", "Clicking a row focuses its pane")
 	await settle(8)
 	var reflows := space.reflows
 	var publications: int = app.mods.session_publications

@@ -12,8 +12,8 @@ class KeyBar extends Control:
 class Host extends RefCounted:
 	var application := App.new()
 	var touch_keybar: Control
-	func is_terminal_pane(key: String) -> bool: return key == "%1"
-	func is_chromium_pane(key: String) -> bool: return key == "%2"
+	func is_terminal_pane(key: String) -> bool: return key == "t1"
+	func is_chromium_pane(key: String) -> bool: return key == "t2"
 
 class Links extends RefCounted:
 	func sockets(_visible: bool) -> Dictionary: return {}
@@ -42,15 +42,15 @@ class View extends Control:
 
 func test_one_finger_drags_chromium_pages_always_and_terminals_by_preference() -> void:
 	var view := View.new()
-	for key in ["%1", "%2"]:
+	for key in ["t1", "t2"]:
 		var pane := Pane.new()
-		pane.position = Vector2(0 if key == "%1" else 300, 0)
+		pane.position = Vector2(0 if key == "t1" else 300, 0)
 		view.panes[key] = pane
 		view.canvas_root.add_child(pane)
 	var pointer := Pointer.new()
 	pointer.view = view
-	expect(pointer._scroll_target(Vector2(50, 50)) == "%1", "Terminal momentum is scoped to its pane")
-	expect(pointer._scroll_target(Vector2(350, 50)) == "%2", "Chromium has a separate momentum target")
+	expect(pointer._scroll_target(Vector2(50, 50)) == "t1", "Terminal momentum is scoped to its pane")
+	expect(pointer._scroll_target(Vector2(350, 50)) == "t2", "Chromium has a separate momentum target")
 	expect(pointer._scroll_target(Vector2(250, 50)).is_empty(), "Empty canvas cannot inherit momentum")
 	expect(pointer._drag_scrolls(Vector2(50, 50)), "One finger drags terminal history by default")
 	expect(pointer._drag_scrolls(Vector2(350, 50)), "One finger drags a Chromium page, as in mobile Chrome")
@@ -65,7 +65,7 @@ func test_one_finger_drags_chromium_pages_always_and_terminals_by_preference() -
 	expect(not pointer._drag_scrolls(Vector2(50, 50)), "Multi-finger terminal scrolling leaves one finger for selection")
 	expect(pointer._drag_scrolls(Vector2(350, 50)), "Chromium pages ignore the terminal scrolling preference")
 	expect(not pointer._drag_scrolls(Vector2(250, 50)), "Empty canvas keeps pointer navigation")
-	view.resize_key = "%2"
+	view.resize_key = "t2"
 	expect(not pointer._drag_scrolls(Vector2(350, 50)), "A finger resize target is not a Chromium scroll")
 	expect(pointer._scroll_target(Vector2(350, 50)).is_empty(), "A resize interrupts old content momentum instead of consuming the first drag")
 	view.resize_key = ""

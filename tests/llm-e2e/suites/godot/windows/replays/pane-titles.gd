@@ -1,4 +1,5 @@
 extends "../../../../replay/replay.gd"
+
 var evidence := ""
 var pane_key := ""
 var observations: Array = []
@@ -15,7 +16,7 @@ func title_is(expected: String, phase: String) -> void:
 	while (comparable(host.pane_title(pane_key), phase) != comparable(expected, phase) or comparable(pane.handle.text, phase) != comparable(expected, phase)) and Time.get_ticks_msec() < deadline:
 		await process_frame
 	var actual: String = host.pane_title(pane_key)
-	var metadata: Array = host.session_backend.connection.topology.panes.filter(func(item): return int(item.id) == int(pane_key.substr(1)))
+	var metadata: Array = host.session_backend.connection.topology.panes.filter(func(item): return int(item.id) == PaneAddress.id(pane_key))
 	var owner_title := str(metadata[0].title) if not metadata.is_empty() else ""
 	check(comparable(owner_title, phase) == comparable(expected, phase), phase + ": session owner publishes the expected title")
 	check(comparable(actual, phase) == comparable(expected, phase), phase + ": frontend title is " + expected + "; got " + actual)

@@ -121,7 +121,7 @@ func run() -> void:
 	check(dock.size.y == space.MIN_BAND_HEIGHT and host.workspace_view.insets[axis] == dock.size.y + space.gap(), "Band shrinks to one row and reserves only that height")
 	check(dialog.compact and dialog.compact_row and not dock._header.visible, "Shrunk band switches to the compact status-strip row")
 	var shown := texts(dialog)
-	check("65%" in shown and "%1" in shown and "1M" in shown, "Compact row shows pane and live metrics: %s" % [shown])
+	check("65%" in shown and "t1" in shown and "1M" in shown, "Compact row shows pane and live metrics: %s" % [shown])
 	var pane_rect: Rect2 = dialog.view.hit_rect("pane")
 	check(pane_rect.size.x > 0 and dialog.view.hit_rect("readout").size.x == 0, "Row layout replaces the readout")
 	if not mobile:

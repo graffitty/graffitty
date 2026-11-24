@@ -66,7 +66,7 @@ class ServerCheckpoints(unittest.TestCase):
                     for pane in (first, second):
                         rpc(pane, "agent.event", {"provider": "adapter", "event": "SessionStart"})
                         rpc(pane, "agent.register", ports)
-                    edge = {"from": f"%{first}", "to": f"%{second}", "from_port": "out", "to_port": "in",
+                    edge = {"from": f"t{first}", "to": f"t{second}", "from_port": "out", "to_port": "in",
                             "muted": True, "contains": "keep", "outcome": "success", "stop_at": 4102444800}
                     rpc(first, "graph.connect", edge)
                     tree = rpc(first, "filetree.toggle", {"root": str(tree_root)})
@@ -75,7 +75,7 @@ class ServerCheckpoints(unittest.TestCase):
                     layout = state["layout"]["tabs"][str(first)]
                     layout.update(enabled=False, physics=False)
                     for window in layout["windows"]:
-                        if window["key"] == f"%{second}":
+                        if window["key"] == f"t{second}":
                             window["rect"] = [650, 110, 420, 350]
                     result = client.action("workspace_edit", expected_revision=state["revision"],
                                            edit={"op": "tab", "tab": first, "layout": layout})
@@ -99,9 +99,9 @@ class ServerCheckpoints(unittest.TestCase):
                 self.assertEqual(saved["tag"], "auto")
                 self.assertEqual(next(p for p in window["panes"] if p["id"] == tree_id)["filetree"],
                                  {"owner": first, "root": str(tree_root)})
-                self.assertEqual(window["graph"]["edges"][0]["to"], f"%{second}")
+                self.assertEqual(window["graph"]["edges"][0]["to"], f"t{second}")
                 self.assertTrue(window["graph"]["edges"][0]["muted"])
-                self.assertEqual(next(p for p in window["tabs"][0]["tree"]["windows"] if p["pane"] == f"%{second}")["rect"]["rect2"],
+                self.assertEqual(next(p for p in window["tabs"][0]["tree"]["windows"] if p["pane"] == f"t{second}")["rect"]["rect2"],
                                  [650, 110, 420, 350])
                 manual = json.loads(self.cli(env, "checkpoint", "save"))
                 self.assertEqual(json.loads(Path(manual["path"]).read_text())["tag"], "manual")
@@ -136,6 +136,9 @@ class ServerCheckpoints(unittest.TestCase):
                             return reply["result"]
 
                         chromium = rpc("chromium.create", {"url": base + "/first.html"})["chromium"]
+                        self.assertEqual(chromium, "c1")
+                        child = rpc("terminal.run", {"name": "visible child"})
+                        self.assertEqual((child["pane"], child["spawned_by"]), ("t2", "t1"))
                         rpc("chromium.command", {"chromium": chromium, "action": "tab-new",
                                                  "args": {"url": base + "/second.html"}})
                         rpc("chromium.set_title", {"chromium": chromium, "title": "Docs"})
@@ -151,12 +154,22 @@ class ServerCheckpoints(unittest.TestCase):
                         self.assertLess(time.monotonic(), deadline, (owner.directory / "server.log").read_text())
                         time.sleep(.2)
                     # The selected page, the new tab, comes first; no page state is kept.
-                    self.assertEqual(window["chromiums"], [{"id": int(chromium[1:]), "owner": first, "title": "Docs",
+                    self.assertEqual(window["chromiums"], [{"id": (1 << 32) + int(chromium[1:]), "owner": first, "title": "Docs",
                         "urls": [base + "/second.html", base + "/first.html"], "profile": ""}])
                     self.assertIn(chromium, [w["pane"] for tab in window["tabs"] for w in tab["tree"]["windows"]])
                     # A restore receives the chromium list unchanged.
                     prepared = json.loads(self.cli(env, "checkpoint", "restore", "--tag", "auto", "--prepare-only", "--checkpoint", "0"))
                     self.assertEqual(json.loads(Path(prepared["prepared"]).read_text())["windows"][0]["chromiums"], window["chromiums"])
+                    # A restore beside the original keeps c2 free for the second saved browser.
+                    client = PrivateClient(json.loads(owner.descriptor.read_text())["local"], "browsing")
+                    try:
+                        first_id = window["chromiums"][0]["id"]
+                        reserved = first_id + 1
+                        for saved, expected in [(first_id, "c3"), (reserved, "c2")]:
+                            restored = rpc("chromium.create", {"id": saved, "through": reserved})
+                            self.assertEqual(restored["chromium"], expected)
+                    finally:
+                        client.socket.close()
             finally:
                 web.shutdown()
                 web.server_close()

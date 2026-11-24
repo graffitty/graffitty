@@ -16,22 +16,22 @@ func run() -> void:
 	# The desktop app shows popups as their own OS windows (TerminalApplication).
 	root.gui_embed_subwindows = not "--native-popups" in OS.get_cmdline_user_args()
 	graph = preload("res://tests/support/ServerGraph.gd").new()
-	graph.nodes = {"%1":{"provider":"adapter", "title":"Scheduled Trigger"}, "%2":{"provider":"adapter", "title":"Receiver"}}
-	graph.register_ports("%1", {"inputs":[], "outputs":[{"id":"out","name":"Trigger"}]})
-	graph.register_ports("%2", {"inputs":[{"id":"in","name":"Input"}], "outputs":[]})
-	graph.connect_nodes({"from":"%1", "from_port":"out", "to":"%2", "to_port":"in"})
+	graph.nodes = {"t1":{"provider":"adapter", "title":"Scheduled Trigger"}, "t2":{"provider":"adapter", "title":"Receiver"}}
+	graph.register_ports("t1", {"inputs":[], "outputs":[{"id":"out","name":"Trigger"}]})
+	graph.register_ports("t2", {"inputs":[{"id":"in","name":"Input"}], "outputs":[]})
+	graph.connect_nodes({"from":"t1", "from_port":"out", "to":"t2", "to_port":"in"})
 	overlay = preload("res://scenes/AgentGraphOverlay.gd").new()
 	overlay.size = Vector2(1000,740)
 	root.add_child(overlay)
 	overlay.graph = graph
-	overlay.sync({"%1":Rect2(80,100,250,180), "%2":Rect2(680,100,250,180)}, graph.edges.values(), func(p): return p, true)
-	var sent: Dictionary = graph.enqueue("%1", "%2", "private payload", "message", "", "", "out", "in")
+	overlay.sync({"t1":Rect2(80,100,250,180), "t2":Rect2(680,100,250,180)}, graph.edges.values(), func(p): return p, true)
+	var sent: Dictionary = graph.enqueue("t1", "t2", "private payload", "message", "", "", "out", "in")
 	await process_frame
 	var queue: Dictionary = overlay.waiting.values()[0]
 	var point: Vector2 = overlay.queue_indicator_position(queue)
 	check(overlay.queue_hit(point) == queue.key, "Queue dot hit-testing uses its painted position")
 	overlay.update_edge_hover(point)
-	check(overlay.hover_edge == queue.key and overlay.edge_tooltip(queue.key).contains("1 pending"), "Hover queue dot describes only its connection")
+	check(overlay.hover_edge == queue.key and overlay.edge_tooltip(queue.key).contains(overlay.tr("%d pending · %d recorded deliveries") % [1, 1]), "Hover queue dot describes only its connection")
 	var click := InputEventMouseButton.new()
 	click.button_index = MOUSE_BUTTON_LEFT
 	click.pressed = true
@@ -41,8 +41,8 @@ func run() -> void:
 	await process_frame
 	check(is_instance_valid(overlay.queue_inspector) and overlay.queue_inspector.visible, "Clicking the queue dot opens properties")
 	var inspector = overlay.queue_inspector
-	check(inspector.rows.size() == 1 and graph.queues["%2"].size() == 1, "Inspector observes without consuming the event")
-	graph.ack("%2", sent.result.event_id, "delivered")
+	check(inspector.rows.size() == 1 and graph.queues["t2"].size() == 1, "Inspector observes without consuming the event")
+	graph.ack("t2", sent.result.event_id, "delivered")
 	await create_timer(0.4).timeout
 	check(inspector.events.get_root().get_first_child().get_text(0).begins_with("[x]"), "Visible row updates to sent automatically")
 	if DisplayServer.get_name() != "headless":

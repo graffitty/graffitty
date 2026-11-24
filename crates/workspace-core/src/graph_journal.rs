@@ -1,6 +1,6 @@
 //! Server-owned, metadata-only delivery history. Payloads never enter snapshots.
 use serde_json::{Value, json};
-use std::collections::{BTreeMap, VecDeque};
+use std::collections::{BTreeMap, HashSet, VecDeque};
 
 const HISTORY_LIMIT: usize = 200;
 const TRANSITION_LIMIT: usize = 20;
@@ -24,6 +24,32 @@ impl Journal {
             .get(id)
             .is_some_and(|row| row["pending"] == true && row["status"] == "queued in Codex")
     }
+    /// Keep pending native submissions and queued events with their receiver.
+    /// A queued event may already have a prompt-start transition before RPC ack.
+    pub fn transfer_pending(&mut self, receivers: &HashSet<String>, queued: &HashSet<String>, target: &mut Self) -> HashSet<String> {
+        let mut moved = HashSet::new();
+        self.entries.retain(|id, entry| {
+            if entry["target"].as_str().is_some_and(|target| receivers.contains(target)) && (entry["pending"] == true || queued.contains(id)) {
+                target.entries.insert(id.clone(), entry.take());
+                moved.insert(id.clone());
+                false
+            } else { true }
+        });
+        self.finished.retain(|id| {
+            if !moved.contains(id) { return true; }
+            target.finished.push_back(id.clone());
+            false
+        });
+        target.trim();
+        moved
+    }
+
+    fn trim(&mut self) {
+        while self.finished.len() > self.history_limit {
+            self.entries.remove(&self.finished.pop_front().unwrap());
+        }
+    }
+
     pub fn started(&mut self, target: &str, prompt: &str) {
         let header = prompt.lines().next().unwrap_or("");
         if !header.starts_with("[Graffitty ") || !header.ends_with(']') {
@@ -54,7 +80,7 @@ impl Journal {
             json!({
                 "event_id":id,"source":event["source"],"target":event["target"],
                 "source_port":event["source_port"],"target_port":event["target_port"],
-                "edge":super::graph::event_key(event),"run_id":event["run_id"],
+                "edge":super::graph::event_key(event),"edge_revision":event["edge_revision"],"run_id":event["run_id"],
                 "kind":event.get("kind").unwrap_or(&event["type"]),
                 "queued_at":event.get("created").cloned().unwrap_or(json!(now)),"transitions":[],
             })
@@ -79,9 +105,7 @@ impl Journal {
         if !pending {
             self.finished.push_back(id.into());
         }
-        while self.finished.len() > self.history_limit {
-            self.entries.remove(&self.finished.pop_front().unwrap());
-        }
+        self.trim();
     }
 
     pub fn snapshot(&self, edge: &str) -> Value {
@@ -91,14 +115,13 @@ impl Journal {
             .filter(|row| edge.is_empty() || row["edge"] == edge)
             .cloned()
             .collect();
-        let mut by_edge: BTreeMap<String, Value> = BTreeMap::new();
+        let mut by_edge = BTreeMap::<_, graffitty_protocol::graph::EdgeCounts>::new();
         for row in &rows {
-            let count = by_edge
-                .entry(row["edge"].as_str().unwrap_or("").into())
-                .or_insert(json!({"total":0,"pending":0}));
-            count["total"] = json!(count["total"].as_u64().unwrap() + 1);
-            if row["pending"] == true {
-                count["pending"] = json!(count["pending"].as_u64().unwrap() + 1);
+            let counts = by_edge.entry(row["edge"].as_str().unwrap().to_owned()).or_default();
+            let revision = row["edge_revision"].as_u64().expect("journal event has an edge revision");
+            for count in [&mut counts.all, counts.by_revision.entry(revision).or_default()] {
+                count.total += 1;
+                count.pending += u64::from(row["pending"] == true);
             }
         }
         let pending = rows.iter().filter(|row| row["pending"] == true).count();

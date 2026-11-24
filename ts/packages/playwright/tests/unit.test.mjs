@@ -29,19 +29,19 @@ async function host(t, handle) {
     await new Promise(resolve => server.close(resolve));
     await rm(directory, { recursive: true, force: true });
   });
-  return { chromium: "%7", socket, token: "workspace-secret", timeout: 500 };
+  return { chromium: "c7", socket, token: "workspace-secret", timeout: 500 };
 }
 
 test("rejects invalid identity and timeout without launching a chromium", async () => {
-  await assert.rejects(attach({ chromium: "focused" }), /%N/);
-  await assert.rejects(attach({ chromium: "%1", socket: "/absent", token: "x", timeout: 0 }), /positive/);
+  await assert.rejects(attach({ chromium: "focused" }), /cN/);
+  await assert.rejects(attach({ chromium: "c1", socket: "/absent", token: "x", timeout: 0 }), /positive/);
 });
 
 test("propagates host authorization errors", async t => {
   const options = await host(t, request => {
     assert.equal(request.token, "workspace-secret");
     assert.equal(request.method, "chromium.attach");
-    assert.equal(request.params.chromium, "%7");
+    assert.equal(request.params.chromium, "c7");
     return { error: { code: "forbidden", message: "Chromium belongs to another workspace" } };
   });
   await assert.rejects(attach(options), /forbidden.*another workspace/);
@@ -76,13 +76,13 @@ test("failed CDP attachment releases lease and redacts its bearer URL", async t 
 
 test("placement defaults to the right of this terminal and validates combinations", () => {
   assert.deepEqual(placement({}), { side: "right" });
-  assert.deepEqual(placement({ side: "below", of: "%2" }), { side: "below", of: "%2" });
+  assert.deepEqual(placement({ side: "below", of: "c2" }), { side: "below", of: "c2" });
   assert.deepEqual(placement({ position: { x: 10, y: 20 }, size: { width: 640, height: 480 } }),
     { x: 10, y: 20, width: 640, height: 480 });
   assert.equal(placement({ hidden: true }), undefined);
   assert.throws(() => placement({ hidden: true, side: "left" }), /hidden/);
   assert.throws(() => placement({ side: "left", position: { x: 1, y: 2 } }), /not both/);
-  assert.throws(() => placement({ of: "%2" }), /of requires side/);
+  assert.throws(() => placement({ of: "c2" }), /of requires side/);
   assert.throws(() => placement({ side: "diagonal" }), /side must be/);
   assert.throws(() => placement({ size: { width: 10, height: 480 } }), /40 by 40/);
 });
@@ -93,8 +93,8 @@ test("launch creates, places, retries a not-ready page, then cleans up on failur
   const options = await host(t, request => {
     calls.push([request.method, request.params]);
     switch (request.method) {
-      case "chromium.create": return { result: { chromium: "%9" } };
-      case "pane.place": return { result: { pane: "%9", rect: [0, 0, 1, 1] } };
+      case "chromium.create": return { result: { chromium: "c9" } };
+      case "pane.place": return { result: { pane: "c9", rect: [0, 0, 1, 1] } };
       case "chromium.attach":
         attempts += 1;
         if (attempts < 3) return { error: { code: "chromium_error", message: "Chromium page is not ready" } };
@@ -105,18 +105,18 @@ test("launch creates, places, retries a not-ready page, then cleans up on failur
     }
   });
   const { chromium, ...connection } = options;
-  await assert.rejects(launch({ ...connection, timeout: 2000, url: "http://localhost:3000", side: "below", of: "%2" }));
+  await assert.rejects(launch({ ...connection, timeout: 2000, url: "http://localhost:3000", side: "below", of: "c2" }));
   assert.deepEqual(calls[0], ["chromium.create", { url: "http://localhost:3000" }]);
-  assert.deepEqual(calls[1], ["pane.place", { target: "%9", side: "below", of: "%2" }]);
+  assert.deepEqual(calls[1], ["pane.place", { target: "c9", side: "below", of: "c2" }]);
   assert.equal(attempts, 3, "not-ready attachment is retried");
-  assert.deepEqual(calls.at(-1), ["chromium.close", { chromium: "%9" }], "a failed launch removes its pane");
+  assert.deepEqual(calls.at(-1), ["chromium.close", { chromium: "c9" }], "a failed launch removes its pane");
 });
 
 test("hidden launch skips placement and invalid options create nothing", async t => {
   const calls = [];
   const options = await host(t, request => {
     calls.push(request.method);
-    if (request.method === "chromium.create") return { result: { chromium: "%9" } };
+    if (request.method === "chromium.create") return { result: { chromium: "c9" } };
     if (request.method === "chromium.attach") return { error: { code: "forbidden", message: "no" } };
     return { result: {} };
   });

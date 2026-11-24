@@ -1,4 +1,5 @@
 extends "../../../../tests/llm-e2e/replay/replay.gd"
+
 ## Real terminal output, projected right-clicks, and Chromium creation.
 ## Run with a desktop renderer; the headless driver reports a minimized window.
 const LinkMenu := preload("res://scenes/HyperlinkContextMenu.gd")
@@ -139,7 +140,7 @@ func play() -> void:
 		await process_frame
 	check(host.chromiums.size() == chromium_count + 1, "Show in Graffitty Chromium creates a real embedded browser")
 	for chromium in host.chromiums.values():
-		if chromium.owner_id == int(source.substr(1)):
+		if chromium.owner_id == PaneAddress.id(source):
 			while chromium.page_tabs.is_empty() and Time.get_ticks_msec() < deadline:
 				await process_frame
 			check(not chromium.page_tabs.is_empty() and chromium.page_tabs[0].url == uri, "Embedded browser navigates to the clicked terminal URL")

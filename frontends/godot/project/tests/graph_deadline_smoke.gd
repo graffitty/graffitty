@@ -20,21 +20,21 @@ func check(value: bool, message: String) -> void:
 
 func run() -> void:
 	var graph := Graph.new()
-	graph.nodes = { "%1": { "provider": "claude" }, "%2": { "provider": "codex" } }
+	graph.nodes = { "t1": { "provider": "claude" }, "t2": { "provider": "codex" } }
 	root.add_child(graph)
 	graph.set_process(false)
 	var params := {
-		"from": "%1",
-		"to": "%2",
+		"from": "t1",
+		"to": "t2",
 		"send": true,
 		"stop_at": Time.get_unix_time_from_system() + 0.15,
 	}
 	var edge: Dictionary = graph.connect_nodes(params).result
-	graph.enqueue("%1", "%2", "waiting", "message")
+	graph.enqueue("t1", "t2", "waiting", "message")
 	await create_timer(0.3).timeout
 	graph.dispatch(1, "graph.list", {})
 	check(
-		graph.queues["%2"].is_empty(),
+		graph.queues["t2"].is_empty(),
 		"The owner expires queued messages independently of frontend execution",
 	)
 	check(
@@ -45,11 +45,11 @@ func run() -> void:
 	graph.connect_nodes(params)
 	params.stop_at = 0
 	graph.connect_nodes(params)
-	graph.enqueue("%1", "%2", "resumed", "message")
+	graph.enqueue("t1", "t2", "resumed", "message")
 	await create_timer(0.2).timeout
 	graph.dispatch(1, "graph.list", {})
 	check(
-		graph.queues["%2"].size() == 1,
+		graph.queues["t2"].size() == 1,
 		"Clearing a rearmed deadline prevents its old timeout from cancelling new work",
 	)
 	graph.free()

@@ -6,33 +6,42 @@ func _topology(active: Variant, focused: String) -> Dictionary:
 		"tabs": [{"id": 1}, {"id": 5}],
 		"panes": [{"id": 1, "tab": 1}, {"id": 5, "tab": 5}, {"id": 7, "tab": 5}, {"id": 9, "tab": 1}],
 		"workspace_state": {"active": active, "order": [1, 5],
-			"layout": {"tabs": {"1": {"focused": "%9"}, "5": {"focused": focused}}}},
+			"layout": {"tabs": {"1": {"focused": "t9"}, "5": {"focused": focused}}}},
 	}
 
 func test_switching_back_resumes_the_active_tab_and_its_focused_pane() -> void:
-	expect(Client.resume_focus(_topology(5, "%7")) == 7, "the session's active tab and its focused pane")
-	expect(Client.resume_focus(_topology(1, "%7")) == 9, "another tab keeps its own focus")
+	expect(Client.resume_focus(_topology(5, "t7")) == 7, "the session's active tab and its focused pane")
+	expect(Client.resume_focus(_topology(1, "t7")) == 9, "another tab keeps its own focus")
 
 func test_missing_or_stale_state_falls_back() -> void:
 	expect(Client.resume_focus(_topology(5, "")) == 5, "no focused pane: the active tab")
-	expect(Client.resume_focus(_topology(5, "%9")) == 5, "a focused pane from another tab is ignored")
-	expect(Client.resume_focus(_topology(42, "%7")) == 1, "a closed active tab: the first tab")
-	expect(Client.resume_focus(_topology(null, "%7")) == 1, "no active tab: the first tab")
+	expect(Client.resume_focus(_topology(5, "t9")) == 5, "a focused pane from another tab is ignored")
+	expect(Client.resume_focus(_topology(42, "t7")) == 1, "a closed active tab: the first tab")
+	expect(Client.resume_focus(_topology(null, "t7")) == 1, "no active tab: the first tab")
 	expect(Client.resume_focus({"tabs": []}) == -1, "an empty session")
+
+func test_session_switch_lands_on_the_selected_chromium_tab() -> void:
+	var browser := preload("res://scenes/PaneAddress.gd").id("c1")
+	var topology := _topology(5, "c1")
+	topology.chromiums = [{"id": browser, "tab": 5, "owner": 7}]
+	expect(Client.resume_focus(topology) == browser, "A remembered Chromium pane resumes with its tab")
+	topology.workspace_state.active = 1
+	expect(Client.pane_tab(topology, browser) == 5, "Selecting the browser targets its tab independently of the saved tab or owner")
+	expect(Client.pane_tab(topology, browser + 1) == -1, "A closed browser cannot redirect the flight")
 
 class StartupHost extends Node:
 	var active_session_id := -1
 	var workspace_layout := preload("res://scenes/WorkspaceLayout.gd").new()
-	func is_terminal_pane(key: String) -> bool: return key in ["%1", "%2"]
+	func is_terminal_pane(key: String) -> bool: return key in ["t1", "t2"]
 
 func test_flat_world_startup_keeps_the_restored_secondary_pane() -> void:
 	var host := StartupHost.new()
-	host.workspace_layout.tabs.assign([{"id": 1, "focused": "%1", "tree": {"windows": [{"pane": "%2"}, {"pane": "%1"}]}}])
+	host.workspace_layout.tabs.assign([{"id": 1, "focused": "t1", "tree": {"windows": [{"pane": "t2"}, {"pane": "t1"}]}}])
 	host.workspace_layout.active = 1
 	var world := preload("res://scenes/Flat2DWorld.gd").new()
 	world.host = host
-	expect(world._initial_terminal() == 1, "Restored focus on %1 wins over tree order")
-	host.workspace_layout.tabs[0].focused = "%9"
+	expect(world._initial_terminal() == 1, "Restored focus on t1 wins over tree order")
+	host.workspace_layout.tabs[0].focused = "t9"
 	expect(world._initial_terminal() == 2, "A missing remembered pane falls back to the first terminal")
 	world.host = null
 	world.free()

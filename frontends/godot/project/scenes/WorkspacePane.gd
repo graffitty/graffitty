@@ -1,4 +1,6 @@
 extends Panel
+
+const PaneAddress := preload("res://scenes/PaneAddress.gd")
 const DesktopText := preload("res://scenes/DesktopText.gd")
 signal header_changed
 const ViewportUpdates := preload("res://scenes/TerminalViewportUpdates.gd")
@@ -40,6 +42,7 @@ var _pressed := false
 var _press := Vector2.ZERO
 var _dragging := false
 var _start_rect := Rect2()
+var _drag_started_outside_main := false
 var drag_start_rectangles: Dictionary = {}
 var _resize_edges := Vector2.ZERO
 var _resizing := false
@@ -152,14 +155,14 @@ func _ready() -> void:
 
 func _resize_chromium_preview() -> void:
 	if not visible or not host.presentation_active: return
-	var chromium: Node = host.chromiums.get(int(key.substr(1)))
+	var chromium: Node = host.chromiums.get(PaneAddress.id(key))
 	if chromium != null and texture.size.x >= 64 and texture.size.y >= 64:
 		chromium.set_preview_size(texture.size)
 
 
 func terminal_content_padding(configured: Vector4) -> Vector4:
 	if host != null and host.is_terminal_pane(key):
-		var pair: Dictionary = host.sessions.get(int(key.substr(1)), {})
+		var pair: Dictionary = host.sessions.get(PaneAddress.id(key), {})
 		if not pair.is_empty() and pair.term.has_meta("server_content_insets"):
 			var inset: Array = pair.term.get_meta("server_content_insets")
 			var pad: float = pair.term.cell_padding
@@ -237,7 +240,7 @@ func _ensure_content_kind() -> void:
 
 
 func _find_requested(direction: int) -> void:
-	var chromium: Node = host.chromiums.get(int(key.substr(1)))
+	var chromium: Node = host.chromiums.get(PaneAddress.id(key))
 	if chromium == null or not chromium.chromium_ready: return
 	find_bar.session = chromium
 	if direction == 0: find_bar.open()
@@ -350,7 +353,7 @@ func _resize_terminal_preview() -> void:
 	_ensure_content_kind()
 	if not host.is_terminal_pane(key) or host.world == null:
 		return
-	var id := int(key.substr(1))
+	var id := PaneAddress.id(key)
 	# A landscape IME can leave one valid terminal row. Retain its new crop
 	# and control geometry instead of keeping the previous tall viewport.
 	if not host.sessions.has(id) or body.size.x < 32 or body.size.y < 1:
@@ -451,7 +454,7 @@ func _resize_terminal_preview() -> void:
 
 func _sync_terminal_grid() -> void:
 	_grid_sync_pending = false
-	if is_instance_valid(host) and host.session_backend != null and host.sessions.has(int(key.substr(1))):
+	if is_instance_valid(host) and host.session_backend != null and host.sessions.has(PaneAddress.id(key)):
 		host.session_backend.sync_pane_grid(host, key)
 
 
@@ -499,7 +502,7 @@ func _original_title() -> String:
 
 
 func _bind_title_source() -> void:
-	var source: Node = host.session_model(int(key.substr(1)))
+	var source: Node = host.session_model(PaneAddress.id(key))
 	if _title_source != source:
 		if is_instance_valid(_title_source):
 			_title_source.title_changed.disconnect(_on_title_changed)
@@ -563,7 +566,7 @@ func _show_link_in_chromium(uri: String) -> void:
 	# The server's Chromium API uses lowercase schemes; preserve path casing.
 	var colon := uri.find(":")
 	var url := uri.left(colon).to_lower() + uri.substr(colon)
-	host.create_chromium_session(url, int(key.substr(1)))
+	host.create_chromium_session(url, PaneAddress.id(key))
 
 
 func _refresh_title() -> void:
@@ -579,7 +582,7 @@ func _refresh_title() -> void:
 func refresh() -> void:
 	if not visible or not host.presentation_active: return
 	_ensure_content_kind()
-	var session: Dictionary = host.sessions.get(int(key.substr(1)), {})
+	var session: Dictionary = host.sessions.get(PaneAddress.id(key), {})
 	header.set_filetree_open(not session.is_empty() and bool(session.term.get_meta("filetree_open", false)))
 	if is_instance_valid(host.world):
 		var radius: int = host.world.terminal_window.corner_radius
@@ -587,7 +590,7 @@ func refresh() -> void:
 		if panel_style.corner_radius_top_left != radius:
 			panel_style.set_corner_radius_all(radius)
 			_sync_corner_clip()
-	var id := int(key.substr(1))
+	var id := PaneAddress.id(key)
 	if host.is_terminal_pane(key):
 		_bind_title_source()
 		_refresh_title()
@@ -646,7 +649,7 @@ func _refresh_chromium_content() -> void:
 	if is_instance_valid(_chromium_source) and _chromium_source.texture == null:
 		texture.texture = null
 	if not visible or not host.presentation_active: return
-	var chromium: Node = host.chromiums.get(int(key.substr(1)))
+	var chromium: Node = host.chromiums.get(PaneAddress.id(key))
 	if chromium == null: return
 	# Canonical layout can create this pane before the chromium mirror arrives.
 	# Bind once the mirror exists, and rebind after a replaced connection model.
@@ -704,7 +707,7 @@ func _header_action(action: StringName) -> void:
 		&"filetree":
 			host.focus_pane(key)
 			host.prefix_commands.filetree.toggle(host, true)
-		&"chromium": host.create_chromium_session("", int(key.substr(1)), true)
+		&"chromium": host.create_chromium_session("", PaneAddress.id(key), true)
 		&"split_right": host.workspace_view.split_window("h", key)
 		&"split_down": host.workspace_view.split_window("v", key)
 		&"close": _close_pane()
@@ -712,7 +715,7 @@ func _header_action(action: StringName) -> void:
 
 func _close_pane() -> void:
 	if host.is_terminal_pane(key):
-		host.request_close_terminal(int(key.substr(1)))
+		host.request_close_terminal(PaneAddress.id(key))
 	else:
 		_confirm_chromium_close()
 
@@ -759,6 +762,11 @@ func set_compact_header(value: bool, title_height := 0.0) -> void:
 func begin_header_drag(sheet_point: Vector2, detach := false) -> void:
 	_pressed = true
 	_press = sheet_point
+	var view: Control = host.workspace_view
+	var origin: Vector2 = view.canvas_root.get_global_transform().affine_inverse() * sheet_point
+	var group: Dictionary = host.workspace_layout.tab(host.workspace_layout.containing(key))
+	var item: Dictionary = host.workspace_layout.find(group.get("tree", {}), key)
+	_drag_started_outside_main = item.get("stashed", false) or item.get("graph_floating", false) or not view.content_rect().has_point(origin)
 	_start_rect = layout_rect()
 	drag_start_rectangles = host.workspace_view.pane_rects.duplicate(true)
 	_detach = detach
@@ -774,7 +782,7 @@ func _title_menu_action(id: int) -> void:
 		6: _header_action(&"filetree")
 		7: host.workspace_view.resize_to_fit_main(key)
 		1: _toggle_resource_monitor()
-		2: host.create_chromium_session("", int(key.substr(1)), true)
+		2: host.create_chromium_session("", PaneAddress.id(key), true)
 		3: host.workspace_view.split_window("h", key)
 		4: host.workspace_view.split_window("v", key)
 		8: host.workspace_view.split_window("h", key, true)
@@ -899,7 +907,7 @@ func _drag_to(screen: Vector2, delta: Vector2) -> void:
 		host.workspace_view.preview_window_move(
 			key,
 			layout_rect(),
-			host.workspace_view.layout_point(screen),
+			host.workspace_view.layout_point(screen), {}, {}, _drag_started_outside_main,
 		)
 		return
 	_stop_edge_pan()
@@ -948,7 +956,14 @@ func _edge_at(point: Vector2, touch := false) -> Vector2:
 		)
 		return touch_resize_edges(point, size, Vector2.ONE / pixels.max(Vector2(.001, .001)))
 	if not Rect2(Vector2.ZERO, size).has_point(point):
-		return Vector2.ZERO
+		var links: Control = host.workspace_view.agent_links
+		if not links.editing or not links.wire_layer.visible or host.pane_focus != key or key not in links.tools.selection():
+			return Vector2.ZERO
+		# The selected outline is painted on the sheet and scales with the pane.
+		var shadow := maxf(1.0, roundf(links.tools.SELECTION_GLOW_WIDTH * scale.x))
+		var outside := Vector2.ONE * shadow / scale.abs()
+		if not Rect2(-outside, size + outside * 2.0).has_point(point):
+			return Vector2.ZERO
 	if point.x > size.x - 16 and point.y > size.y - 16:
 		return Vector2.ONE
 	return Vector2(
@@ -991,20 +1006,20 @@ func _resize_rect(delta: Vector2) -> Rect2:
 func _release_chromium_input() -> void:
 	if is_instance_valid(host.touch_keybar): host.touch_keybar.cancel_pointer(key)
 	if host.is_chromium_pane(key):
-		var chromium: Node = host.chromiums.get(int(key.substr(1)))
+		var chromium: Node = host.chromiums.get(PaneAddress.id(key))
 		if is_instance_valid(chromium) and chromium.has_method("release_input"):
 			chromium.release_input()
 
 
 func _content_pointer_entered() -> void:
 	if not host.is_terminal_pane(key): return
-	var pair: Dictionary = host.sessions.get(int(key.substr(1)), {})
+	var pair: Dictionary = host.sessions.get(PaneAddress.id(key), {})
 	if not pair.is_empty(): ViewportInput.set_pointer_inside(pair.vp, true)
 
 
 func _content_pointer_exited() -> void:
 	if not host.is_terminal_pane(key): return
-	var pair: Dictionary = host.sessions.get(int(key.substr(1)), {})
+	var pair: Dictionary = host.sessions.get(PaneAddress.id(key), {})
 	if not pair.is_empty(): ViewportInput.set_pointer_inside(pair.vp, false)
 	texture.mouse_default_cursor_shape = Control.CURSOR_IBEAM
 
@@ -1015,7 +1030,7 @@ func _content_input(event: InputEvent) -> void:
 	if event is InputEventMouseButton and event.pressed and event.button_index in [MOUSE_BUTTON_LEFT, MOUSE_BUTTON_RIGHT, MOUSE_BUTTON_MIDDLE]:
 		host.focus_pane(key)
 	if host.is_chromium_pane(key):
-		var chromium: Node = host.chromiums.get(int(key.substr(1)))
+		var chromium: Node = host.chromiums.get(PaneAddress.id(key))
 		if chromium != null:
 			texture.focus_mode = Control.FOCUS_ALL
 			if event is InputEventMouseButton and event.pressed: texture.grab_focus()
@@ -1026,7 +1041,7 @@ func _content_input(event: InputEvent) -> void:
 			texture.accept_event()
 			return
 	else:
-		var pair: Dictionary = host.sessions.get(int(key.substr(1)), { })
+		var pair: Dictionary = host.sessions.get(PaneAddress.id(key), { })
 		# The terminal's layout is the body's size, so body pixels are its pixels.
 		if not pair.is_empty() and (event is InputEventMouse or event is InputEventGesture):
 			var forwarded: InputEvent = event.duplicate()
@@ -1081,20 +1096,20 @@ func _build_chromium_failure() -> void:
 	chromium_restart_button = Button.new()
 	chromium_restart_button.text = "Restart Chromium"
 	chromium_restart_button.pressed.connect(func():
-		var chromium: Node = host.chromiums.get(int(key.substr(1)))
+		var chromium: Node = host.chromiums.get(PaneAddress.id(key))
 		if chromium != null: chromium.restart())
 	actions.add_child(chromium_restart_button)
 	chromium_reload_button = Button.new()
 	chromium_reload_button.text = "Reload page"
 	chromium_reload_button.pressed.connect(func():
-		var chromium: Node = host.chromiums.get(int(key.substr(1)))
+		var chromium: Node = host.chromiums.get(PaneAddress.id(key))
 		if chromium != null: chromium.reload_failed_page())
 	actions.add_child(chromium_reload_button)
 	chromium_close_button = Button.new()
 	chromium_close_button.text = "Close"
 	# A stopped browser has no page state left to lose: close without asking.
 	chromium_close_button.pressed.connect(func():
-		if host.session_end_warning([int(key.substr(1))]).is_empty(): host.close_chromium_session(int(key.substr(1)))
+		if host.session_end_warning([PaneAddress.id(key)]).is_empty(): host.close_chromium_session(PaneAddress.id(key))
 		else: _confirm_chromium_close())
 	actions.add_child(chromium_close_button)
 
@@ -1103,13 +1118,13 @@ func _confirm_chromium_close() -> void:
 	var dialog := ConfirmationDialog.new()
 	dialog.title = 'Close chromium?'
 	dialog.ok_button_text = 'Close chromium'
-	dialog.dialog_text = tr('Closing this chromium window discards unsaved page state in its tabs.') + host.session_end_warning([int(key.substr(1))])
+	dialog.dialog_text = tr('Closing this chromium window discards unsaved page state in its tabs.') + host.session_end_warning([PaneAddress.id(key)])
 	# Modal dialogs belong to the host window. Inside the canvas this one would
 	# make the host window refuse all input, including the clicks it forwards.
 	host.add_child(dialog)
 	dialog.confirmed.connect(
 		func():
-			host.close_chromium_session(int(key.substr(1)))
+			host.close_chromium_session(PaneAddress.id(key))
 			dialog.queue_free(),
 	)
 	dialog.canceled.connect(dialog.queue_free)

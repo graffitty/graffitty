@@ -100,6 +100,7 @@ static func presentation(app: Node, source: Node, session: String) -> Node:
 	client.managed = true
 	client.local_return = source.get_parent().local_return
 	client.server_epoch = connection.epoch
+	client.connection.epoch = connection.epoch
 	client.connection.local_ids = connection.local_ids
 	var window := stage(app, source)
 	previews.append(client)
@@ -169,7 +170,7 @@ static func commit(app: Node, state: Dictionary, client: Node) -> void:
 		app._finish_transfer(source.get_parent())
 		if response.get("type") == "error":
 			if id != state.id and is_instance_valid(source):
-				await source.session_backend.connection.request_action("regroup", {"surface": key, "tab": state.id, "restore": true})
+				await source.session_backend.connection.request_action("regroup", {"pane": key, "tab": state.id, "restore": true})
 			return
 		source.get_parent()._refresh()
 		client = presentation(app, source, str(response.workspace))

@@ -1,4 +1,7 @@
 extends Node
+
+const SharedSessionPeer := preload("res://scenes/session/SharedSessionPeer.gd")
+const PaneAddress := preload("res://scenes/PaneAddress.gd")
 ## A remote connection supplies sessions to the ordinary Graffitty host.
 const Authentication := preload("res://scenes/remote/ClientAuthentication.gd")
 var remember := CheckBox.new()
@@ -32,6 +35,7 @@ var host_bound := false
 var pending_focus := -1
 ## The tab active when pending_focus was requested; -1 always applies it.
 var pending_focus_from := -1
+var docking_panes: Dictionary = {} # Pane key -> source tab for local tab-strip drops.
 ## The peer whose destination topology we await. Subscriptions can change
 ## federation.selected while the outgoing workspace is still on screen.
 var switching_peer: Node
@@ -47,6 +51,12 @@ var clipboard_replies: Array[Dictionary] = []
 var clipboard_reply_bytes := 0
 var clipboard_reply_busy := false
 var dialog := AcceptDialog.new()
+var empty_session := ConfirmationDialog.new()
+var creating_session := false
+var _empty_session_attempted := false
+var _empty_session_failed := false
+var _empty_session_dismissed := false
+var _session_request_generation := 0
 var endpoint := LineEdit.new()
 var secret: LineEdit = preload("res://scenes/SecretInput.gd").new()
 var status := Label.new()
@@ -86,6 +96,13 @@ func _ready() -> void:
 	dialog.add_child(form)
 	add_child(dialog)
 	dialog.confirmed.connect(_connect)
+	empty_session.title = "Could not create session"
+	empty_session.dialog_text = "Could not create session."
+	empty_session.ok_button_text = "Retry"
+	empty_session.dialog_hide_on_ok = false
+	empty_session.confirmed.connect(_create_remote_session)
+	empty_session.canceled.connect(_cancel_empty_session)
+	add_child(empty_session)
 	if local_return != null:
 		dialog.add_button("Return to This Computer", true, "local_return")
 		dialog.custom_action.connect(func(action):
@@ -109,6 +126,8 @@ func _ready() -> void:
 	connection.session_switching.connect(func():
 		view_state.capture(host, connection.connections if federated else [connection]))
 	connection.session_switched.connect(func():
+		_empty_session_attempted = true
+		_reset_empty_session()
 		pending_resources.clear()
 		var transport: Node = connection.selected if federated else connection
 		switching_peer = transport
@@ -144,6 +163,7 @@ func _ready() -> void:
 	connection.clipboard_received.connect(_remote_clipboard)
 	if federated:
 		return
+	connection.sessions_changed.connect(_remote_sessions_changed, CONNECT_DEFERRED)
 	connection.connection_failed.connect(func(_message):
 		if is_instance_valid(host): host.layout_root.hide()
 		_show_connection_ui()
@@ -206,7 +226,7 @@ func _connect() -> void:
 		_show_connection_ui()
 		return
 	if connection.connected and connection.workspace.is_empty():
-		connection.send_action("session_new", -1, {})
+		_remote_sessions_changed(true)
 	elif connection.connected and connection.topology.tabs.is_empty():
 		connection.send_action("create", -1, { "kind": "tab" })
 	else:
@@ -276,7 +296,73 @@ func _local_fallback_session() -> String:
 
 func _remote_session_closed() -> void:
 	if transferring or closing_window: return
-	if connection.available_sessions.is_empty(): _show_connection_ui()
+	_remote_sessions_changed()
+
+
+func _hide_empty_session() -> void:
+	empty_session.hide()
+
+
+func _cancel_empty_session() -> void:
+	_empty_session_dismissed = true
+	_hide_empty_session()
+	_show_connection_ui()
+
+
+func _reset_empty_session() -> void:
+	_hide_empty_session()
+	_empty_session_dismissed = false
+	_empty_session_failed = false
+	_session_request_generation += 1
+	creating_session = false
+	empty_session.get_ok_button().disabled = false
+
+
+func _remote_sessions_changed(reopen := false) -> void:
+	if settings.get("shared_local", false) or transferring or closing_window: return
+	if reopen:
+		_empty_session_dismissed = false
+		if not creating_session:
+			_empty_session_attempted = false
+			_empty_session_failed = false
+	if get_node("/root/TerminalApplication").desktop_presentation(self).parked:
+		_hide_empty_session()
+		return
+	if connection.connected and connection.sessions_known and connection.workspace.is_empty() and connection.available_sessions.is_empty():
+		if is_instance_valid(host): host.layout_root.hide()
+		if _empty_session_dismissed or creating_session: return
+		if not _empty_session_attempted:
+			_create_remote_session()
+		elif _empty_session_failed:
+			if not empty_session.visible: empty_session.popup_centered()
+		else:
+			# Closing the last session is deliberate. Only a new connection or
+			# explicitly selecting this server starts another shell.
+			_show_connection_ui()
+	else:
+		if not connection.workspace.is_empty() or not connection.available_sessions.is_empty():
+			_empty_session_attempted = true
+		_reset_empty_session()
+
+
+func _create_remote_session() -> void:
+	if creating_session or not connection.connected or not connection.sessions_known or not connection.workspace.is_empty() or not connection.available_sessions.is_empty(): return
+	var transport := connection
+	var transport_generation: int = transport.transport_generation
+	_session_request_generation += 1
+	var request_generation := _session_request_generation
+	_empty_session_attempted = true
+	_empty_session_failed = false
+	creating_session = true
+	empty_session.get_ok_button().disabled = true
+	var response: Dictionary = await transport.request_action("session_new", {"if_empty": true})
+	if connection != transport or transport.transport_generation != transport_generation or _session_request_generation != request_generation: return
+	creating_session = false
+	empty_session.get_ok_button().disabled = false
+	if response.get("type") == "error":
+		_empty_session_failed = true
+		if not _empty_session_dismissed and not get_node("/root/TerminalApplication").desktop_presentation(self).parked:
+			empty_session.popup_centered()
 
 func _show_remote_unavailable() -> void:
 	if settings.get("shared_local", false) or connection.connected: return
@@ -288,6 +374,9 @@ func _show_remote_unavailable() -> void:
 	_show_connection_ui()
 
 func _status(message: String) -> void:
+	if not connection.connected:
+		_empty_session_attempted = false
+		_reset_empty_session()
 	if not connection.connected: pending_resources.clear()
 	if not federated and not connection.connected and is_instance_valid(host):
 		clipboard_generations.clear()
@@ -344,7 +433,7 @@ func _follow_server_language() -> void:
 	if federated:
 		source = connection.selected
 		if is_instance_valid(host):
-			var id := int(str(host.pane_focus).trim_prefix("%"))
+			var id := PaneAddress.id(host.pane_focus)
 			source = connection.owners.get(id, connection.owners.get(host.workspace_layout.active, source))
 	get_node("/root/Localization").follow_server(source)
 
@@ -381,8 +470,14 @@ static func resume_focus(topology: Dictionary) -> int:
 	var tab: Variant = workspace.get("layout", {}).get("tabs", {}).get(str(active))
 	var focused := str(tab.get("focused", "")) if tab is Dictionary else ""
 	if not preload("res://scenes/PaneTargets.gd").valid(focused): return active
-	var pane := int(focused.substr(1))
-	return pane if topology.get("panes", []).any(func(item): return int(item.id) == pane and int(item.tab) == active) else active
+	var pane := PaneAddress.id(focused)
+	return pane if pane_tab(topology, pane) == active else active
+
+static func pane_tab(topology: Dictionary, id: int) -> int:
+	var collection := "chromiums" if id > PaneAddress.CHROMIUM_BASE else "panes"
+	for pane in topology.get(collection, []):
+		if int(pane.id) == id: return int(pane.tab)
+	return -1
 
 
 func _refresh() -> void:
@@ -420,13 +515,10 @@ func _refresh_body() -> void:
 				var wire := int(host.get_meta("session_switch_focus"))
 				host.remove_meta("session_switch_focus")
 				var wanted := int(switching_peer.local_id(wire))
-				if target.get("panes", []).any(func(pane): return int(pane.id) == wanted): pending_focus = wanted
+				if pane_tab(target, wanted) >= 0: pending_focus = wanted
 			if pending_focus >= 0:
-				switch_tab = pending_focus
-				for pane in target.get("panes", []):
-					if int(pane.id) == pending_focus:
-						switch_tab = int(pane.tab)
-						break
+				var tab := pane_tab(target, pending_focus)
+				switch_tab = tab if tab >= 0 else pending_focus
 			pending_focus_from = -1
 		switching_peer = null
 	if state.tabs.is_empty():
@@ -438,6 +530,8 @@ func _refresh_body() -> void:
 		status.text = "Workspace is empty — connect to open a terminal"
 		if federated:
 			host_empty.emit()
+		elif connection.connected and connection.sessions_known and connection.available_sessions.is_empty():
+			_remote_sessions_changed()
 		else:
 			_show_connection_ui()
 		applying = false
@@ -449,7 +543,7 @@ func _refresh_body() -> void:
 		_release_host()
 	# A parked view (for example the source of a Sessions-panel drop preview)
 	# can still apply topology, but must not draw over the view replacing it.
-	if not managed and connection.connected and is_instance_valid(host) and not host.application.desktop_presentation(self).parked:
+	if not federated and connection.connected and is_instance_valid(host) and not host.application.desktop_presentation(self).parked:
 		host.layout_root.show()
 	var layout_state := state.duplicate()
 	layout_state.erase("graph")
@@ -525,8 +619,8 @@ func _refresh_body() -> void:
 				applying = false
 				return
 			pair.term.set_meta("server_font_signature", font_signature)
-		if filetree_changed and host.workspace_view.panes.has("%%%d" % id):
-			host.workspace_view.panes["%%%d" % id].refresh()
+		if filetree_changed and host.workspace_view.panes.has(PaneAddress.key(id)):
+			host.workspace_view.panes[PaneAddress.key(id)].refresh()
 		if id == host.active_session_id:
 			host.world.term_font_size_default = connection.font_default(id)
 	var chromiums: Array = state.get("chromiums", [])
@@ -567,12 +661,12 @@ func _refresh_body() -> void:
 			host.workspaces[controller].chromium = id
 		host.chromiums[id].pinned_title = str(item.pinned_title)
 		host.chromiums[id].apply_state(item.state)
-	if pending_focus >= 0 and host.sessions.has(pending_focus):
+	if pending_focus >= 0 and (host.sessions.has(pending_focus) or host.chromiums.has(pending_focus)):
 		# Selecting another tab after asking for a pane cancels the automatic jump.
 		if pending_focus_from < 0 or host.workspace_layout.active == pending_focus_from:
 			# Reveal: a hidden pane focused in place leaves the camera fitting
 			# content that is not laid out.
-			host.reveal_pane("%%%d" % pending_focus)
+			host.reveal_pane(PaneAddress.key(pending_focus))
 		pending_focus = -1
 	# Title signals update pane headers directly. Re-arranging every pane and
 	# rebuilding graph sockets for each CLI spinner tick monopolizes Android's
@@ -635,8 +729,8 @@ func _apply_pane_update_body(ids: Array) -> void:
 		if pair.model.foreground_app != app or pair.model.effect_holds != holds: context_changed = true
 		pair.model.foreground_app = app
 		pair.model.effect_holds = holds
-		if filetree_changed and host.workspace_view.panes.has("%%%d" % id):
-			host.workspace_view.panes["%%%d" % id].refresh()
+		if filetree_changed and host.workspace_view.panes.has(PaneAddress.key(id)):
+			host.workspace_view.panes[PaneAddress.key(id)].refresh()
 	# The app in the focused pane decides which rules and effect holds apply,
 	# exactly as after a full refresh.
 	if context_changed: host.refresh_app_context()
@@ -672,7 +766,7 @@ func _install_layout(state: Dictionary, preserve: bool, switch_tab := -1) -> voi
 	var close_origin: Dictionary = { }
 	var remaining: Array = state.panes.map(
 		func(p):
-			return "%%%d" % int(p.id),
+			return PaneAddress.key(int(p.id)),
 	)
 	if preserve and host.is_terminal_pane(focused) and focused not in remaining:
 		close_origin = host._pane_close_origin(focused)
@@ -767,7 +861,7 @@ func _install_layout(state: Dictionary, preserve: bool, switch_tab := -1) -> voi
 			mirror.merge(layout)
 			layout = mirror
 		host.workspace_layout.tabs.append(layout)
-		host.application.next_id = maxi(host.application.next_id, int(tab.id) + 1)
+		host.application.reserve_id(int(tab.id))
 	if authoritative:
 		host.application.tiling_default = bool(snapshot.layout.default_enabled)
 		if not preserve: active = int(snapshot.get("active", active))
@@ -786,8 +880,19 @@ func _install_layout(state: Dictionary, preserve: bool, switch_tab := -1) -> voi
 		if transport != null:
 			var remembered: int = view_state.active_tab(transport)
 			if not host.workspace_layout.tab(remembered).is_empty(): host.workspace_layout.active = remembered
+	var docked_pane := ""
+	if preserve and switch_tab < 0:
+		for key: String in docking_panes:
+			var destination: int = host.workspace_layout.containing(key)
+			if destination >= 0 and destination != docking_panes[key] and not previous.has(destination):
+				docked_pane = key
+				host.workspace_layout.active = destination
+				host.workspace_layout.tab(destination).focused = key
+				break
 	host.layout_transaction = false
-	if preserve:
+	if not docked_pane.is_empty():
+		host.select_workspace(host.workspace_layout.active, true)
+	elif preserve:
 		var wanted: String = str(host.workspace_layout.tab(host.workspace_layout.active).get("focused", ""))
 		if host.pane_focus != wanted:
 			host.select_workspace(host.workspace_layout.active, true)
@@ -804,7 +909,7 @@ func _subscribe() -> void:
 	var tab: Dictionary = host.workspace_layout.tab(host.workspace_layout.active)
 	for key in (Layout.keys(tab.get("tree", { })) if not stream_background and host.presentation_active else []):
 		if preload("res://scenes/PaneTargets.gd").valid(key):
-			ids.append(int(key.substr(1)))
+			ids.append(PaneAddress.id(key))
 	if not stream_background and host.presentation_active:
 		for id in host.sessions:
 			if id not in ids and int(host.sessions[id].vp.get_meta("terminal_live_users", 0)) > 0:
@@ -961,7 +1066,7 @@ func _process_body(_dt: float) -> void:
 		var now := Time.get_ticks_msec()
 		for id in connection.subscriptions:
 			if not host.chromiums.has(id): continue
-			var pane: Control = host.workspace_view.panes.get("%%%d" % id)
+			var pane: Control = host.workspace_view.panes.get(PaneAddress.key(id))
 			if pane == null or pane.texture == null: continue
 			# A pane hidden within the active tab keeps stale geometry.
 			var size := chromium_display_size(host.workspace_view, pane.texture) if pane.is_visible_in_tree() else Vector2.ZERO
@@ -1031,17 +1136,29 @@ func _paste_attachment(id: int, terminal: Node, attachment: Dictionary) -> void:
 	var peer = transport.socket
 	var workspace: String = transport.workspace
 	var upload := TerminalFileUpload.new()
-	if failure.is_empty(): failure = upload.start(str(attachment.name), attachment.data)
-	while failure.is_empty():
-		if not is_instance_valid(transport) or not transport.connected or transport.socket != peer or transport.workspace != workspace or not is_instance_valid(terminal) or not is_instance_valid(host) or not host.sessions.has(id) or host.sessions[id].term != terminal or (federated and connection.owners.get(id) != transport):
-			failure = "Attachment destination disconnected or changed"
-			break
-		var params: Dictionary = upload.next_chunk()
-		if params.is_empty(): break
-		var reply: Dictionary = await transport.request_action("rpc", {"session": id, "method": "terminal.put", "params": params}, 30000)
-		var result: Dictionary = upload.accept(reply)
-		failure = result.get("error", "")
-		if result.get("done", false): break
+	var current := func() -> bool:
+		return is_instance_valid(transport) and transport.connected and transport.socket == peer and transport.workspace == workspace and is_instance_valid(terminal) and is_instance_valid(host) and host.sessions.has(id) and host.sessions[id].term == terminal and (not federated or connection.owners.get(id) == transport)
+	if failure.is_empty() and peer is SharedSessionPeer:
+		var destination: Dictionary = await transport.request_action("local_attachment", {"session": id, "name": attachment.name})
+		if destination.get("type") != "ack" or not current.call():
+			failure = destination.get("message", "Attachment destination changed")
+		else:
+			failure = upload.write_local(destination.path, attachment.data)
+			if failure.is_empty():
+				var pasted: Dictionary = await transport.request_action("paste", {"session": id, "text": destination.text})
+				if pasted.get("type") != "ack": failure = pasted.get("message", "Attachment paste failed")
+	else:
+		if failure.is_empty(): failure = upload.start(str(attachment.name), attachment.data)
+		while failure.is_empty():
+			if not current.call():
+				failure = "Attachment destination disconnected or changed"
+				break
+			var params: Dictionary = upload.next_chunk()
+			if params.is_empty(): break
+			var reply: Dictionary = await transport.request_action("rpc", {"session": id, "method": "terminal.put", "params": params}, 30000)
+			var result: Dictionary = upload.accept(reply)
+			failure = result.get("error", "")
+			if result.get("done", false): break
 	if is_instance_valid(terminal): terminal.file_paste_finished(failure.is_empty())
 	if not failure.is_empty():
 		get_node("/root/TerminalApplication").notifications.post(tr("Paste"), tr("Could not paste image"), host, "error", 8.0, "", {"title": "Paste", "body": "Could not paste image"})
@@ -1169,7 +1286,7 @@ func _exit_tree() -> void:
 	connection.set_block_signals(true)
 	connection.disconnect_remote()
 	# Startup validation can exit before _ready attaches these owned nodes.
-	for node in [connection, dialog, endpoint, secret, status, remember]:
+	for node in [connection, dialog, empty_session, endpoint, secret, status, remember]:
 		if is_instance_valid(node) and node.get_parent() == null: node.free()
 
 

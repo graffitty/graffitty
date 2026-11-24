@@ -1,4 +1,6 @@
 extends "res://tests/session_effects_smoke.gd"
+
+const PaneAddress := preload("res://scenes/PaneAddress.gd")
 ## Compare an off-canvas terminal's assembled flight with its live presentation.
 const Layout := preload("res://scenes/WorkspaceLayout.gd")
 var evidence := OS.get_environment("GRAFFITTY_TEST_EVIDENCE")
@@ -39,7 +41,7 @@ func snapshot(host: Node, label: String) -> void:
 	var panes := []
 	for key in host.workspace_view.panes:
 		if not host.is_terminal_pane(key): continue
-		var pair: Dictionary = host.sessions[int(key.substr(1))]
+		var pair: Dictionary = host.sessions[PaneAddress.id(key)]
 		panes.append({"key":key, "position":str(host.workspace_view.panes[key].position),
 			"size":str(pair.term.size), "grid":str(pair.term.get_grid_size()),
 			"viewport":str(pair.vp.size), "crop":str(pair.vp.canvas_transform),

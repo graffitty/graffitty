@@ -9,7 +9,7 @@ Save the current screen or include scrollback:
 ```sh
 gft terminal get-text
 gft terminal get-text --scrollback > terminal.txt
-gft terminal get-text -t %3 --json
+gft terminal get-text -t t3 --json
 ```
 
 Capture leaves focus and scroll position unchanged. Full-screen programs expose
@@ -18,11 +18,11 @@ their current screen, without the shell's earlier scrollback.
 Type into another pane, then send a key:
 
 ```sh
-gft terminal type -t %3 --text 'hello'
-gft terminal send-key -t %3 Enter
+gft terminal type -t t3 --text 'hello'
+gft terminal send-key -t t3 Enter
 ```
 
-Replace `%3` with an ID from `gft pane list`. Typing does not press Enter.
+Replace `t3` with an ID from `gft pane list`. Typing does not press Enter.
 Keys can include modifiers, such as `Ctrl+h`; add `--no-effects` to `send-key`
 to suppress typing effects.
 
@@ -38,9 +38,9 @@ gft pane list -t build/
 Use a qualified target from the listing for input or capture:
 
 ```sh
-gft terminal type -t 'build/%12' --text 'hello'
-gft terminal send-key -t 'build/%12' Enter
-gft terminal get-text -t 'build/%12'
+gft terminal type -t 'build/t12' --text 'hello'
+gft terminal send-key -t 'build/t12' Enter
+gft terminal get-text -t 'build/t12'
 ```
 
 The connection must stay open. Add `--no-gui` to connect without opening a window;

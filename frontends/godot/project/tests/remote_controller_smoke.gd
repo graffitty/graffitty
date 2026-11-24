@@ -60,15 +60,17 @@ func run() -> void:
 	check(alpha.topology.panes[0].id != beta.topology.panes[0].id, "Viewer remaps those pane IDs into distinct local IDs")
 	# Explicit targets must not depend on inherited agent or pane discovery.
 	OS.set_environment("CODEX_THREAD_ID", "not-a-live-thread")
-	var typed := await cli(["terminal", "type", "-t", "%s/%%%d" % [alias_a, id], "--text", "printf 'ALPHA_MARKER\\n'\n", "--interval-ms", "0"])
+	var target_a := "%s/t%d" % [alias_a, id]
+	var target_b := "%s/t%d" % [alias_b, id]
+	var typed := await cli(["terminal", "type", "-t", target_a, "--text", "printf 'ALPHA_MARKER\\n'\n", "--interval-ms", "0"])
 	check(typed.get("result", {}).get("keys_sent", 0) > 0, "Remote text was acknowledged")
-	await cli(["terminal", "send-key", "-t", "%s/%%%d" % [alias_b, id], "Ctrl+u"])
-	var a := await cli(["terminal", "get-text", "-t", "%s/%%%d" % [alias_a, id], "--json"])
-	var b := await cli(["terminal", "get-text", "-t", "%s/%%%d" % [alias_b, id], "--json"])
+	await cli(["terminal", "send-key", "-t", target_b, "Ctrl+u"])
+	var a := await cli(["terminal", "get-text", "-t", target_a, "--json"])
+	var b := await cli(["terminal", "get-text", "-t", target_b, "--json"])
 	check("ALPHA_MARKER" in str(a.get("result", {}).get("text", "")), "Text reaches selected server")
 	check("ALPHA_MARKER" not in str(b.get("result", {}).get("text", "")), "Identical pane ID on other server is untouched")
 	var listing := await cli(["pane", "list", "-t", alias_a + "/"])
-	check(listing.get("result", {}).get("panes", [{}])[0].get("target") == "%s/%%%d" % [alias_a, id], "Listing returns a copyable qualified target")
+	check(listing.get("result", {}).get("panes", [{}])[0].get("target") == target_a, "Listing returns a copyable qualified target")
 	var original: String = alpha.workspace
 	var created: Dictionary = await alpha.request_action("session_new", {"name":"project"})
 	check(not created.has("error"), "Create a second session")
@@ -77,12 +79,12 @@ func run() -> void:
 	check(target.has("result") and alpha.workspace == original, "Named target reaches hidden session without switching the viewer")
 	var captured := await cli(["terminal", "get-text", "-t", alias_a + "/project:1.1", "--json"])
 	check("PROJECT_MARKER" in str(captured.get("result", {}).get("text", "")), "Hidden session receives text")
-	await cli(["terminal", "type", "-t", "alph/%1", "--text", "denied"], false)
+	await cli(["terminal", "type", "-t", "alph/t%d" % id, "--text", "denied"], false)
 	await cli(["terminal", "type", "-t", alias_a + "/:1.1", "--text", "denied"], false)
 	alpha.disconnect_remote()
-	await cli(["terminal", "type", "-t", alias_a + "/%1", "--text", "denied"], false)
+	await cli(["terminal", "type", "-t", target_a, "--text", "denied"], false)
 	# Another attached server remains usable after alpha disconnects.
-	await cli(["terminal", "send-key", "-t", "%s/%%%d" % [alias_b, id], "Enter"])
+	await cli(["terminal", "send-key", "-t", target_b, "Enter"])
 	# A new frontend with blank settings picks up the saved address, not -3.
 	var reconnected := preload("res://scenes/remote/RemoteConnection.gd").new()
 	reconnected.preferred_session = original
@@ -92,7 +94,7 @@ func run() -> void:
 	reconnected.connect_remote(fixtures[0].url, fixtures[0].token)
 	check(await until(func(): return reconnected.connected and not reconnected.server_alias.is_empty()), "Reconnect with blank alias settings")
 	check(reconnected.server_alias == alias_a, "Reconnect reuses saved alias")
-	await cli(["terminal", "get-text", "-t", "%s/%%%d" % [alias_a, id], "--json"])
+	await cli(["terminal", "get-text", "-t", target_a, "--json"])
 	finish()
 
 func finish() -> void:

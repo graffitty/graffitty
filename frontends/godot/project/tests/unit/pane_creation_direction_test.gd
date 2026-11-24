@@ -39,7 +39,7 @@ func test_remote_split_keeps_direction_for_gui_and_headless_servers() -> void:
 				transport.sessions[7] = {"term": SourceTerminal.new()}
 				transport.topology = {"headless": headless}
 				var backend := preload("res://scenes/session/RemoteSessionBackend.gd").new(transport)
-				backend.create_pane(transport, "%7", axis, before)
+				backend.create_pane(transport, "t7", axis, before)
 				expect(transport.sent.id == 7 and transport.sent.options.kind == "pane" and transport.sent.options.axis == axis and transport.sent.options.before == before, "Remote creation forwards the source and exact side")
 				expect(not transport.sent.options.spawn.has("cwd"), "The owner resolves the source shell cwd")
 				if headless:
@@ -69,12 +69,12 @@ func test_headless_neighbor_retains_existing_floating_rectangles() -> void:
 	var narrow := Rect2(0, 1600, 380, 740)
 	var wide := Rect2(560, 1600, 1120, 740)
 	transport.workspace_layout.add(7, {"tiling": true, "windows": [
-		{"pane": "%6", "rect": narrow, "stashed": true},
-		{"pane": "%7", "rect": wide, "stashed": true}]})
-	transport.workspace_view.pane_rects = {"%6": narrow, "%7": wide}
+		{"pane": "t6", "rect": narrow, "stashed": true},
+		{"pane": "t7", "rect": wide, "stashed": true}]})
+	transport.workspace_view.pane_rects = {"t6": narrow, "t7": wide}
 	var backend := preload("res://scenes/session/RemoteSessionBackend.gd").new(transport)
-	backend.create_pane(transport, "%7", "h")
+	backend.create_pane(transport, "t7", "h")
 	transport.acknowledged.emit({"request": 42, "created": 9})
-	expect(transport.workspace_view.pane_rects == {"%6": narrow, "%7": wide}, "Acknowledgement preserves existing geometry until the owner sends its layout")
+	expect(transport.workspace_view.pane_rects == {"t6": narrow, "t7": wide}, "Acknowledgement preserves existing geometry until the owner sends its layout")
 	expect(transport.sent.id == 7 and transport.sent.options.axis == "h", "Owner receives the clicked neighbor and direction")
 	transport.free()

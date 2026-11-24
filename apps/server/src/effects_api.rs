@@ -52,7 +52,7 @@ pub fn dispatch(server: &mut Server, caller: u64, method: &str, params: &Value) 
         let pgid = session.foreground();
         session.effect_holds.apply(&message, pgid);
     }
-    Ok(json!({"pane":format!("%{pane}"),"holds":session.effect_holds.snapshot()}))
+    Ok(json!({"pane":format!("t{pane}"),"holds":session.effect_holds.snapshot()}))
 }
 
 /// The caller's pane, or another terminal pane in the same workspace.
@@ -65,7 +65,7 @@ fn target(server: &mut Server, caller: u64, params: &Value) -> Result<u64, Error
     let state = server.workspace_state.snapshot(&name);
     let key = terminal_api::resolve_in_workspace(&state, &name, &target)
         .ok_or_else(|| api::error("invalid_target", "Unknown pane target"))?;
-    let id = key.strip_prefix('%').and_then(|s| s.parse::<u64>().ok())
+    let id = key.strip_prefix('t').and_then(|s| s.parse::<u64>().ok())
         .filter(|id| server.sessions.get(id).is_some_and(|s| s.workspace == name && !s.exited))
         .ok_or_else(|| api::error("no_terminal", "Effect holds require a terminal pane"))?;
     Ok(id)

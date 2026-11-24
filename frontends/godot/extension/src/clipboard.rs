@@ -56,6 +56,10 @@ pub fn paste() -> anyhow::Result<Paste> {
         let ds = DisplayServer::singleton();
         let text = ds.clipboard_get().to_string();
         if !text.is_empty() { return Ok(Paste::Text(text)); }
+        #[cfg(target_os = "macos")]
+        if let Some(bytes) = crate::clipboard_macos::get("image/png") {
+            return Ok(Paste::File(Attachment::image(bytes)?));
+        }
         if ds.clipboard_has_image() {
             let image = ds.clipboard_get_image().ok_or_else(|| anyhow::anyhow!("Cannot read clipboard image"))?;
             let bytes = image.save_png_to_buffer().to_vec();

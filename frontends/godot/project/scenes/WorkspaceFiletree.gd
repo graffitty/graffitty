@@ -1,10 +1,12 @@
 extends RefCounted
+
+const PaneAddress := preload("res://scenes/PaneAddress.gd")
 ## The session owner launches the filetree; the view presents its link and physics.
 var busy := false
 
 func toggle(host: Node, focus_tree := false) -> void:
 	if busy: return
-	var id := int(host.pane_focus.substr(1))
+	var id := PaneAddress.id(host.pane_focus)
 	if host.is_chromium_pane(host.pane_focus):
 		id = host.chromiums[id].tab_id
 		if not host.sessions.has(id) or host.sessions[id].term.get_meta("filetree_owner", -1) < 0: return
@@ -32,11 +34,11 @@ func toggle(host: Node, focus_tree := false) -> void:
 		return
 	var key := str(result.get("result", {}).get("focus", ""))
 	var deadline := Time.get_ticks_msec() + 10000
-	while not key.is_empty() and not host.sessions.has(int(key.substr(1))) and Time.get_ticks_msec() < deadline:
+	while not key.is_empty() and not host.sessions.has(PaneAddress.id(key)) and Time.get_ticks_msec() < deadline:
 		await host.get_tree().process_frame
 		if not is_instance_valid(host):
 			busy = false
 			return
 	busy = false
-	if host.sessions.has(int(key.substr(1))): host.focus_pane(key)
+	if host.sessions.has(PaneAddress.id(key)): host.focus_pane(key)
 	if host.workspace_view != null: host.workspace_view.wake_pane_physics()

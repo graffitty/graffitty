@@ -65,11 +65,14 @@ impl JournalCache {
         affected
     }
     pub fn snapshot(&self, edge: &str) -> Journal {
+        self.scoped_snapshot(edge, None)
+    }
+    pub fn scoped_snapshot(&self, edge: &str, created_revision: Option<u64>) -> Journal {
         let mut result = Journal::default();
         result.events = self
             .entries
             .values()
-            .filter(|row| edge.is_empty() || row.edge == edge)
+            .filter(|row| edge.is_empty() || (row.edge == edge && created_revision.is_none_or(|start| row.delivery.edge_revision >= start)))
             .cloned()
             .collect();
         result
@@ -84,9 +87,16 @@ impl JournalCache {
                 total = total
                     .saturating_add(value.events.len() as u64)
                     .saturating_add(value.omitted);
-            } else if let Some(count) = value.by_edge.get(edge) {
-                result.pending = result.pending.saturating_add(count.pending);
-                total = total.saturating_add(count.total);
+            } else if let Some(counts) = value.by_edge.get(edge) {
+                if let Some(start) = created_revision {
+                    for count in counts.by_revision.range(start..).map(|(_, count)| count) {
+                        result.pending = result.pending.saturating_add(count.pending);
+                        total = total.saturating_add(count.total);
+                    }
+                } else {
+                    result.pending = result.pending.saturating_add(counts.all.pending);
+                    total = total.saturating_add(counts.all.total);
+                }
             }
         }
         result.omitted = total.saturating_sub(result.events.len() as u64);
@@ -180,9 +190,14 @@ impl GraphState {
             .iter()
             .find(|n| params["to"] == n.node)
             .ok_or("Choose a node on the same server workspace")?;
-        let edge = graph::connection(params, from, to, |key| {
+        let previous = |key: &str| {
+            if let Some(edge) = self.previews.get(&owner).and_then(|edges| edges.get(key)) {
+                return edge.clone();
+            }
             state.edges.iter().find(|e| e.key() == key).cloned()
-        })?;
+        };
+        let mut edge = graph::connection(params, from, to, previous)?;
+        edge.created_revision = previous(&edge.key()).and_then(|e| e.created_revision);
         self.previews
             .entry(owner)
             .or_default()
@@ -288,11 +303,11 @@ pub fn decode_message(bytes: &[u8]) -> graph::Result<Value> {
 mod tests {
     use super::*;
     fn snapshot() -> Value {
-        json!({"nodes":[{"node":"%1","provider":"claude"},{"node":"%2","kind":"custom"}],
+        json!({"nodes":[{"node":"t1","provider":"claude"},{"node":"t2","kind":"custom"}],
         "edges":[],"queues":{},"journal":{"events":[]},"limits":{"run_messages":100}})
     }
     fn row(status: &str, pending: bool) -> Value {
-        json!({"event_id":"e","source":"%1","target":"%2","edge":"%1/send>%2/in", "pending":pending,
+        json!({"event_id":"e","source":"t1","target":"t2","edge_revision":1,"edge":"t1/send>t2/in", "pending":pending,
         "status":status,"queued_at":1.,"updated_at":2.})
     }
     #[test]
@@ -302,8 +317,8 @@ mod tests {
         state.receive(1, valid.clone()).unwrap();
         let before = state.view();
         for invalid in [
-            json!({"nodes":[{"node":"%1","provider":7}]}),
-            json!({"edges":[{"from":"%1","to":"%2","send":"yes"}]}),
+            json!({"nodes":[{"node":"t1","provider":7}]}),
+            json!({"edges":[{"from":"t1","to":"t2","send":"yes"}]}),
             json!({"journal":{"events":[row("delivered",false),{"event_id":"missing fields"}]}}),
         ] {
             assert!(state.receive(1, invalid).is_err());
@@ -318,19 +333,56 @@ mod tests {
         assert!(decode_message(br#"{"type":"topology","graph":{"queues":[]}}"#).is_err());
     }
     #[test]
+    fn revision_counts_include_omitted_rows_without_counting_the_previous_wire() {
+        let edge = "t1/send>t2/in";
+        let mut graph = snapshot();
+        graph["journal"] = json!({
+            "events":[row("delivered",false)],"omitted":7,"pending":5,
+            "by_edge":{edge:{"total":8,"pending":5,"by_revision":{
+                "1":{"total":5,"pending":2},"4":{"total":1,"pending":1},"6":{"total":2,"pending":2}
+            }}}
+        });
+        let mut state = GraphState::default();
+        state.receive(1,graph).unwrap();
+        let current = state.journal.scoped_snapshot(edge,Some(4));
+        assert!(current.events.is_empty());
+        assert_eq!((current.pending,current.omitted),(3,3));
+        let old = state.journal.scoped_snapshot(edge,Some(1));
+        assert_eq!((old.events.len(),old.pending,old.omitted),(1,5,7));
+        let all = state.journal.snapshot(edge);
+        assert_eq!((all.events.len(),all.pending,all.omitted),(1,5,7));
+    }
+
+    #[test]
+    fn newly_imported_cancellation_identifies_the_original_wire() {
+        let mut state = GraphState::default();
+        let mut snapshot = snapshot();
+        state.receive(1, snapshot.clone()).unwrap();
+        snapshot["edges"] = json!([{"from":"t1","to":"t2","from_port":"send","to_port":"in","revision":4}]);
+        snapshot["journal"]["events"] = json!([row("cancelled: connection changed",false)]);
+        let changes = state.receive(1, snapshot).unwrap();
+        assert_eq!(changes.transfers.len(), 1);
+        let failure = &changes.transfers[0];
+        assert!(failure.failed);
+        let view = state.view();
+        assert_eq!(view["journal_entries"][&failure.event_id]["edge_revision"],1);
+        assert_eq!(view["edges"]["t1/send>t2/in"]["revision"],4);
+    }
+
+    #[test]
     fn previews_stay_visual_and_other_workspaces_survive_rejection() {
         let mut state = GraphState::default();
         let first =
-            json!({"nodes":[{"node":"%1","provider":"claude"},{"node":"%2","provider":"codex"}]});
+            json!({"nodes":[{"node":"t1","provider":"claude"},{"node":"t2","provider":"codex"}]});
         let second =
-            json!({"nodes":[{"node":"%3","provider":"claude"},{"node":"%4","provider":"codex"}]});
+            json!({"nodes":[{"node":"t3","provider":"claude"},{"node":"t4","provider":"codex"}]});
         state.receive(1, first.clone()).unwrap();
         state.receive(2, second).unwrap();
         let first_edge = state
-            .preview_connect(1, &json!({"from":"%1","to":"%2","send":true}))
+            .preview_connect(1, &json!({"from":"t1","to":"t2","send":true}))
             .unwrap();
         let second_edge = state
-            .preview_connect(2, &json!({"from":"%3","to":"%4","send":true}))
+            .preview_connect(2, &json!({"from":"t3","to":"t4","send":true}))
             .unwrap();
         assert_eq!(state.view()["edges"].as_object().unwrap().len(), 2);
         assert!(state.snapshots[&1].edges.is_empty());
@@ -338,13 +390,18 @@ mod tests {
         state.rollback(1);
         assert!(state.view()["edges"].get(first_edge.key()).is_none());
         assert!(state.view()["edges"].get(second_edge.key()).is_some());
-        state.preview_disconnect(2, "%3", "%4", "send", "in");
+        state.preview_disconnect(2, "t3", "t4", "send", "in");
         assert!(state.view()["edges"].as_object().unwrap().is_empty());
         state.rollback(2);
         let mut accepted = first;
         accepted["edges"] = json!([first_edge]);
+        accepted["edges"][0]["created_revision"] = json!(5);
         state.receive(1, accepted).unwrap();
         assert_eq!(state.view()["edges"].as_object().unwrap().len(), 1);
+        let params = json!({"from":"t1","to":"t2","send":true,"muted":true});
+        assert_eq!(state.preview_connect(1, &params).unwrap().created_revision,Some(5));
+        state.preview_disconnect(1, "t1", "t2", "send", "in");
+        assert_eq!(state.preview_connect(1, &params).unwrap().created_revision,None);
     }
     #[test]
     fn imports_are_quiet_live_transitions_once_and_owners_stay_isolated() {
@@ -364,11 +421,11 @@ mod tests {
         assert_eq!(changes.transfers.len(), 1);
         assert!(changes.transfers[0].failed);
         let mut second = snapshot();
-        second["nodes"] = json!([{"node":"%3","kind":"custom"}]);
+        second["nodes"] = json!([{"node":"t3","kind":"custom"}]);
         state.receive(2, second).unwrap();
         state.receive(1, json!({})).unwrap();
-        assert_eq!(state.view()["owners"]["%3"], 2);
-        assert!(state.view()["nodes"].get("%1").is_none());
+        assert_eq!(state.view()["owners"]["t3"], 2);
+        assert!(state.view()["nodes"].get("t1").is_none());
         assert!(state.journal.entries.is_empty());
         assert!(state.receive(1, first).unwrap().transfers.is_empty());
     }

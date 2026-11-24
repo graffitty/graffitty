@@ -59,7 +59,7 @@ props.message = "Strip"
 	preload("res://scenes/mods/EmbeddedMod.gd").set_props(embedded, {"text": "Second"})
 	embedded.render_now()
 	check("Header Second" in embedded.texts(), "Embedded overrides use the registry and retain configured props")
-	var strip: Control = app.mods.create_pane_strip(host, "%1")
+	var strip: Control = app.mods.create_pane_strip(host, "t1")
 	root.add_child(strip)
 	await settle()
 	check(strip is VBoxContainer and strip.get_child_count() == 2, "Additional pane mods mount alongside the built-in strip")

@@ -309,6 +309,9 @@ pub struct Edge {
     pub stop_at: Option<f64>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub revision: Option<u64>,
+    /// First authorization revision of this wire, preserved when editing its settings.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub created_revision: Option<u64>,
     #[serde(flatten)]
     pub extra: Map<String, Value>,
 }
@@ -425,6 +428,7 @@ pub fn connection(
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 pub struct Delivery {
     pub event_id: String,
+    pub edge_revision: u64,
     pub source: String,
     pub target: String,
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -457,10 +461,16 @@ pub struct Counts {
     pub pending: u64,
 }
 #[derive(Clone, Debug, Default, PartialEq, Serialize, Deserialize)]
+pub struct EdgeCounts {
+    #[serde(flatten)]
+    pub all: Counts,
+    pub by_revision: BTreeMap<u64, Counts>,
+}
+#[derive(Clone, Debug, Default, PartialEq, Serialize, Deserialize)]
 #[serde(default)]
 pub struct Journal {
     pub events: Vec<JournalRow>,
-    pub by_edge: BTreeMap<String, Counts>,
+    pub by_edge: BTreeMap<String, EdgeCounts>,
     pub pending: u64,
     pub omitted: u64,
     pub history_limit: u64,
@@ -541,7 +551,7 @@ mod tests {
     fn previews_and_server_connections_share_modes_conditions_and_deadlines() {
         let source: Node = serde_json::from_value(json!({"provider":"claude"})).unwrap();
         let target: Node = serde_json::from_value(json!({"provider":"codex"})).unwrap();
-        let params = json!({"from":"%1","to":"%2","send":true,"outcome":"custom-success"});
+        let params = json!({"from":"t1","to":"t2","send":true,"outcome":"custom-success"});
         let mut original = connection(&params, &source, &target, |_| None).unwrap();
         assert!(original.send && !original.read);
         assert_eq!(original.from_port, "send");

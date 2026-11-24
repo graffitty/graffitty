@@ -1,4 +1,5 @@
 extends "../../../../replay/replay.gd"
+
 ## Real installed agents only. No fake registrations or synthetic lifecycle events.
 var spec: Dictionary
 var graph: Node
@@ -13,7 +14,7 @@ func play() -> void:
 		return
 	spec = JSON.parse_string(FileAccess.get_file_as_string(path))
 	graph = app.agent_api.graph
-	shell_key = "%%%d" % host.active_session_id
+	shell_key = PaneAddress.key(host.active_session_id)
 	if app.agent_api.socket_path.is_empty():
 		check(false, "Workspace API socket must be available")
 		return
@@ -95,7 +96,7 @@ func launch(provider: String) -> void:
 	if not check(created.size() == 1, "Owner creates exactly one new pane for " + provider):
 		return
 	var id: int = int(created[0])
-	var key := "%%%d" % id
+	var key := PaneAddress.key(id)
 	if not check(key != shell_key, "Owner creates a distinct live pane for " + provider):
 		return
 	var term: Node = host.sessions[id].term
@@ -197,11 +198,11 @@ func expect_assistant(key: String, marker: String) -> void:
 	check(false, "Timed out waiting for assistant-only output and idle: " + marker)
 
 func owner_graph(source: String, method: String, params: Dictionary) -> Dictionary:
-	return await app.agent_api.dispatch(int(source.substr(1)), method, params)
+	return await app.agent_api.dispatch(PaneAddress.id(source), method, params)
 
 
 func deliver(source: String, target: String, marker: String) -> void:
-	var event: Dictionary = await app.agent_api.dispatch(int(source.substr(1)), "graph.send", {"to": target, "text": "Do not use tools or send a graph reply. Reply exactly " + marker})
+	var event: Dictionary = await app.agent_api.dispatch(PaneAddress.id(source), "graph.send", {"to": target, "text": "Do not use tools or send a graph reply. Reply exactly " + marker})
 	check(event.has("result"), "Graph accepts " + marker + (": " + str(event.error) if event.has("error") else ""))
 	if not event.has("result"): return
 	await wait_receipt(event.result.event_id)
@@ -223,8 +224,8 @@ func wait_receipt(id: String) -> void:
 func save_evidence() -> void:
 	var nodes: Array = []
 	var source_tail := ""
-	if not failures.is_empty() and host.sessions.has(int(shell_key.substr(1))):
-		source_tail = str(host.sessions[int(shell_key.substr(1))].term.get_text(false).get("text", "")).right(3000)
+	if not failures.is_empty() and host.sessions.has(PaneAddress.id(shell_key)):
+		source_tail = str(host.sessions[PaneAddress.id(shell_key)].term.get_text(false).get("text", "")).right(3000)
 	for provider in agents:
 		var key: String = agents[provider].key
 		var item: Dictionary = graph.public_node(key)

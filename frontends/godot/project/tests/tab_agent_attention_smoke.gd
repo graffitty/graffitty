@@ -1,20 +1,16 @@
 extends "res://tests/tab_close_selection_smoke.gd"
-## Real workspace, real tab bar and Rust evidence core; graph snapshots stand
-## in for agent hooks.
+## Real workspace and tab bar with server-owned lifecycle events and receipts.
 ##
 ## Headless windows never hold focus, so "in view" here means the host is
-## presenting; focus itself is covered in agent_attention_test.gd.
+## presenting; focus itself is covered in unit/agent_attention_test.gd.
 ##
 ##     godot --headless --path . --script tests/tab_agent_attention_smoke.gd -- --shell=/bin/sh
 
-func _at(second: int) -> String:
-	return "2030-01-01T00:00:%02d.000+00:00" % second
-
-
-func _snapshot(key: String, status: String, history: Array) -> Dictionary:
-	var entries := []
-	for entry in history: entries.append({"at": _at(entry[0]), "status": entry[1]})
-	return {"nodes": [{"node": key, "provider": "claude", "status": status, "status_history": entries}]}
+func _event(key: String, name: String) -> void:
+	var result: Dictionary = await connection.remote_call(PaneAddress.id(key), "agent.event",
+		{"provider":"claude","session_id":"tab-attention-smoke","integrated":true,"event":name})
+	check(not result.has("error"), "Server accepted " + name)
+	await settled()
 
 
 func _dot(tab: int) -> Control:
@@ -48,20 +44,20 @@ func run() -> void:
 	var first: int = host.workspace_layout.active
 	var key: String = host.pane_focus
 	var graph: Node = host.agent_api.graph
-	var agent := Node.new()
-	host.add_child(agent)
-	graph.import_remote(agent, _snapshot(key, "busy", [[1, "busy"]]))
+	await _event(key, "SessionStart")
+	await _event(key, "UserPromptSubmit")
 	await _sync()
 	var second := await add_tab()
 	check(host.workspace_layout.active == second, "The agent's tab is in the background")
 	check(_marker(first) == "", "A running agent has no marker")
-	graph.import_remote(agent, _snapshot(key, "idle", [[1, "busy"], [2, "idle"]]))
+	await _event(key, "Stop")
 	await _sync()
 	check(_marker(first) == "completed", "A background completion marks its tab green")
-	check(_dot(first).count == 1, "One completed agent counts once")
+	check(_dot(first) != null and _dot(first).count == 1, "One completed agent counts once")
 	check("unseen agent completion" in host.workspace_view.tab_bar.tabs.buttons[first].tooltip_text, "The tooltip explains the marker")
 	check(_marker(second) == "", "Other tabs stay unmarked")
-	graph.import_remote(agent, _snapshot(key, "waiting", [[1, "busy"], [2, "idle"], [3, "busy"], [4, "waiting"]]))
+	await _event(key, "UserPromptSubmit")
+	await _event(key, "AwaitingInput")
 	await _sync()
 	check(_marker(first) == "waiting", "Awaiting input replaces green with yellow")
 	host.select_workspace(first, true)
@@ -72,13 +68,13 @@ func run() -> void:
 	await settled()
 	await _sync()
 	check(_marker(first) == "", "A seen wait does not return after leaving")
-	graph.import_remote(agent, _snapshot(key, "idle", [[3, "busy"], [4, "waiting"], [5, "busy"], [6, "idle"]]))
+	await _event(key, "UserPromptSubmit")
+	await _event(key, "Stop")
 	await _sync()
 	check(_marker(first) == "completed", "The next unseen completion marks again")
-	graph.import_remote(agent, {})
+	graph.import_remote(connection, {})
 	await _sync()
 	check(_marker(first) == "completed", "A detached graph snapshot is not evidence the result was seen")
-	agent.queue_free()
 	check(error_watch.errors.is_empty(), "No engine or script errors: " + str(error_watch.errors))
 	print("TAB_AGENT_ATTENTION_PASS" if failures.is_empty() else "TAB_AGENT_ATTENTION_FAIL")
 	quit(0 if failures.is_empty() else 1)

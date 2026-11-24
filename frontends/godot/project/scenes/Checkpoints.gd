@@ -1,4 +1,6 @@
 extends Node
+
+const PaneAddress := preload("res://scenes/PaneAddress.gd")
 ## Version-1 checkpoint import/export translates presentations into owner actions.
 ## The Checkpoints menu lists saved history directly, like tmux-restore-agents.
 signal history_changed
@@ -38,18 +40,6 @@ static func encode(value: Variant) -> Variant:
 	return value
 
 
-static func saved_pane_key(value: String) -> String:
-	var endpoints := value.split(">")
-	for index in endpoints.size():
-		var parts := endpoints[index].split("/")
-		for prefix in ["terminal:", "chromium:"]:
-			if parts[0].begins_with(prefix):
-				var canonical: String = "%" + parts[0].substr(prefix.length())
-				if preload("res://scenes/PaneTargets.gd").valid(canonical): parts[0] = canonical
-		endpoints[index] = "/".join(parts)
-	return ">".join(endpoints)
-
-
 static func decode(value: Variant) -> Variant:
 	if value is Dictionary:
 		if value.has("vec2"):
@@ -59,15 +49,7 @@ static func decode(value: Variant) -> Variant:
 			return Rect2(float(r[0]), float(r[1]), float(r[2]), float(r[3]))
 		var result := { }
 		for key in value:
-			var item: Variant = value[key]
-			# Upgrade old saved layouts only; live pane and graph APIs use %N.
-			if key in ["pane", "focused", "physics_anchor"] and item is String:
-				item = saved_pane_key(item)
-			elif key == "routes" and item is Dictionary:
-				var routes := {}
-				for edge in item: routes[saved_pane_key(edge)] = item[edge]
-				item = routes
-			result[key] = decode(item)
+			result[key] = decode(value[key])
 		return result
 	if value is Array:
 		return value.map(decode)
@@ -115,7 +97,7 @@ func _capture_windows() -> Dictionary:
 				terminals[int(pane.id)] = true
 		for tab in host.workspace_layout.tabs:
 			for key in Layout.keys(tab.tree):
-				var id := int(key.substr(1))
+				var id := PaneAddress.id(key)
 				if not host.chromiums.has(id):
 					continue
 				if not browsers.has(id):
@@ -187,7 +169,7 @@ func _ask_owner(host: Node, id: int, owned: Dictionary, browsers: Dictionary) ->
 
 
 static func graph_checkpoint(graph: Dictionary, panes: Array) -> Dictionary:
-	var keys: Array = panes.map(func(pane): return "%%%d" % int(pane.id))
+	var keys: Array = panes.map(func(pane): return PaneAddress.key(int(pane.id)))
 	var nodes: Array = []
 	for node in graph.get("nodes", []):
 		if node.get("node") in keys:
@@ -245,7 +227,7 @@ static func saved_tabs(saved_document: Dictionary) -> Dictionary:
 	for saved in saved_document.windows:
 		for original in decode(saved.tabs):
 			for key in Layout.keys(original.tree):
-				tabs[int(str(key).substr(1))] = int(original.id)
+				tabs[PaneAddress.id(str(key))] = int(original.id)
 	return tabs
 
 
@@ -261,7 +243,7 @@ static func saved_identity(saved_document: Dictionary, pane: Dictionary, opens_t
 	if not saved_document.get("keep_ids", false): return {}
 	var identity := {"id": int(pane.id), "through": 0}
 	for saved in saved_document.windows:
-		for entry in saved.panes + saved.chromiums + saved.tabs:
+		for entry in saved.panes + saved.tabs:
 			identity.through = maxi(identity.through, int(entry.id))
 	var tab: Variant = saved_tabs(saved_document).get(int(pane.id))
 	if opens_tab and tab != null: identity.tab = int(tab)
@@ -345,7 +327,7 @@ func _import_shared(first: Node) -> void:
 			if reply.has("error"):
 				_abort_import(str(reply.error.get("message", "Filetree failed to open")))
 				return
-			var id := int(str(reply.result.pane).substr(1))
+			var id := PaneAddress.id(str(reply.result.pane))
 			restored_ids[int(pane.id)] = id
 			await _remote(connection, id, "window.set_title", {"title": str(pane.get("title", ""))})
 			if pane.has("font_size"):
@@ -358,15 +340,15 @@ func _import_shared(first: Node) -> void:
 	# completes its tabs then.
 	for saved in document.windows:
 		for original in decode(saved.tabs):
-			var keys: Array = Layout.keys(original.tree).filter(func(key): return restored_ids.has(int(key.substr(1))))
+			var keys: Array = Layout.keys(original.tree).filter(func(key): return restored_ids.has(PaneAddress.id(key)))
 			if keys.is_empty(): continue
-			var first_id := int(restored_ids[int(str(keys[0]).substr(1))])
+			var first_id := int(restored_ids[PaneAddress.id(str(keys[0]))])
 			var id := _tab_of(connection, first_id)
 			restored_tabs[int(original.id)] = id
 			for key in keys.slice(1):
-				var target := int(restored_ids[int(str(key).substr(1))])
+				var target := int(restored_ids[PaneAddress.id(str(key))])
 				if _tab_of(connection, target) == id: continue
-				var reply := await _checked(connection, "regroup", {"surface": "%%%d" % target, "tab": id})
+				var reply := await _checked(connection, "regroup", {"pane": PaneAddress.key(target), "tab": id})
 				if reply.get("type") == "error": _abort_import(); return
 			await _checked(connection, "sync", {})
 			if saved.chromiums.is_empty() and not await _complete_tab(connection, first_id, saved, original):
@@ -402,7 +384,7 @@ func _import_shared(first: Node) -> void:
 		if not await _open_chromiums(windows[i].session_backend.connection, document.windows[i]):
 			_abort_import(); return
 	var ids := {}
-	for old in restored_ids: ids["%%%d" % int(old)] = "%%%d" % int(restored_ids[old])
+	for old in restored_ids: ids[PaneAddress.key(int(old))] = PaneAddress.key(int(restored_ids[old]))
 	for i in windows.size():
 		var target: Node = windows[i]
 		var saved: Dictionary = document.windows[i]
@@ -470,7 +452,7 @@ func _open_chromiums(connection: Node, saved: Dictionary) -> bool:
 		var id := await _open_chromium(connection, owner, chromium)
 		if id < 0: return false
 		restored_ids[int(chromium.id)] = id
-		opened["%%%d" % int(chromium.id)] = true
+		opened[PaneAddress.key(int(chromium.id))] = true
 	await _checked(connection, "sync", {})
 	var tabs: Array = decode(saved.tabs)
 	for original in tabs:
@@ -478,7 +460,7 @@ func _open_chromiums(connection: Node, saved: Dictionary) -> bool:
 		# chromiums is new: its first chromium's move creates it.
 		var tab: Variant = restored_tabs.get(int(original.id))
 		for key in Layout.keys(original.tree).filter(func(key): return opened.has(key)):
-			var move := {"surface": "%%%d" % int(restored_ids[int(key.substr(1))]), "tab": tab, "browser_only": true}
+			var move := {"pane": PaneAddress.key(int(restored_ids[PaneAddress.id(key)])), "tab": tab, "browser_only": true}
 			if tab == null and document.get("keep_ids", false): move.new_tab = int(original.id)
 			var reply := await _checked(connection, "regroup", move)
 			if reply.get("type") == "error": return false
@@ -500,7 +482,13 @@ func _open_chromiums(connection: Node, saved: Dictionary) -> bool:
 func _open_chromium(connection: Node, owner: int, saved: Dictionary) -> int:
 	var urls: Array = saved.urls
 	var params := {"url": str(urls[0])}
-	if document.get("keep_ids", false): params.id = int(saved.id)
+	if document.get("keep_ids", false):
+		params.id = int(saved.id)
+		var through := int(saved.id)
+		for window in document.windows:
+			for chromium in window.chromiums:
+				through = maxi(through, int(chromium.id))
+		params.through = through
 	for field in ["profile", "profile_template"]:
 		if saved.get(field) != null: params[field] = str(saved[field])
 	var reply: Dictionary = await _remote(connection, owner, "chromium.create", params)
@@ -522,7 +510,7 @@ func _open_chromium(connection: Node, owner: int, saved: Dictionary) -> int:
 		await _remote(connection, owner, "chromium.command", {"chromium": key, "action": "tab-select", "args": {"chromium_id": 1}})
 	if not str(saved.get("title", "")).is_empty():
 		await _remote(connection, owner, "chromium.set_title", {"chromium": key, "title": str(saved.title)})
-	return int(key.substr(1))
+	return PaneAddress.id(key)
 
 
 func finish_host(host: Node, saved: Dictionary) -> void:

@@ -27,7 +27,7 @@ fn two_frontend_clients_share_layout_reconnect_and_server_undo() {
     assert_eq!(first.server_pid, second.server_pid);
     let before = state(&mut first);
     let tab = before.active.unwrap();
-    let id = before.layout.tabs[&tab].windows[0].key.strip_prefix('%').unwrap().parse::<u64>().unwrap();
+    let id = graffitty_workspace_core::pane_id::parse(&before.layout.tabs[&tab].windows[0].key).unwrap();
     request(&mut first, json!({"type":"create","kind":"pane","session":id}));
     let before = state(&mut first);
     assert_eq!(state(&mut second), before);
@@ -50,4 +50,13 @@ fn two_frontend_clients_share_layout_reconnect_and_server_undo() {
     let undone = edit(&mut reconnected, saved.revision, Edit::Undo);
     assert_eq!(undone.layout.tabs[&tab], latest.layout.tabs[&tab]);
     assert_eq!(state(&mut first), undone);
+
+    let last = u32::MAX;
+    let restored = request(&mut first, json!({"type":"create","kind":"pane","session":id,"id":last,"axis":"h"}));
+    assert_eq!(restored["created"], last);
+    let split = request(&mut first, json!({"type":"create","kind":"pane","session":id,"axis":"h"}));
+    let allocated = split["created"].as_u64().unwrap();
+    assert!(allocated < u64::from(last));
+    let layout = state(&mut first);
+    assert!(layout.layout.tabs[&tab].window(&format!("t{allocated}")).is_some());
 }

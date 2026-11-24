@@ -1,4 +1,5 @@
 extends "../../../../replay/replay.gd"
+
 ## Replays tests/llm-e2e/suites/shared/tabs-and-panes/pane-to-new-tab.md
 
 
@@ -24,7 +25,7 @@ func play() -> void:
 	await say("Move the BRAVO window by its header so both windows show")
 	await drag(on(handle("BRAVO")), content(Vector2(0.62, 0.5)), 1.0)
 	await panes_at_rest()
-	var key := "%%%d" % terminal_id("BRAVO")
+	var key := PaneAddress.key(terminal_id("BRAVO"))
 	var placed: Rect2 = host.workspace_view.pane_rects[key]
 
 	await say("Drag the BRAVO handle up onto the tab bar, beside the last tab")
@@ -42,9 +43,19 @@ func play() -> void:
 	await wait(0.8)
 	await point_at(bar_end(), 0.8)
 	await wait(0.4)
+	var source_tab: int = host.workspace_layout.containing(key)
+	var observed := {"tab_effect": false, "resized_source": false}
+	var sample := func():
+		if host.world.tab_fx_t >= 0: observed.tab_effect = true
+		if host.workspace_layout.active == source_tab and not host.workspace_view.pane_rects.has(key):
+			observed.resized_source = true
+	process_frame.connect(sample)
 	await release()
 	await wait(0.8)
 	await owner_at_rest()
+	process_frame.disconnect(sample)
+	check(not observed.tab_effect, "Pane docking skips the tab-switch effect")
+	check(not observed.resized_source, "The source stays intact until the new tab appears")
 
 	check(
 		titles() == ["ALPHA", "CHARLIE", "BRAVO"] and selected_title() == "BRAVO",

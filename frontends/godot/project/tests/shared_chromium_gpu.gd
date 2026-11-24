@@ -1,4 +1,5 @@
 extends "../../../../tests/llm-e2e/replay/replay.gd"
+
 ## A real private Chromium texture is sampled by Godot's normal viewport.
 var decoded := 0
 var evidence := ""
@@ -83,8 +84,8 @@ func play() -> void:
 		printerr("GPU diagnostic: ", chromium.gpu_error, " status: ", chromium.status)
 		return
 	check(chromium.texture is Texture2DRD, "Chromium uses native Texture2DRD instead of decoded pixels")
-	host.focus_pane("%%%d" % id)
-	host.workspace_view.toggle_fit_pane("%%%d" % id)
+	host.focus_pane(PaneAddress.key(id))
+	host.workspace_view.toggle_fit_pane(PaneAddress.key(id))
 	await camera_at_rest()
 	await colors("initial", Color("f020c0"), Color("20e0e0"))
 	var before_decoded := decoded
@@ -94,7 +95,7 @@ func play() -> void:
 	check(chromium.gpu_frames > before_frames and decoded == before_decoded, "Changing native frames never decode CPU image/video pixels")
 	# Resize through the pane, which owns the browser viewport. A direct browser
 	# request races the pane's queued preview-size update and is overwritten.
-	var pane: Control = host.workspace_view.panes["%%%d" % id]
+	var pane: Control = host.workspace_view.panes[PaneAddress.key(id)]
 	var old_size: Vector2 = chromium.texture.get_size()
 	# Native backing scale is independent of the page's devicePixelRatio
 	# (which also includes Chrome page zoom). Keep the same display and measure
@@ -104,7 +105,7 @@ func play() -> void:
 	var group: Dictionary = host.workspace_layout.tab(host.workspace_layout.active)
 	group.tree["tiling"] = false
 	group.tree["physics"] = false
-	host.workspace_view.set_window_rect("%%%d" % id, Rect2(pane.position, Vector2(802, 602) + chrome), true)
+	host.workspace_view.set_window_rect(PaneAddress.key(id), Rect2(pane.position, Vector2(802, 602) + chrome), true)
 	await camera_at_rest()
 	var page_metrics: Dictionary = await chromium.request("cdp", {"method": "Runtime.evaluate", "params": {
 		"expression": "({width:innerWidth,height:innerHeight,scale:devicePixelRatio})", "returnByValue": true,
@@ -143,7 +144,7 @@ func play() -> void:
 		return
 	check(host.chromiums.has(id) and host.sessions[owner].term.get_shell_pid() == owner_pid, "Reconnect preserves chromium ID and owner shell PID")
 	await colors("reconnected", Color("f0d020"), Color("2050e0"))
-	var chromium_tab: int = host.workspace_layout.containing("%%%d" % id)
+	var chromium_tab: int = host.workspace_layout.containing(PaneAddress.key(id))
 	var previous_imports: int = chromium.gpu_frames
 	var previous_decoded := decoded
 	host.world.create_terminal_tab()
@@ -237,7 +238,7 @@ func play() -> void:
 	await paint(chromium, "#20d040", "#d04020")
 	if await until(func(): return not chromium.gpu_active and decoded > before_decoded and chromium.texture is ImageTexture, "Closed native endpoint resumes negotiated video"):
 		await colors("fallback", Color("20d040"), Color("d04020"))
-		FileAccess.open(evidence.path_join("fallback-state.json"), FileAccess.WRITE).store_string(JSON.stringify({"status": chromium.status, "frames": chromium.frames, "codec": chromium.video_codec, "error": chromium.video_error, "gpu_error": chromium.gpu_error, "captured": chromium.captured_page_id, "selected": chromium.selected_page_id, "size": str(chromium.texture.get_size()), "bound_same": host.workspace_view.panes["%%%d" % id].texture.texture == chromium.texture, "bound_class": str(host.workspace_view.panes["%%%d" % id].texture.texture), "chromium_node": chromium.get_instance_id(), "host_node": host.chromiums[id].get_instance_id()}, "\t"))
+		FileAccess.open(evidence.path_join("fallback-state.json"), FileAccess.WRITE).store_string(JSON.stringify({"status": chromium.status, "frames": chromium.frames, "codec": chromium.video_codec, "error": chromium.video_error, "gpu_error": chromium.gpu_error, "captured": chromium.captured_page_id, "selected": chromium.selected_page_id, "size": str(chromium.texture.get_size()), "bound_same": host.workspace_view.panes[PaneAddress.key(id)].texture.texture == chromium.texture, "bound_class": str(host.workspace_view.panes[PaneAddress.key(id)].texture.texture), "chromium_node": chromium.get_instance_id(), "host_node": host.chromiums[id].get_instance_id()}, "\t"))
 		chromium.texture.get_image().save_png(evidence.path_join("fallback-texture.png"))
 		host.workspace_view.canvas.get_texture().get_image().save_png(evidence.path_join("fallback-canvas.png"))
 	check(host.sessions[owner].term.get_shell_pid() == owner_pid, "Fallback keeps the same live PTY")

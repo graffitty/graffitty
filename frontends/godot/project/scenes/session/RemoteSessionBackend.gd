@@ -1,4 +1,6 @@
 extends "res://scenes/session/SessionBackend.gd"
+
+const PaneAddress := preload("res://scenes/PaneAddress.gd")
 ## Network session ownership; the same host/world still renders and handles input.
 var connection: Node
 var pending_operations: Dictionary = {}
@@ -95,7 +97,7 @@ func apply_new_tab_gap(owner: WeakRef, id: int, gap: float) -> void:
 
 
 func create_pane(host: Node, beside: String, axis: String, before := false) -> void:
-	var id: int = host.active_session_id if beside.is_empty() else int(beside.substr(1))
+	var id: int = host.active_session_id if beside.is_empty() else PaneAddress.id(beside)
 	var transport: Node = connection.owners.get(id, connection.selected) if "owners" in connection else connection
 	var request: int = transport.send_action("create", id, { "kind": "pane", "axis": axis, "before": before, "spawn": _spawn_options(host, id) })
 	if request >= 0: pending_operations[request] = {"active": host.workspace_layout.active}
@@ -260,7 +262,7 @@ func transition_layout_ready(host: Node) -> bool:
 	for pane in connection.topology.get("panes", []):
 		var id := int(pane.id)
 		if int(pane.tab) != tab or not host.sessions.has(id): continue
-		var key := "%%%d" % id
+		var key := PaneAddress.key(id)
 		if not host.workspace_view.panes.has(key) or not host.workspace_view.panes[key].visible: continue
 		for operation in pending_operations.values():
 			if operation is Dictionary and int(operation.get("resize", -1)) == id: return false
@@ -336,7 +338,7 @@ static func _same_rect(a: Rect2, b: Rect2) -> bool:
 func resize_pane(host: Node, key: String, rect: Rect2) -> void:
 	if not host.is_terminal_pane(key) or not host.workspace_view.panes.has(key):
 		return
-	var id := int(key.substr(1))
+	var id := PaneAddress.id(key)
 	var terminal: Control = host.sessions[id].term
 	var insets: Array = terminal.get_meta("server_content_insets", [12.0, 38.0, 12.0, 12.0])
 	var wanted: Vector2 = (rect.size - Vector2(insets[0] + insets[2], insets[1] + insets[3])).max(Vector2.ONE)
@@ -378,7 +380,7 @@ func create_chromium_remote(
 		push_error(str(result.error.get("message", "Remote chromium failed")))
 		return result
 	var key := str(result.result.chromium)
-	var id := int(key.substr(1))
+	var id := PaneAddress.id(key)
 	var deadline := Time.get_ticks_msec() + 10000
 	while is_instance_valid(host) and not host.chromiums.has(id) and Time.get_ticks_msec() < deadline:
 		await host.get_tree().process_frame

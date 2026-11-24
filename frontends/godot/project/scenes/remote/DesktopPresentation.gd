@@ -27,12 +27,14 @@ func park(source: Node, retain_parent := false) -> void:
 	if is_instance_valid(host):
 		host._remove_menu()
 		host.application.hosts.erase(host)
+		if host.application.mods != null: host.application.mods.queue_refresh()
 	process_mode = client.process_mode
 	connection_process_mode = client.connection.process_mode
 	client.applying = true
 	# Keep the transport and owner heartbeat alive while its view is parked.
 	client.connection.process_mode = Node.PROCESS_MODE_ALWAYS
 	client.dialog.hide()
+	client._hide_empty_session()
 	client.process_mode = Node.PROCESS_MODE_DISABLED
 	if is_instance_valid(host):
 		disable_3d = host.world_viewport.disable_3d
@@ -75,10 +77,12 @@ func restore(target: Window) -> bool:
 	saved.applying = false
 	if is_instance_valid(host):
 		host.application.hosts.append(host)
+		if host.application.mods != null: host.application.mods.queue_refresh()
 		host.layout_root.show()
 		host._refresh_workspace_layout()
 		host._build_menu.call_deferred()
 	saved._refresh.call_deferred()
+	saved._remote_sessions_changed.call_deferred(true)
 	window.title = "Graffitty"
 	window.show()
 	window.grab_focus()

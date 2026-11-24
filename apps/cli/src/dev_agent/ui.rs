@@ -738,7 +738,7 @@ mod tests {
         let mut terminal = Terminal::new(TestBackend::new(80, 20)).unwrap();
         let mut playback = Playback::new(Provider::Codex.name().into());
         playback.history.push(Entry::User(
-            "[Graffitty message from %1; event e1; run r1]\nBuild 1 is ready.\nPayload (JSON): {\"text\":\"x\"}".into(),
+            "[Graffitty message from t1; event e1; run r1]\nBuild 1 is ready.\nPayload (JSON): {\"text\":\"x\"}".into(),
         ));
         terminal
             .draw(|f| {
@@ -748,7 +748,7 @@ mod tests {
             .unwrap();
         let buffer = terminal.backend().buffer();
         let rows: Vec<String> = (0..20).map(|row| (0..80).map(|col| buffer[(col, row)].symbol()).collect()).collect();
-        assert!(rows.iter().any(|row| row.contains("› [Graffitty message from %1; event e1; run r1] …")));
+        assert!(rows.iter().any(|row| row.contains("› [Graffitty message from t1; event e1; run r1] …")));
         assert!(!rows.iter().any(|row| row.contains("Payload (JSON)") || row.contains("Build 1 is ready.")));
     }
 
@@ -756,7 +756,7 @@ mod tests {
     fn claude_frames_a_delivered_graffitty_message_as_a_peer_message() {
         let mut terminal = Terminal::new(TestBackend::new(100, 30)).unwrap();
         let mut playback = Playback::new(Provider::Claude.name().into());
-        playback.history.push(Entry::User("[Graffitty message from %2; event e1; run r1]\nFix the welcome.".into()));
+        playback.history.push(Entry::User("[Graffitty message from t2; event e1; run r1]\nFix the welcome.".into()));
         terminal
             .draw(|f| {
                 render(f, &playback, &Scenario::default(), Provider::Claude, 0, 0, &mut TextArea::default(),
@@ -766,7 +766,7 @@ mod tests {
         let buffer = terminal.backend().buffer();
         let rows: Vec<String> = (0..30).map(|row| (0..100).map(|col| buffer[(col, row)].symbol()).collect()).collect();
         let first = rows.iter().position(|row| row.contains("❯ Another Claude session sent a message:")).unwrap();
-        assert!(rows[first + 1].contains("[Graffitty message from %2; event e1; run r1]"));
+        assert!(rows[first + 1].contains("[Graffitty message from t2; event e1; run r1]"));
         assert!(rows.iter().any(|row| row.contains("This came from another Claude session")));
     }
 

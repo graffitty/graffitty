@@ -109,13 +109,13 @@ class WindowsGraph(unittest.TestCase):
             (self.folder / "terminal-native.json").write_text(json.dumps(result["result"], ensure_ascii=False, indent=2), encoding="utf-8")
         return result["result"]
     def connect(self, source, output, target, port="in", **flags):
-        return self.call(1,"graph.connect",**{"from":f"%{source}","from_port":output,"to":f"%{target}","to_port":port,**flags})
+        return self.call(1,"graph.connect",**{"from":f"t{source}","from_port":output,"to":f"t{target}","to_port":port,**flags})
     def register(self, token, output="out"):
         self.call(token,"agent.event",kind="custom",event="SessionStart",session_id=f"adapter-{token}")
         self.call(token,"agent.register",name=f"Source {token}",inputs=[{"id":"in"}],outputs=[{"id":output}])
     def inbox(self, token): return self.call(token,"graph.take")["events"]
     def manifest(self, token, name):
-        return next((n["manifest"] for n in self.call(1,"graph.list")["nodes"] if n["node"] == f"%{token}" and n.get("manifest",{}).get("name") == name),None)
+        return next((n["manifest"] for n in self.call(1,"graph.list")["nodes"] if n["node"] == f"t{token}" and n.get("manifest",{}).get("name") == name),None)
     def node(self, token, command, *args, terminal=False, env=None):
         environment={**os.environ,"GRAFFITTY_SOCKET":self.endpoint,"GRAFFITTY_TOKEN":str(token),"TERM":"xterm-256color",**(env or {})}
         argv=[CLI,"node",command,*args]
@@ -212,10 +212,10 @@ class WindowsGraph(unittest.TestCase):
         event=wait(lambda:self.inbox(6))[0]
         self.assertEqual(event["text"],"current prompt")
         self.assertEqual(event["payload"]["custom"],7)
-        self.assertEqual([h["source"] for h in event["payload"]["history"]],["%2","%3"])
+        self.assertEqual([h["source"] for h in event["payload"]["history"]],["t2","t3"])
         self.assertEqual([len(h["messages"]) for h in event["payload"]["history"]],[2,2])
-        self.assertEqual(event["origin"]["source"],"%1")
-        self.call(1,"graph.disconnect",**{"from":"%3","to":"%4","from_port":"read","to_port":"in"})
+        self.assertEqual(event["origin"]["source"],"t1")
+        self.call(1,"graph.disconnect",**{"from":"t3","to":"t4","from_port":"read","to_port":"in"})
         self.call(1,"graph.emit",output="out",text="next",payload={})
         events=wait(lambda:self.inbox(6) if len(self.inbox(6))==2 else None)
         self.assertEqual(len(events[1]["payload"]["history"]),1)

@@ -473,12 +473,25 @@ impl WorkspaceLayoutCore {
         area: Rect2,
         point: Vector2,
         placements: VarDictionary,
+        restore_main: bool,
     ) -> VarDictionary {
         let mut proposed = tree.duplicate_deep();
         self.arrange(proposed.clone(), area, GString::new(), GString::new());
-        let base = layout(&proposed, GString::new());
+        let mut base = layout(&proposed, GString::new());
         let incoming_copy = incoming.duplicate_deep();
         let added = layout(&incoming_copy, GString::new());
+        if restore_main && !base.enabled && let [dragged] = added.windows.as_slice() {
+            // The user brought one pane back into Main. Other floating panes
+            // keep their overview placement when the tab regains its first tile.
+            base.enabled = true;
+            base.tiles = None;
+            for pane in &mut base.windows {
+                if pane.key != dragged.key && !pane.stashed {
+                    pane.graph_floating = true;
+                }
+            }
+            proposed.set("tiling", true);
+        }
         let placement_map = placements
             .iter_shared()
             .map(|(k, v)| (k.to::<GString>().to_string(), rect(v.to::<Rect2>())))

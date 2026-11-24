@@ -1,4 +1,6 @@
 extends Node
+
+const PaneAddress := preload("res://scenes/PaneAddress.gd")
 ## Application-owned notification lifetimes and OSC 99 replies, scoped by emitter.
 const Protocol := preload("res://scenes/NotificationProtocol.gd")
 var application: Node
@@ -16,17 +18,17 @@ func bind_notification(id: int, notification_id: String, event: Dictionary, mode
 	var candidates: Array = []
 	if mode == "original_sender": candidates.append(event.get("origin", {}).get("source", ""))
 	if mode != "this_pane": candidates.append(event.get("source", ""))
-	candidates.append("%%%d" % id)
+	candidates.append(PaneAddress.key(id))
 	for candidate in candidates:
 		var key := str(candidate)
-		if RegEx.create_from_string("^%[0-9]+$").search(key) != null and key not in targets: targets.append(key)
+		if key.begins_with("t") and PaneAddress.id(key) > 0 and key not in targets: targets.append(key)
 	if focus_bindings.size() >= 256: focus_bindings.erase(focus_bindings.keys()[0])
 	focus_bindings["%d/%s" % [id, notification_id]] = {"targets": targets, "expires": Time.get_ticks_msec() + 30000}
 	return {"focus_targets": targets}
 
 func _focus_notification(job: Dictionary) -> void:
-	for key in job.request.get("focus_targets", ["%%%d" % job.id]):
-		var result: Dictionary = application.agent_api.inspect_terminal(int(str(key).substr(1)))
+	for key in job.request.get("focus_targets", [PaneAddress.key(job.id)]):
+		var result: Dictionary = application.agent_api.inspect_terminal(PaneAddress.id(str(key)))
 		if not result.has("error"): return
 
 func _owner(terminal: Control) -> Dictionary:
@@ -78,8 +80,8 @@ func command(terminal: Control, packet: String) -> void:
 					_close(job)
 		"show":
 			var host: Node = owner.host
-			var focused: bool = host.get_window().has_focus() and host.pane_focus == "%%%d" % owner.id
-			var visible: bool = host.get_window().has_focus() and host.get_window().mode != Window.MODE_MINIMIZED and host.workspace_layout.containing("%%%d" % owner.id) == host.workspace_layout.active
+			var focused: bool = host.get_window().has_focus() and host.pane_focus == PaneAddress.key(owner.id)
+			var visible: bool = host.get_window().has_focus() and host.get_window().mode != Window.MODE_MINIMIZED and host.workspace_layout.containing(PaneAddress.key(owner.id)) == host.workspace_layout.active
 			if (draft.occasion == "unfocused" and focused) or (draft.occasion == "invisible" and visible): return
 			_show(owner.id, terminal, draft)
 

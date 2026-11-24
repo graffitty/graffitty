@@ -47,11 +47,11 @@ def main():
     ports = {'inputs':[{'id':'in'}], 'outputs':[{'id':'out','mode':'send'}]}
     fixture['windows'][1]['graph'] = {
         'nodes':[{'node':'%' + str(i),'manifest':ports} for i in [10,11]],
-        'edges':[{'from':'%10','to':'%11','from_port':'out','to_port':'in',
+        'edges':[{'from':'t10','to':'t11','from_port':'out','to_port':'in',
                   'muted':True,'contains':'keep','outcome':'success','stop_at':4102444800}],
         'run_messages':42}
     fixture['windows'][1]['tabs'][0]['graph_visual'] = {
-        'reroutes':{'r1':{'position':{'vec2':[650,120]}}}, 'routes':{'%10/out>%11/in':['r1']}}
+        'reroutes':{'r1':{'position':{'vec2':[650,120]}}}, 'routes':{'t10/out>t11/in':['r1']}}
     pages = out / 'pages'; pages.mkdir()
     for name in ['first','second','third']:
         (pages / (name + '.html')).write_text('<title>' + name + '</title>' + name)

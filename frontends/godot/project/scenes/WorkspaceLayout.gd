@@ -1,4 +1,6 @@
 extends RefCounted
+
+const PaneAddress := preload("res://scenes/PaneAddress.gd")
 ## Presentation only: IDs refer to application-owned live sessions.
 var tabs: Array[Dictionary] = []
 var active := -1
@@ -69,7 +71,7 @@ func add(id: int, tree: Dictionary) -> void:
 
 
 func ensure_terminal(id: int, tiling_default := true) -> void:
-	var key := "%%%d" % id
+	var key := PaneAddress.key(id)
 	if containing(key) < 0:
 		var tree := leaf(key)
 		tree["tiling"] = tiling_default
@@ -285,9 +287,10 @@ static func preview_placement(
 	area: Rect2,
 	point: Vector2,
 	placements: Dictionary = {},
+	restore_main := false,
 ) -> Dictionary:
-	var proposal: Dictionary = _core().preview_placement(tree, incoming, rect, area, point, placements)
-	proposal["label"] = "Stash" if not area.has_point(point) else (String(TranslationServer.translate("Tile %s")) % String(TranslationServer.translate(proposal.edge)) if tree.get("tiling", false) else "Move here")
+	var proposal: Dictionary = _core().preview_placement(tree, incoming, rect, area, point, placements, restore_main)
+	proposal["label"] = "Stash" if not area.has_point(point) else (String(TranslationServer.translate("Tile %s")) % String(TranslationServer.translate(proposal.edge)) if proposal.tree.get("tiling", false) else "Move here")
 	return proposal
 
 

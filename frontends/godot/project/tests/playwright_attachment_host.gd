@@ -1,4 +1,5 @@
 extends "../../../../tests/llm-e2e/replay/replay.gd"
+
 ## Real GUI + CEF + authorized socket fixture for the published JS entry points.
 
 func play() -> void:
@@ -43,7 +44,7 @@ func play() -> void:
 	initial_frames = chromium.frames
 	var env: Dictionary = host.agent_api.environment_for(chromium.tab_id)
 	var ready := FileAccess.open(directory.path_join("ready.json"), FileAccess.WRITE)
-	ready.store_string(JSON.stringify({"env": env, "chromium": "%%%d" % chromium.session_id,
+	ready.store_string(JSON.stringify({"env": env, "chromium": PaneAddress.key(chromium.session_id),
 		"pid": initial_pid, "profile": chromium.profile_directory, "foreign_token": foreign.GRAFFITTY_TOKEN}))
 	ready.close()
 	until = Time.get_ticks_msec() + 180000
