@@ -71,6 +71,24 @@ func test_graph_status_translates_failure_and_preserves_provider_details() -> vo
 	expect(inspector.status_text(row) == "[!] 실패: 그래프 실행 메시지 한도에 도달함", "Built-in failure reasons translate with their prefix")
 	row.status = "cancel failed: Provider %s [b] detail"
 	expect(inspector.status_text(row) == "[!] 취소 실패: Provider %s [b] detail", "Unknown provider details stay literal")
+	row.pending = true
+	row.status = "cancellation pending: Codex frontend thread binding changed"
+	expect(inspector.status_text(row) == "[~] 취소 대기 중: Codex 프런트엔드에 연결된 대화가 변경됨", "Cancellation retries and their built-in reason translate")
+	expect(inspector.status_label("cancellation pending: Provider %s [b] detail") == "취소 대기 중: Provider %s [b] detail", "Retry details from providers stay literal")
+	var graph := preload("res://scenes/AgentGraph.gd").new()
+	var overlay := preload("res://scenes/AgentGraphOverlay.gd").new()
+	var key := "t1/send>t2/in"
+	graph.edges[key] = {"from":"t1", "to":"t2", "from_port":"send", "to_port":"in", "revision":4}
+	graph.receipts = [{"edge":key, "edge_revision":4, "status":row.status}]
+	overlay.graph = graph
+	expect(overlay.edge_tooltip(key).contains(inspector.status_label(row.status)), "The wire tooltip translates the same structured status as the inspector")
+	row.pending = false
+	row.status = "cancellation unconfirmed: original Codex process ended"
+	expect(inspector.status_text(row) == "[!] 취소 확인 불가: 원래 Codex 프로세스가 종료됨", "The final unconfirmed outcome shows a warning in Korean")
+	row.status = "delivery unconfirmed: original Codex process ended"
+	expect(inspector.status_text(row) == "[!] 전달 확인 불가: 원래 Codex 프로세스가 종료됨", "An unconfirmed delivery also shows a terminal warning")
+	overlay.free()
+	graph.free()
 	for translation in service.translations: TranslationServer.remove_translation(translation)
 	service.free()
 	TranslationServer.set_locale(previous)

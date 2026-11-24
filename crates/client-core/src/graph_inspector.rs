@@ -8,6 +8,7 @@ use serde_json::{Value, json};
 pub struct Inspector {
     pub open: bool,
     pub edge: String,
+    revision: Option<u64>,
     pub pending_only: bool,
     pub selected: String,
     pub new_runs: bool,
@@ -67,12 +68,20 @@ fn clock(value: &Value, full: bool) -> String {
 }
 
 fn status(language: &str, source: &str) -> String {
-    for prefix in ["failed: ", "cancel failed: ", "cancelled: "] {
+    for prefix in ["failed: ", "cancel failed: ", "cancellation pending: ", "cancelled: "] {
         if let Some(reason) = source.strip_prefix(prefix) {
             return text(language, &format!("{prefix}%s")).replace("%s", &text(language, reason));
         }
     }
     text(language, source).into_owned()
+}
+
+fn wire_counts<'a>(graph: &'a Value, key: &str, revision: Option<u64>) -> &'a Value {
+    let counts = &graph["journal"]["by_edge"][key];
+    match revision {
+        Some(revision) => &counts["by_revision"][revision.to_string()],
+        None => counts,
+    }
 }
 
 /// Reference graph hover text: connection and delivery metadata only. Reading
@@ -92,9 +101,10 @@ pub fn edge_hint(graph:&Value,key:&str,language:&str)->String {
             .and_then(|port|port["name"].as_str()).filter(|name|!name.is_empty()).unwrap_or(port);
         if name.is_empty() {title.to_owned()} else {format!("{title} · {name}")}
     };
-    let counts=&graph["journal"]["by_edge"][key];
+    let revision = edge["revision"].as_u64();
+    let counts = wire_counts(graph, key, revision);
     let pending=counts["pending"].as_u64().unwrap_or(0);
-    let total=counts["total"].as_u64().unwrap_or_else(||graph["journal"]["events"].as_array().into_iter().flatten().filter(|row|row["edge"]==key).count() as u64);
+    let total=counts["total"].as_u64().unwrap_or_else(||graph["journal"]["events"].as_array().into_iter().flatten().filter(|row|row["edge"]==key && row["edge_revision"].as_u64()==revision).count() as u64);
     let mut lines=vec![endpoint(true),format!("→ {}",endpoint(false)),
         tr("%d pending · %d recorded deliveries").replacen("%d",&pending.to_string(),1).replacen("%d",&total.to_string(),1),
         tr("Click this wire for delivery history · Double-click to add a reroute.")];
@@ -109,7 +119,7 @@ pub fn edge_hint(graph:&Value,key:&str,language:&str)->String {
         let value=string(edge,field);
         if !value.is_empty() {lines.push(tr(label).replace("%s",&if field=="outcome" {tr(value)}else{value.to_owned()}));}
     }
-    if let Some(receipt)=graph["receipts"].as_array().into_iter().flatten().rev().find(|row|row["edge"]==key) {
+    if let Some(receipt)=graph["receipts"].as_array().into_iter().flatten().rev().find(|row|row["edge"]==key && row["edge_revision"].as_u64()==revision) {
         lines.push(tr("Last delivery: %s").replace("%s",&status(language,string(receipt,"status"))));
         let message=string(receipt,"message");
         if !message.is_empty() {lines.push(message.into());}
@@ -123,8 +133,9 @@ impl Inspector {
     }
 
     fn rows<'a>(&self, graph: &'a Value) -> Vec<&'a Value> {
+        let revision = self.connection(graph).and_then(|edge| edge["revision"].as_u64()).or(self.revision);
         graph["journal"]["events"].as_array().into_iter().flatten()
-            .filter(|row| row["edge"] == self.edge && (!self.pending_only || row["pending"] == true))
+            .filter(|row| row["edge"] == self.edge && revision.is_none_or(|r| row["edge_revision"] == r) && (!self.pending_only || row["pending"] == true))
             .collect()
     }
 
@@ -141,6 +152,7 @@ impl Inspector {
     pub fn refresh(&mut self, graph: &Value) {
         if !self.open {return;}
         let connection=self.connection(graph);
+        if let Some(edge) = connection { self.revision = edge["revision"].as_u64(); }
         self.stop.refresh(connection);
         let rows = self.rows(graph);
         if !rows.iter().any(|row| row["event_id"] == self.selected) {
@@ -208,11 +220,12 @@ impl Inspector {
         let count = if defaults {0} else {usage["count"].as_u64().unwrap_or(0)};
         let connected = graph["edges"].as_array().into_iter().flatten().any(|edge|
             format!("{}/{}>{}/{}",string(edge,"from"),string(edge,"from_port"),string(edge,"to"),string(edge,"to_port")) == self.edge);
-        let counts = &graph["journal"]["by_edge"][&self.edge];
+        let revision = self.connection(graph).and_then(|edge| edge["revision"].as_u64()).or(self.revision);
+        let counts = wire_counts(graph, &self.edge, revision);
         let pending = counts["pending"].as_u64().unwrap_or(0);
         let total = counts["total"].as_u64().unwrap_or(rows.len() as u64);
         let removed = if connected {String::new()} else {tr(" · connection removed")};
-        let visible = graph["journal"]["events"].as_array().into_iter().flatten().filter(|row|row["edge"]==self.edge).count() as u64;
+        let visible = graph["journal"]["events"].as_array().into_iter().flatten().filter(|row|row["edge"]==self.edge && revision.is_none_or(|r| row["edge_revision"] == r)).count() as u64;
         let omitted = if total>visible {tr(" · %d omitted").replace("%d",&(total-visible).to_string())} else {String::new()};
         let summary = format!("{}\n{}{}{}", self.edge,
             tr("%d pending · %d recorded").replacen("%d", &pending.to_string(),1).replacen("%d", &total.to_string(),1),removed,omitted);
@@ -233,7 +246,8 @@ impl Inspector {
             open:self.open,edge:self.edge.clone(),summary,pending_only:self.pending_only,selected:self.selected.clone(),
             rows:rows.iter().map(|row| {
                 let source=string(row,"status");
-                let failed=source.starts_with("failed") || source.starts_with("cancel failed");
+                let failed=source.starts_with("failed") || source.starts_with("cancel failed")
+                    || source.starts_with("cancellation unconfirmed: ") || source.starts_with("delivery unconfirmed: ");
                 let sent=matches!(source,"sent to receiver" | "submitted" | "delivered");
                 let icon=if failed {"[!]"}else if source.starts_with("cancelled"){"[-]"}
                     else if row["pending"]==true {if source=="queued in Graffitty" {"[ ]"}else{"[~]"}}
@@ -257,20 +271,38 @@ mod tests {
     fn hover_uses_authoritative_metadata_without_expanding_queued_content() {
         let mut graph=json!({"nodes":[{"node":"t1","title":"Source","manifest":{"outputs":[{"id":"out","name":"Answer"}]}},
             {"node":"t2","manifest":{"name":"Reviewer","inputs":[{"id":"in","name":"Prompt"}]}}],
-            "edges":[{"from":"t1","from_port":"out","to":"t2","to_port":"in","muted":true,"stop_at":1,"contains":"APPROVED"}],
-            "journal":{"by_edge":{"t1/out>t2/in":{"pending":2,"total":7}},"events":[{"edge":"t1/out>t2/in","text":"PRIVATE_MESSAGE"}]},
-            "queues":{"t2":[{"text":"PRIVATE_MESSAGE"}]},"receipts":[{"edge":"t1/out>t2/in","status":"submitted","message":"Native transport accepted"}]});
+            "edges":[{"from":"t1","from_port":"out","to":"t2","to_port":"in","revision":3,"muted":true,"stop_at":1,"contains":"APPROVED"}],
+            "journal":{"by_edge":{"t1/out>t2/in":{"pending":3,"total":9,"by_revision":{"3":{"pending":2,"total":7}}}},"events":[{"edge":"t1/out>t2/in","text":"PRIVATE_MESSAGE"}]},
+            "queues":{"t2":[{"text":"PRIVATE_MESSAGE"}]},"receipts":[{"edge":"t1/out>t2/in","edge_revision":3,"status":"submitted","message":"Native transport accepted"},{"edge":"t1/out>t2/in","edge_revision":1,"status":"old receipt"}]});
         let before=graph.clone();let hint=edge_hint(&graph,"t1/out>t2/in","en-US");
         for expected in ["Source · Answer","→ Reviewer · Prompt","2 pending · 7 recorded deliveries","Paused","Stopped: stop time reached","Contains: APPROVED","Last delivery: submitted","Native transport accepted"] {
             assert!(hint.contains(expected),"Missing {expected}: {hint}");
         }
         assert!(!hint.contains("PRIVATE_MESSAGE"));assert_eq!(graph,before);
         assert!(edge_hint(&graph,"t1/out>t2/in","ko").contains("대기"));
+        graph["receipts"][0]["status"] = json!("cancellation pending: Provider %s detail");
+        assert!(edge_hint(&graph, "t1/out>t2/in", "ko").contains("취소 대기 중: Provider %s detail"));
         graph["edges"]=json!([]);assert!(edge_hint(&graph,"t1/out>t2/in","en-US").is_empty());
     }
     fn graph() -> Value {json!({"limits":{"run_messages":100},"runs":{"r":{"count":3,"limit":10,"available":true}},
         "journal":{"events":[{"event_id":"a","edge":"wire","run_id":"r","pending":true,"queued_at":0,"status":"queued in Graffitty"},
                              {"event_id":"b","edge":"other","run_id":"s","pending":true}]}})}
+    #[test]
+    fn unconfirmed_cancel_is_a_localized_terminal_warning_with_retry_history() {
+        let mut graph = graph();
+        let event = &mut graph["journal"]["events"][0];
+        event["pending"] = json!(false);
+        event["status"] = json!("cancellation unconfirmed: original Codex process ended");
+        event["transitions"] = json!([{"at":1.0,"status":"cancellation pending: unconfirmed queue response"}]);
+        let mut inspector = Inspector::default();
+        inspector.inspect("wire".into());
+        inspector.refresh(&graph);
+        let snapshot = inspector.snapshot(&graph, "ko");
+        assert_eq!(snapshot.rows[0].status, "[!] 취소 확인 불가: 원래 Codex 프로세스가 종료됨");
+        assert!(snapshot.details.contains("취소 대기 중: 대기열 응답이 확인되지 않음"));
+        graph["journal"]["events"][0]["status"] = json!("delivery unconfirmed: original Codex process ended");
+        assert_eq!(inspector.snapshot(&graph, "ko").rows[0].status, "[!] 전달 확인 불가: 원래 Codex 프로세스가 종료됨");
+    }
     #[test]
     fn scopes_preserve_drafts_and_exact_integer_limits() {
         let mut model=Inspector::default();model.inspect("wire".into());let mut graph=graph();

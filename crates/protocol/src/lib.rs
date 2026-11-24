@@ -9,6 +9,23 @@ pub mod file_transfer;
 pub mod controller;
 pub mod osc;
 
+/// Terminal outcomes of the owner's Codex cancellation worker. Worker errors
+/// leave the provider outcome unresolved and eligible for retry.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(tag = "outcome", rename_all = "snake_case")]
+pub enum CodexCancelOutcome {
+    Deleted,
+    Absent,
+    ProcessEnded,
+}
+
+#[derive(Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(tag = "outcome", rename_all = "snake_case")]
+pub enum CodexQueueStatus {
+    Listed { queued_ids: Vec<String> },
+    ProcessEnded,
+}
+
 pub const VERSION: u64 = 1;
 
 /// The directory one user's session server keeps its descriptor, lock and

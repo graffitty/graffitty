@@ -20,6 +20,7 @@ var pulses: Array[Dictionary] = []
 var waiting: Dictionary = {}
 var queued_routes: Dictionary = {}
 var blink_time := 0.0
+const QueueInspector := preload("res://scenes/GraphQueueInspector.gd")
 const Geometry := preload("res://scenes/GraphLinkGeometry.gd")
 const MESSAGE_SPEED := 220.0 # Maximum screen pixels per second.
 const MIN_FLOW_DURATION := 1.2 # Short links must remain visible too.
@@ -456,8 +457,9 @@ func edge_tooltip(key: String) -> String:
 	var edge: Dictionary = graph.edges.get(key, {})
 	if edge.is_empty(): return ""
 	var text := _endpoint_description(edge, true) + "\n→ " + _endpoint_description(edge, false)
-	var queue: Dictionary = graph.queue_log.snapshot(key)
-	text += "\n" + tr("%d pending · %d recorded deliveries") % [queue.pending, queue.events.size()]
+	var revision := int(edge.get("revision", 0))
+	var queue: Dictionary = graph.queue_log.snapshot(key, revision)
+	text += "\n" + tr("%d pending · %d recorded deliveries") % [queue.pending, queue.events.size() + queue.omitted]
 	text += "\n" + tr("Click this wire for delivery history · Double-click to add a reroute.")
 	if edge.get("muted", false): text += "\n" + tr("Paused")
 	if graph.connection_expired(edge):
@@ -470,8 +472,8 @@ func edge_tooltip(key: String) -> String:
 	if not str(edge.get("outcome", "")).is_empty(): text += "\n" + tr("Outcome: %s") % tr(str(edge.outcome))
 	for i in range(graph.receipts.size() - 1, -1, -1):
 		var receipt: Dictionary = graph.receipts[i]
-		if receipt.get("edge", str(receipt.get("source")) + ">" + str(receipt.get("target"))) != key: continue
-		text += "\n" + tr("Last delivery: %s") % tr(str(receipt.get("status", "unknown")))
+		if receipt.get("edge") != key or receipt.get("edge_revision") != revision: continue
+		text += "\n" + tr("Last delivery: %s") % QueueInspector.status_label(str(receipt.get("status", "unknown")))
 		if not str(receipt.get("message", "")).is_empty(): text += "\n" + str(receipt.message)
 		break
 	return text
@@ -555,7 +557,7 @@ func open_queue_inspector(key: String) -> void:
 	if not is_instance_valid(graph): return
 	clear_edge_hover()
 	if not is_instance_valid(queue_inspector):
-		queue_inspector = preload("res://scenes/GraphQueueInspector.gd").new()
+		queue_inspector = QueueInspector.new()
 		add_child(queue_inspector)
 	queue_inspector.inspect(graph, key)
 

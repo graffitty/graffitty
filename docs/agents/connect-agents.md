@@ -55,7 +55,7 @@ Right-click a line, or press and hold it, to open its menu:
 
 - **Pause connection:** hold future delivery; work already started can finish.
 - **Remove connection:** disconnect the nodes.
-- **Queue Inspector:** inspect waiting messages.
+- The **Queue Inspector** shows pending messages and delivery history for the selected wire. Reconnecting the same ports starts a new wire history.
 
 To edit the wiring:
 

@@ -65,11 +65,14 @@ impl JournalCache {
         affected
     }
     pub fn snapshot(&self, edge: &str) -> Journal {
+        self.scoped_snapshot(edge, None)
+    }
+    pub fn scoped_snapshot(&self, edge: &str, revision: Option<u64>) -> Journal {
         let mut result = Journal::default();
         result.events = self
             .entries
             .values()
-            .filter(|row| edge.is_empty() || row.edge == edge)
+            .filter(|row| edge.is_empty() || (row.edge == edge && revision.is_none_or(|r| row.delivery.edge_revision == r)))
             .cloned()
             .collect();
         result
@@ -84,7 +87,10 @@ impl JournalCache {
                 total = total
                     .saturating_add(value.events.len() as u64)
                     .saturating_add(value.omitted);
-            } else if let Some(count) = value.by_edge.get(edge) {
+            } else if let Some(count) = value.by_edge.get(edge).and_then(|counts| match revision {
+                Some(r) => counts.by_revision.get(&r),
+                None => Some(&counts.all),
+            }) {
                 result.pending = result.pending.saturating_add(count.pending);
                 total = total.saturating_add(count.total);
             }
@@ -317,6 +323,27 @@ mod tests {
         );
         assert!(decode_message(br#"{"type":"topology","graph":{"queues":[]}}"#).is_err());
     }
+    #[test]
+    fn revision_counts_include_omitted_rows_without_counting_the_previous_wire() {
+        let edge = "t1/send>t2/in";
+        let mut graph = snapshot();
+        graph["journal"] = json!({
+            "events":[row("delivered",false)],"omitted":7,"pending":5,
+            "by_edge":{edge:{"total":8,"pending":5,"by_revision":{
+                "1":{"total":5,"pending":2},"4":{"total":3,"pending":3}
+            }}}
+        });
+        let mut state = GraphState::default();
+        state.receive(1,graph).unwrap();
+        let current = state.journal.scoped_snapshot(edge,Some(4));
+        assert!(current.events.is_empty());
+        assert_eq!((current.pending,current.omitted),(3,3));
+        let old = state.journal.scoped_snapshot(edge,Some(1));
+        assert_eq!((old.events.len(),old.pending,old.omitted),(1,2,4));
+        let all = state.journal.snapshot(edge);
+        assert_eq!((all.events.len(),all.pending,all.omitted),(1,5,7));
+    }
+
     #[test]
     fn newly_imported_cancellation_identifies_the_original_wire() {
         let mut state = GraphState::default();

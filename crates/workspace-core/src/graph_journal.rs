@@ -115,14 +115,13 @@ impl Journal {
             .filter(|row| edge.is_empty() || row["edge"] == edge)
             .cloned()
             .collect();
-        let mut by_edge: BTreeMap<String, Value> = BTreeMap::new();
+        let mut by_edge = BTreeMap::<_, graffitty_protocol::graph::EdgeCounts>::new();
         for row in &rows {
-            let count = by_edge
-                .entry(row["edge"].as_str().unwrap_or("").into())
-                .or_insert(json!({"total":0,"pending":0}));
-            count["total"] = json!(count["total"].as_u64().unwrap() + 1);
-            if row["pending"] == true {
-                count["pending"] = json!(count["pending"].as_u64().unwrap() + 1);
+            let counts = by_edge.entry(row["edge"].as_str().unwrap().to_owned()).or_default();
+            let revision = row["edge_revision"].as_u64().expect("journal event has an edge revision");
+            for count in [&mut counts.all, counts.by_revision.entry(revision).or_default()] {
+                count.total += 1;
+                count.pending += u64::from(row["pending"] == true);
             }
         }
         let pending = rows.iter().filter(|row| row["pending"] == true).count();

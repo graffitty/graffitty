@@ -74,6 +74,39 @@ func test_connection_inspector_updates_in_place_and_excludes_other_wires() -> vo
 	inspector.free()
 	g.free()
 
+func test_reconnected_wire_tooltip_and_open_inspector_show_only_its_revision() -> void:
+	var graph := Graph.new()
+	var key := "t1>t2"
+	graph.edges[key] = {"from":"t1","to":"t2","revision":1}
+	var old := event("old")
+	record(graph.queue_log, old, "queued in Codex", true)
+	graph.receipts = [{"edge":key,"edge_revision":1,"status":"queued in Codex","message":"old delivery"}]
+	var overlay := preload("res://scenes/AgentGraphOverlay.gd").new()
+	overlay.graph = graph
+	var inspector := ObservedInspector.new()
+	inspector._ready()
+	inspector._bind_graph(graph)
+	inspector.edge_key = key
+	inspector.visible = true
+	inspector.refresh()
+	expect(inspector.rows.size() == 1 and "old delivery" in overlay.edge_tooltip(key), "The original connection has its pending event")
+	graph.edges[key].revision = 4
+	graph.changed.emit()
+	inspector._flush_refresh()
+	var hint := overlay.edge_tooltip(key)
+	expect(inspector.rows.is_empty() and inspector.last_snapshot.pending == 0, "An open inspector refreshes on replacement even without a journal transition")
+	expect("0 pending · 0 recorded deliveries" in hint and "old delivery" not in hint, "The replacement tooltip has no earlier pending work or receipt")
+	var current := event("current")
+	current.edge_revision = 4
+	record(graph.queue_log, current, "queued", true)
+	inspector._flush_refresh()
+	expect(inspector.rows.size() == 1 and inspector.rows[0].event_id == "current", "The replacement inspector lists its own event")
+	expect(graph.queue_log.snapshot(key).events.size() == 2 and graph.queue_log.snapshot().pending == 2, "Aggregate queries retain both revisions")
+	inspector._disconnect_graph()
+	inspector.free()
+	overlay.free()
+	graph.free()
+
 func record(log: RefCounted, event: Dictionary, status: String, pending: bool) -> void:
 	var id := str(event.event_id)
 	var rows: Dictionary = log.entries.duplicate(true)
@@ -81,9 +114,12 @@ func record(log: RefCounted, event: Dictionary, status: String, pending: bool) -
 	var counts := {}
 	var pending_count := 0
 	for row in rows.values():
-		if not counts.has(row.edge): counts[row.edge] = {"total":0,"pending":0}
+		if not counts.has(row.edge): counts[row.edge] = {"total":0,"pending":0,"by_revision":{}}
+		var revision_counts: Dictionary = counts[row.edge].by_revision.get_or_add(str(row.edge_revision), {"total":0,"pending":0})
+		revision_counts.total += 1
 		counts[row.edge].total += 1
 		if row.pending:
 			counts[row.edge].pending += 1
+			revision_counts.pending += 1
 			pending_count += 1
 	log.import_snapshot(null, {"events":rows.values(),"pending":pending_count,"omitted":0,"by_edge":counts})

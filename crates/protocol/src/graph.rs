@@ -458,10 +458,16 @@ pub struct Counts {
     pub pending: u64,
 }
 #[derive(Clone, Debug, Default, PartialEq, Serialize, Deserialize)]
+pub struct EdgeCounts {
+    #[serde(flatten)]
+    pub all: Counts,
+    pub by_revision: BTreeMap<u64, Counts>,
+}
+#[derive(Clone, Debug, Default, PartialEq, Serialize, Deserialize)]
 #[serde(default)]
 pub struct Journal {
     pub events: Vec<JournalRow>,
-    pub by_edge: BTreeMap<String, Counts>,
+    pub by_edge: BTreeMap<String, EdgeCounts>,
     pub pending: u64,
     pub omitted: u64,
     pub history_limit: u64,

@@ -680,7 +680,7 @@ pub fn worker(request: &str) -> Result<Value> {
     let v = read_json_up_to(Path::new(request), crate::MAX_MESSAGE).ok_or("Invalid worker request")?;
     match v["op"].as_str().unwrap_or("") {
         "scan" => Ok(scan(&v["roots"])),
-        "codex_queue_status" => crate::codex_transport::queued_ids(&v["target"]),
+        "codex_queue_status" => crate::codex_transport::queue_status(&v["target"]),
         "codex_cancel" => crate::codex_transport::cancel_queue(
             &v["target"], v["submission_id"].as_str().ok_or("Missing submission ID")?,
         ),

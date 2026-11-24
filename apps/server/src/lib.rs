@@ -633,7 +633,7 @@ impl Server {
                 if node["transport"] == "inbox" || node["status"] == "offline" || !["codex", "claude"].contains(&provider) {
                     continue;
                 }
-                if provider == "codex" && self.native_pending.len() >= 1024 {
+                if provider == "codex" && !native_delivery::has_capacity(&self.native_pending) {
                     continue;
                 }
                 if provider == "claude" && node["socket_path"].as_str().unwrap_or("").is_empty() {

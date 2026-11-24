@@ -49,10 +49,10 @@ def worker(folder, request):
             queue = folder / active
             entries = json.loads(queue.read_text())
             if op == "codex_queue_status":
-                result = {"queued_ids":entries}
+                result = {"outcome":"listed","queued_ids":entries}
             else:
                 submission = request["submission_id"]
-                result = {"deleted":submission in entries}
+                result = {"outcome":"deleted" if submission in entries else "absent"}
                 write_json(queue, [item for item in entries if item != submission])
     else:
         result = {}
@@ -142,7 +142,7 @@ class NativeCancelRetryTests(unittest.TestCase):
                     cancels = operations("codex_cancel")
                     self.assertTrue(all(row["request"]["submission_id"] == submission and
                                         row["request"]["target"]["session_id"] == "A" for row in cancels))
-                    self.assertEqual([row["result"] for row in cancels if row["active"] == "A"], [{"deleted":True}])
+                    self.assertEqual([row["result"] for row in cancels if row["active"] == "A"], [{"outcome":"deleted"}])
                     self.assertEqual(len(operations("codex_queue")), 1)
                     self.assertEqual(json.loads((folder / "A").read_text()), [])
                     self.assertEqual(json.loads((folder / "B").read_text()), [submission])

@@ -9,17 +9,18 @@ func test_graph_snapshot_maps_node_and_wire_identities() -> void:
 	connection.local_ids = {1: 101, 2: 102}
 	var edge := {"from": "t1", "to": "t2", "from_port": "send", "to_port": "in"}
 	var manifest := {"inputs": [], "outputs": [{"id": "send", "name": "Send", "color": "#89ddbd"}]}
+	var counts := {"total": 2, "pending": 1, "by_revision": {"1": {"total": 1, "pending": 0}, "2": {"total": 1, "pending": 1}}}
 	var mapped: Dictionary = connection._map_topology({
 		"panes": [], "tabs": [],
 		"graph": {"nodes": [{"node": "t1", "manifest": manifest}], "edges": [edge],
-			"journal": {"events": [{"source": "t1", "target": "t2", "edge": "t1/send>t2/in"}], "by_edge": {"t1/send>t2/in": {"pending": 1, "total": 1}}},
+			"journal": {"events": [{"source": "t1", "target": "t2", "edge": "t1/send>t2/in", "edge_revision": 2}], "by_edge": {"t1/send>t2/in": counts}},
 			"limits": {"pending_per_node": 17, "run_messages": 23}},
 	})
 	expect(mapped.graph.edges[0].from == "t101" and mapped.graph.edges[0].to == "t102", "Wires use this connection's pane namespace")
 	expect(mapped.graph.nodes[0].node == "t101", "Nodes use the same mapped identity")
 	expect(mapped.graph.nodes[0].manifest == manifest, "Server socket definitions are preserved")
 	expect(mapped.graph.journal.events[0].edge == "t101/send>t102/in", "Delivery rows use the connection's pane namespace")
-	expect(mapped.graph.journal.by_edge.has("t101/send>t102/in"), "Journal counts use the same mapped connection keys")
+	expect(mapped.graph.journal.by_edge.get("t101/send>t102/in") == counts and mapped.graph.journal.events[0].edge_revision == 2, "Remote pane remapping preserves wire revisions and their separate queue counts")
 	expect(mapped.graph.limits.pending_per_node == 17 and mapped.graph.limits.run_messages == 23, "Server limits pass through without frontend defaults")
 	connection.free()
 
