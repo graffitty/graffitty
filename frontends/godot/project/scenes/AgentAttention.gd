@@ -76,6 +76,7 @@ func refresh() -> void:
 	if _core == null or application == null or application.agent_api == null: return
 	var live := PackedStringArray()
 	var visible := PackedStringArray()
+	var presented := {}
 	var nodes: Dictionary = application.agent_api.graph.nodes.duplicate()
 	_receipt_owners = application.agent_api.graph.remote_owners.duplicate()
 	for host in application.hosts:
@@ -84,11 +85,24 @@ func refresh() -> void:
 		var found := panes(host)
 		live.append_array(PackedStringArray(found.live))
 		visible.append_array(PackedStringArray(found.visible))
+		if found.visible.is_empty() or not "session_backend" in host: continue
+		var backend: RefCounted = host.session_backend
+		if backend == null or not backend.is_remote: continue
+		var connection: Node = backend.connection
+		if not is_instance_valid(connection): continue
+		for key in found.visible:
+			var id := PaneAddress.id(key)
+			var owner: Node = connection.owners.get(id) if "owners" in connection else connection
+			if is_instance_valid(owner) and owner.connected and owner.session_view_ready(owner.workspace):
+				presented[[owner.url, owner.epoch, owner.workspace, owner.wire_id(id)]] = true
 	# A session switch removes panes from this window, not from the server.
 	# Catalog evidence keeps their receipts retryable without reopening them.
 	for group in preload("res://scenes/session/SessionsList.gd").collect(application.hosts, []):
 		var peer: Node = group.get("peer")
 		if not group.connected or not is_instance_valid(peer): continue
+		# Project catalog receipts before the panel draws its rows.
+		if peer.has_signal("sessions_changed") and not peer.sessions_changed.is_connected(queue_refresh):
+			peer.sessions_changed.connect(queue_refresh)
 		for session in peer.available_sessions:
 			for agent in session.get("agents", []):
 				var pane := int(agent.get("pane", -1))
@@ -98,11 +112,12 @@ func refresh() -> void:
 				var owner: Node = _receipt_owners.get(key)
 				var unavailable_owner: bool = is_instance_valid(owner) and not owner.connected and owner.url == peer.url and owner.epoch == peer.epoch and owner.wire_id(PaneAddress.id(key)) == pane
 				if not nodes.has(key) or unavailable_owner:
-					# Catalogs can deliver a pending read but cannot make a newer
-					# result visible in a disconnected terminal's cached screen.
-					if nodes.get(key, {}).get("attention") != agent.get("attention"):
-						var index := visible.find(key)
-						if index >= 0: visible.remove_at(index)
+					# The catalog can beat the graph for a live, displayed pane.
+					# A cached screen can only acknowledge the event it already shows.
+					if presented.has([peer.url, peer.epoch, session.id, pane]):
+						if not visible.has(key): visible.append(key)
+					elif nodes.get(key, {}).get("attention") != agent.get("attention"):
+						while visible.has(key): visible.remove_at(visible.find(key))
 					nodes[key] = {"attention": agent.get("attention"), "status": agent.get("status", "")}
 					_receipt_owners[key] = peer
 	if _core.observe(nodes, visible, live):

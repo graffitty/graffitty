@@ -31,6 +31,7 @@ class API extends RefCounted:
 	var graph := Graph.new()
 
 class Application extends Node:
+	var agents: Node
 	var hosts: Array = []
 	var agent_api := API.new()
 	var agent_attention := preload("res://scenes/AgentAttention.gd").new()
@@ -133,6 +134,8 @@ func test_controller_keeps_pins_across_local_id_remapping() -> void:
 	app.free()
 
 class Peer extends Node:
+	signal sessions_changed
+	func session_view_ready(id: String) -> bool: return workspace == id
 	var url := "test://server"
 	var epoch := "test-epoch"
 	var display_name := "Office fixture"
@@ -154,6 +157,41 @@ class Backend extends RefCounted:
 
 class SessionHost extends Host:
 	var session_backend := Backend.new()
+
+func test_catalog_completion_updates_panel_after_visible_receipt() -> void:
+	var app := Application.new()
+	app.agent_attention.free()
+	app.agent_attention = preload("res://tests/unit/agent_attention_test.gd").CapturedAttention.new()
+	app.agent_attention.application = app
+	app.add_child(app.agent_attention)
+	var host := SessionHost.new()
+	var peer := Peer.new()
+	host.session_backend.connection = peer
+	app.hosts = [host]
+	host.workspace_layout.tabs = [{"id":1, "tree":{"type":"windows", "windows":[{"pane":"t1","shown":true}]}}]
+	host.workspace_layout.active = 1
+	app.agent_attention.in_view = func(h): return h == host
+	var panel := preload("res://scenes/Agents.gd").new()
+	panel.application = app
+	panel._sounds = {"enabled":false}
+	app.agents = panel
+	app.agent_attention.refresh()
+	var statuses := []
+	panel.changed.connect(func():
+		for row in panel.rows:
+			if row.key == "t7": statuses.append(row.status))
+	peer.available_sessions[1].agents[0].status = "idle"
+	peer.available_sessions[1].agents[0].attention = {"event":"finished", "kind":"completed", "seen":false}
+	peer.sessions_changed.emit()
+	expect(app.agent_attention._queued and statuses.is_empty(), "The catalog schedules receipt projection before publishing panel rows")
+	app.agent_attention.refresh()
+	expect(statuses == ["idle"], "The panel goes directly from working to idle on catalog delivery")
+	expect(app.agent_attention.marker(["t1"]).count == 0, "The remapped visible pane keeps its tab clear")
+	panel.free()
+	app.free()
+	host.free()
+	peer.free()
+
 
 func test_agents_in_other_sessions_and_servers_are_listed() -> void:
 	var app := Application.new()

@@ -33,6 +33,8 @@ class Peer extends Node:
 	var connected := false
 	var workspace := "$1"
 	var available_sessions: Array = []
+	var view_ready := true
+	func session_view_ready(id: String) -> bool: return view_ready and id == workspace
 	func local_id(id: int) -> int: return id
 	func wire_id(id: int) -> int: return id
 
@@ -91,6 +93,45 @@ func test_connected_catalog_retries_cached_read_without_reading_unshown_results(
 		other.free()
 		disconnected.free()
 		connected.free()
+
+
+func test_live_completion_receipt_in_either_snapshot_order() -> void:
+	for scenario in ["catalog_first", "graph_first", "unfocused", "switching", "other_session"]:
+		var app := Application.new()
+		var host := RemoteHost.new()
+		var peer := Peer.new()
+		peer.connected = true
+		peer.view_ready = scenario != "switching"
+		host.session_backend.connection = peer
+		host.workspace_layout.tabs = [_tab(1, ["t1"])]
+		host.workspace_layout.active = 1
+		host.in_view = scenario != "unfocused"
+		app.hosts = [host]
+		var event := {"event":"completion", "kind":"completed", "seen":false}
+		var agent := {"pane":1, "status":"idle", "attention":event}
+		var catalog := [{"id":"$2" if scenario == "other_session" else "$1", "agents":[agent]}]
+		if scenario == "graph_first":
+			app.agent_api.graph.nodes["t1"] = agent
+			app.agent_api.graph.remote_owners["t1"] = peer
+		else:
+			peer.available_sessions = catalog
+		var attention := CapturedAttention.new()
+		attention.application = app
+		attention.in_view = func(h): return h.in_view
+		attention.refresh()
+		var watched: bool = scenario in ["catalog_first", "graph_first"]
+		expect(attention.marker(["t1"]).count == (0 if watched else 1), "Tab marker: " + scenario)
+		expect(attention.project_attention(event).seen == watched, "Agents panel receipt: " + scenario)
+		expect(attention.calls.size() == int(watched), "Only the presented pane sends a receipt: " + scenario)
+		if watched:
+			peer.available_sessions = catalog
+			app.agent_api.graph.nodes["t1"] = agent
+			app.agent_api.graph.remote_owners["t1"] = peer
+			attention.refresh()
+			expect(attention.marker(["t1"]).count == 0 and attention.attention("t1").seen, "The second update keeps both projections seen")
+		attention.free()
+		host.free()
+		peer.free()
 
 
 func _tab(id: int, keys: Array, shown := []) -> Dictionary:

@@ -25,7 +25,6 @@ var _sounds: Dictionary = {}
 var _streams: Dictionary = {}
 var _saved := ""
 var _path := ""
-var _refresh_pending := false
 
 func _ready() -> void:
 	set_process(false)
@@ -38,14 +37,6 @@ func _ready() -> void:
 	# AgentAttention refreshes receipts before forwarding each graph transition
 	# here, so rows and sounds see the same event as the tab markers.
 
-## Pane titles and foreground apps change without a graph transition (they
-## arrive as `pane_update` deltas), so each host's UI change also refreshes the
-## rows, coalesced to one pass per frame.
-func _queue_refresh() -> void:
-	if _refresh_pending: return
-	_refresh_pending = true
-	refresh.call_deferred()
-
 func refresh() -> void:
 	var profiled_started := Time.get_ticks_usec()
 	refresh_body()
@@ -53,7 +44,6 @@ func refresh() -> void:
 
 
 func refresh_body() -> void:
-	_refresh_pending = false
 	var input: Dictionary = {}
 	var remotes: Dictionary = {}
 	var sessions: Dictionary = {}
@@ -61,7 +51,6 @@ func refresh_body() -> void:
 	var host_trees: Array = []
 	for host in application.hosts:
 		if not is_instance_valid(host) or host.is_queued_for_deletion(): continue
-		if host.has_signal("ui_changed") and not host.ui_changed.is_connected(_queue_refresh): host.ui_changed.connect(_queue_refresh)
 		var looking: bool = application.agent_attention.in_view.call(host)
 		var ids_by_key: Dictionary = {}
 		for tab in host.workspace_layout.tabs:
@@ -137,7 +126,6 @@ func _add_away(input: Dictionary, remotes: Dictionary, sessions: Dictionary) -> 
 		var peer: Node = group.get("peer")
 		if not group.connected or not is_instance_valid(peer) or not is_instance_valid(group.get("host")): continue
 		# The peer publishes other sessions' agents through its live catalog.
-		if peer.has_signal("changed") and not peer.changed.is_connected(_queue_refresh): peer.changed.connect(_queue_refresh)
 		for value in peer.available_sessions:
 			if not value is Dictionary: continue
 			var label := preload("res://scenes/session/SessionLabel.gd").name_of(value)
