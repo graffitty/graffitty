@@ -468,6 +468,10 @@ func test_agents_in_other_sessions_and_servers_are_listed() -> void:
 	var child: Dictionary = controller.trees[by_key["t3"].id][0]
 	expect(child.row_id == by_key["t4"].id and child.status == "working", "The background child retains identity and status")
 	expect(controller._away[child.away_id].session == "$1", "Selecting the child targets its own session")
+	peer.available_sessions[0].agents[0].status = "idle"
+	controller.refresh()
+	expect(controller.rows.any(func(row): return row.key == "t3" and row.status == "idle" and row.section == "Working"),
+		"A background session catalog places an idle leader with a busy child in Working")
 	peer.available_sessions[0].agents[0].status = "unknown"
 	controller.refresh()
 	expect(controller.rows.any(func(row): return row.key == "t3") and controller.trees[by_key["t3"].id][0].row_id == by_key["t4"].id, "A background leader with unknown status keeps its active child connected")
@@ -637,6 +641,85 @@ func test_connected_panes_form_a_tree_under_the_first_agent() -> void:
 	connection.free()
 	host.free()
 	app.free()
+
+func test_panel_groups_busy_grandchild_without_changing_individual_status() -> void:
+	var app := Application.new()
+	var host := TreeHost.new()
+	var peer := TreeConnection.new()
+	app.hosts = [host]
+	var windows := []
+	for id in range(1, 7):
+		var key := PaneAddress.key(id)
+		host.terminal(id)
+		windows.append({"pane":key, "shown":true, "rect":Rect2(id * 150, 0, 120, 90)})
+		var node := {"provider":"claude", "status":"busy" if id == 3 else "idle"}
+		if id in [4, 5, 6]: node.attention = {"event":"finished-" + key, "kind":"completed", "seen":false}
+		app.agent_api.graph.nodes[key] = node
+		app.agent_api.graph.remote_owners[key] = peer
+	host.workspace_layout.tabs = [{"id":1, "tree":{"type":"windows", "windows":windows}}]
+	host.workspace_layout.active = 1
+	host.pane_focus = "t3"
+	app.agent_api.graph.edges = {"a":{"from":"t1","to":"t2"}, "b":{"from":"t2","to":"t3"},
+		"c":{"from":"t1","to":"t4"}, "d":{"from":"t1","to":"t5"}}
+	var panel := preload("res://scenes/Agents.gd").new()
+	app.agents = panel
+	panel.application = app
+	panel._sounds = {"enabled":false}
+	app.agent_attention.in_view = func(_h): return true
+	panel.refresh()
+	var roots: Array = panel.rows.filter(func(row): return row.key == "t1")
+	expect(roots.size() == 1 and panel.rows.size() == 2, "The nested tree and the standalone completion each contribute one root")
+	if roots.size() == 1:
+		var lead: Dictionary = roots[0]
+		expect(lead.section == "Working" and lead.status == "idle", "The working grandchild moves its idle leader to Working while the leader keeps its idle ring")
+		var subs: Array = panel.trees[lead.id]
+		expect(subs.map(func(row): return row.key) == ["t2","t3","t4","t5"], "The panel keeps both branches and both completed siblings")
+		expect(subs.map(func(row): return row.status) == ["idle","working","done","done"],
+			"The intermediate ring, grandchild spinner and sibling completion dots keep their individual states")
+		expect(subs[1].parent == "t2" and subs[1].focused, "The busy grandchild keeps its depth and focused row")
+		var service := preload("res://scenes/mods/ModService.gd").new()
+		service.application = app
+		service.host = ClassDB.instantiate("ModHost")
+		service.available = service.host.setup("").is_empty()
+		service.host.set_theme(JSON.stringify(service.THEME))
+		service._publish_agents()
+		var view: Control = ClassDB.instantiate("ModView")
+		view.size = Vector2(550,700)
+		expect(service.load_into(view, "agents", {}).is_empty(), "The bundled Agents mod loads with the controller's tree")
+		view.render_now()
+		expect((tr("Working") + "  1") in view.texts() and (tr("Done") + "  1") in view.texts() and not view.hit_rect("sec-Idle").has_area(),
+			"The rendered headings count each group once and reserve Done for the standalone result")
+		var grandchild := "sub-" + str(lead.id) + "|t3"
+		expect(view.hit_rect(grandchild).has_area(), "The focused grandchild has its own rendered row")
+		expect(view.click("fold-" + str(lead.id)), "The group can be folded from its rendered control")
+		view.render_now()
+		expect(not view.hit_rect(grandchild).has_area() and "4" in view.texts() and (tr("Working") + "  1") in view.texts(),
+			"Folding hides all four connected rows while the group remains in Working")
+		app.agent_attention.in_view = func(_h): return false
+		panel.refresh()
+		expect(panel.rows.any(func(row): return row.key == "t1" and row.section == "Working") and not panel.trees[lead.id][1].focused,
+			"The same work keeps its section after its window loses focus")
+		app.agent_api.graph.nodes.t3.status = "idle"
+		panel.refresh()
+		service._publish_agents()
+		view.render_now()
+		expect((tr("Idle") + "  1") in view.texts() and (tr("Done") + "  1") in view.texts() and not view.hit_rect("sec-Working").has_area(),
+			"A folded background group returns to Idle when its last worker finishes")
+		view.click("fold-" + str(lead.id))
+		view.render_now()
+		expect(view.hit_rect(grandchild).has_area() and panel.trees[lead.id][2].status == "done",
+			"Expanding restores the nested rows and the sibling's unread completion")
+		view.set_props('{"compact":true}')
+		view.render_now()
+		expect(view.hit_rect("ag-sub-" + str(lead.id) + "|t3").has_area() and "6" in view.texts(),
+			"The compact panel numbers the two leaders and all four connected agents")
+		view.free()
+		service.free()
+	panel.free()
+	peer.free()
+	host.free()
+	app.free()
+
 
 func test_unknown_leader_keeps_each_branch_and_keyboard_order() -> void:
 	var app := Application.new()

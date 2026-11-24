@@ -153,28 +153,43 @@ impl Agents {
                 at: stamp.at, focused: item.focused, pinned });
         }
         if !rows.iter().any(|r| r.focused) { self.held = None; }
-        let group_rank = |r: &Row| match r.section.as_str() { "Pinned" => 5, "Needs you" => 4, "Done" => 3, "Working" => 2, _ => 1 };
-        rows.sort_by(|a,b| group_rank(b).cmp(&group_rank(a))
-            .then_with(|| if a.pinned && b.pinned { rank(&b.status).cmp(&rank(&a.status)) } else { std::cmp::Ordering::Equal })
-            .then(b.at.cmp(&a.at))
-            .then(self.agents[&b.id].seq.cmp(&self.agents[&a.id].seq)));
-        // A leader without a current turn still connects its live descendants.
-        // Use the highest-priority child's position without inventing an unread
-        // transition, timestamp or notification for the leader.
-        let mut parents = Vec::new();
-        for (index, row) in rows.iter().enumerate() {
-            if let Some(leader) = groups.get(&row.id).and_then(|id| leaders.remove(id)) {
-                let pinned = self.saved.pins.contains(&leader.id);
-                let parent = Row {
-                    id: leader.id, key: leader.key, title: leader.title, provider: leader.provider,
-                    status: leader.status, section: if pinned { "Pinned".into() } else { row.section.clone() },
-                    at: 0, focused: leader.focused, pinned,
-                };
-                parents.push((if pinned { 0 } else { index }, parent));
+        // Each descendant names its tree root, including through intermediate tools.
+        // A completion and a pin belong to the individual agent.
+        let mut child_ranks = BTreeMap::new();
+        for row in &rows {
+            if let Some(root) = groups.get(&row.id) {
+                let urgency = match row.status.as_str() { "blocked" => 4, "working" => 2, _ => 1 };
+                let highest = child_ranks.entry(root.clone()).or_insert(1);
+                *highest = urgency.max(*highest);
             }
         }
-        parents.sort_by_key(|(index, _)| *index);
-        for (index, parent) in parents.into_iter().rev() { rows.insert(index, parent); }
+        for root in child_ranks.keys() {
+            if let Some(leader) = leaders.remove(root) {
+                let pinned = self.saved.pins.contains(root);
+                rows.push(Row {
+                    id: leader.id, key: leader.key, title: leader.title, provider: leader.provider,
+                    status: leader.status, section: if pinned { "Pinned" } else { "Idle" }.into(),
+                    at: 0, focused: leader.focused, pinned,
+                });
+            }
+        }
+        let group_rank = |r: &Row| match r.section.as_str() { "Pinned" => 5, "Needs you" => 4, "Done" => 3, "Working" => 2, _ => 1 };
+        for row in &mut rows {
+            if let Some(&urgency) = child_ranks.get(&row.id) {
+                if urgency > group_rank(row) { row.section = section(urgency).into(); }
+            }
+        }
+        let urgency = |row: &Row| {
+            if row.pinned { rank(&row.status).max(*child_ranks.get(&row.id).unwrap_or(&1)) }
+            else { group_rank(row) }
+        };
+        rows.sort_by(|a,b| b.pinned.cmp(&a.pinned)
+            .then_with(|| urgency(b).cmp(&urgency(a)))
+            .then(b.at.cmp(&a.at))
+            .then_with(|| match (self.agents.get(&a.id), self.agents.get(&b.id)) {
+                (Some(a), Some(b)) => b.seq.cmp(&a.seq),
+                (a,b) => a.is_some().cmp(&b.is_some()),
+            }));
         let listed: HashSet<_> = rows.iter().map(|r| r.id.clone()).collect();
         self.saved.changed.retain(|id, stamp| listed.contains(id) || now.saturating_sub(stamp.at) <= 30 * 86400);
         (rows, alerts)
@@ -371,6 +386,42 @@ mod tests {
         assert!(rows[0].pinned && rows[0].section == "Pinned" && sounds.is_empty());
         child.status = "offline".into();
         assert!(state.observe(vec![leader, child], 13).0.is_empty());
+    }
+
+    #[test]
+    fn group_section_uses_descendants_but_preserves_individual_activity() {
+        let mut model = Agents::default();
+        let mut root = input("idle", false, false).remove(0);
+        let mut worker = input("busy", false, false).remove(0);
+        worker.id = "grandchild".into();
+        worker.group = Some(root.id.clone());
+        let mut finished = completed(FIRST, false, false, false).remove(0);
+        finished.id = "finished".into();
+        finished.group = Some(root.id.clone());
+        model.pin(finished.id.clone(),true);
+        for (leader_state, child_state, unread, expected, expected_status) in [
+            ("idle","busy",false,"Working","idle"),
+            ("idle","idle",false,"Idle","idle"),
+            ("idle","busy",true,"Done","done"),
+            ("idle","waiting",true,"Needs you","done"),
+            ("offline","busy",false,"Working","offline"),
+            ("unknown","idle",false,"Idle","unknown"),
+        ] {
+            root.status = leader_state.into();
+            root.attention = unread.then(|| finished.attention.clone().unwrap());
+            worker.status = child_state.into();
+            let (rows, _) = model.observe(vec![root.clone(),worker.clone(),finished.clone()],20);
+            assert_eq!(rows.len(),3);
+            let parent = rows.iter().find(|r|r.id==root.id).unwrap();
+            assert_eq!((parent.section.as_str(),parent.status.as_str(),parent.at),(expected,expected_status,0));
+            let pinned = rows.iter().find(|r|r.id==finished.id).unwrap();
+            assert_eq!((pinned.section.as_str(),pinned.status.as_str()),("Pinned","done"));
+        }
+        model.pin(root.id.clone(),true);
+        worker.status = "waiting".into();
+        let (rows,sounds) = model.observe(vec![root.clone(),worker],21);
+        assert_eq!(sounds,["blocked"]);
+        assert_eq!(rows.iter().find(|r|r.id==root.id).unwrap().section,"Pinned");
     }
 
     #[test] fn sorting_pins_recent_changes_and_provider_filtering() {
