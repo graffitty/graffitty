@@ -74,9 +74,12 @@ gft graph read --node t1
 
 - `graph read` returns a session-file reference by default, avoiding a full transcript in the model's context.
 - Add `--offset 0` to read bounded content; continue from the returned `next_offset`.
+- For Claude, use the actual user turns to identify the latest prompt. A fork can contain a `last-prompt` record copied from its parent even when its own turns are missing.
 - Removing a connection revokes future graph access. It cannot revoke a file path already disclosed to a local process. **The graph is not an OS sandbox.**
 
 ## Launch a connected agent
+
+New pane shells inherit `CLAUDE_CONFIG_DIR` and clear the launching Claude process's child-session markers. This lets an interactive Claude agent in the pane save its own transcript for Read connections.
 
 To launch a connected agent from an integrated agent pane:
 

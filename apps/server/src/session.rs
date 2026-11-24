@@ -275,6 +275,20 @@ impl Session {
         // This PTY is outside any tmux client that launched the server.
         cmd.env_remove("TMUX");
         cmd.env_remove("TMUX_PANE");
+        // An independent pane can inherit its launcher's Claude account, but
+        // inheriting its child marker makes Claude skip transcript persistence.
+        for key in [
+            "CLAUDECODE",
+            "CLAUDE_PID",
+            "CLAUDE_CODE_CHILD_SESSION",
+            "CLAUDE_CODE_CHILD_NOTES_DIR",
+            "CLAUDE_CODE_SESSION_ID",
+            "CLAUDE_CODE_SESSION_ATTENDED",
+            "CLAUDE_CODE_MESSAGING_SOCKET",
+            "CLAUDE_CODE_MESSAGING_TOKEN",
+        ] {
+            cmd.env_remove(key);
+        }
         if let Some(options) = options {
             for (key, value) in &options.env {
                 cmd.env(key, value);

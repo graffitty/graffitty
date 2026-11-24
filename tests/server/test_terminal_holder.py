@@ -220,6 +220,27 @@ class TerminalHolderTests(unittest.TestCase):
         self.gft("server", "restart")
         self.assert_kept(pane, holder, 2)
 
+    def test_pane_started_by_claude_has_independent_session(self):
+        parent_keys = {
+            "CLAUDECODE", "CLAUDE_PID", "CLAUDE_CODE_CHILD_SESSION",
+            "CLAUDE_CODE_CHILD_NOTES_DIR", "CLAUDE_CODE_SESSION_ID",
+            "CLAUDE_CODE_SESSION_ATTENDED", "CLAUDE_CODE_MESSAGING_SOCKET",
+            "CLAUDE_CODE_MESSAGING_TOKEN",
+        }
+        self.env.update(dict.fromkeys(parent_keys, "1"))
+        self.env["CLAUDE_CONFIG_DIR"] = str(self.root / "profile")
+        driver = Path(self.env["SHELL"])
+        driver.write_text(
+            '#!/bin/sh\nenv | cut -d= -f1 > "$HOLD_DIR/keys"\n'
+            'echo "$CLAUDE_CONFIG_DIR" > "$HOLD_DIR/profile-path"\n'
+            + DRIVER.partition("\n")[2]
+        )
+        self.start_server()
+        self.new_pane("independent")
+        keys = (self.root / "keys").read_text().splitlines()
+        self.assertEqual(parent_keys.intersection(keys), set())
+        self.assertEqual((self.root / "profile-path").read_text().strip(), self.env["CLAUDE_CONFIG_DIR"])
+
     def test_restart_keeps_the_servers_environment_not_the_callers(self):
         # An agent (or a pane's shell) that restarts the server must not become
         # every later terminal's environment: its session, socket and account.
