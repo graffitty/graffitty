@@ -14,6 +14,8 @@ layout(push_constant,std430) uniform Params {
     vec4 raster; // width, height, blur limit, minimum radius
     vec4 band; // previous radius, current radius, next radius, accumulation index
 } p;
+layout(r32f,set=0,binding=5) uniform image2D tile_max;
+shared uint group_max;
 const int MAX_RADIUS = 24;
 shared float taps[MAX_RADIUS + 1];
 float kernel(float offset, float radius) {
@@ -33,8 +35,9 @@ void main() {
     ivec2 pixel=ivec2(gl_GlobalInvocationID.xy), size=ivec2(p.raster.xy);
     bool outside=any(greaterThanEqual(pixel,size));
     if (p.lens.w < -.5) {
-        if(outside)return;
-        float alpha=texelFetch(source_image,pixel,0).a;
+        if(gl_LocalInvocationIndex==0)group_max=0u;
+        barrier();
+        float alpha=outside?0.:texelFetch(source_image,pixel,0).a;
         float radius=0.;
         if (alpha > .000001) {
             vec2 uv=(vec2(pixel)+.5)/p.raster.xy;
@@ -44,12 +47,17 @@ void main() {
             radius=min(min(p.raster.z,float(MAX_RADIUS)),max(p.raster.w,
                 abs(1.-p.lens.x/d)*p.lens.y/max(p.lens.z,.001)));
         }
-        imageStore(destination_footprint,pixel,vec4(radius,0,0,0));
+        atomicMax(group_max,floatBitsToUint(radius));
+        barrier();
+        if(gl_LocalInvocationIndex==0)imageStore(tile_max,ivec2(gl_WorkGroupID.xy),vec4(uintBitsToFloat(group_max)));
+        if(!outside)imageStore(destination_footprint,pixel,vec4(radius,0,0,0));
         return;
     }
     if (p.lens.w > 1.5) {
         if(outside)return;
-        vec4 ink=imageLoad(destination_footprint,pixel);
+        int active_grids=int(p.band.w);
+        vec4 ink=(active_grids & 1)!=0 ? imageLoad(destination_footprint,pixel) : vec4(0.);
+        if((active_grids & 2)!=0)ink+=textureLod(source_image,(vec2(pixel)+.5)/vec2(2*textureSize(source_image,0)),0.);
         imageStore(destination,pixel,ink/max(1.,ink.a));
         return;
     }
@@ -57,23 +65,46 @@ void main() {
     // separately keeps both axes isotropic even where different depths overlap.
     ivec2 axis=p.lens.w<.5?ivec2(1,0):ivec2(0,1);
     vec4 sum=vec4(0.);
-    int reach=int(ceil(p.band.y));
+    bool wide=p.band.y>=12.;
+    int stride=wide?2:1;
+    ivec2 grid=(size+stride-1)/stride;
+    outside=any(greaterThanEqual(pixel,grid));
+    int reach=int(ceil(p.band.y/float(stride)));
     // All 64 pixels use the same normalized taps. Partial workgroups
     // participate in the barrier too, before out-of-bounds pixels return.
     int lane=int(gl_LocalInvocationIndex);
-    if(lane<=reach)taps[lane]=kernel(float(lane),p.band.y)*inverse_normalization(p.band.y);
+    if(lane<=reach)taps[lane]=kernel(float(lane),p.band.y/float(stride))*inverse_normalization(p.band.y/float(stride));
     barrier();
     if(outside)return;
+    if(p.band.y>0.) {
+        ivec2 start=ivec2(gl_WorkGroupID.xy)*8*stride;
+        int margin=reach*stride+stride;
+        ivec2 lo=max(start-ivec2(margin),ivec2(0))/8;
+        ivec2 hi=min(start+ivec2(8*stride-1+margin),size-1)/8;
+        bool relevant=false;
+        for(int y=lo.y;y<=hi.y && !relevant;y++)
+            for(int x=lo.x;x<=hi.x;x++)
+                if(imageLoad(tile_max,ivec2(x,y)).x>p.band.x){relevant=true;break;}
+        if(!relevant){
+            if(p.lens.w<.5) imageStore(destination,pixel,vec4(0));
+            else if(p.band.w==0.)imageStore(destination_footprint,pixel,vec4(0));
+            return;
+        }
+    }
     for(int i=-reach;i<=reach;i++) {
         ivec2 q=pixel+axis*i;
-        if(any(lessThan(q,ivec2(0)))||any(greaterThanEqual(q,size)))continue;
+        if(any(lessThan(q,ivec2(0)))||any(greaterThanEqual(q,grid)))continue;
         float weight=taps[abs(i)];
         if(p.lens.w<.5) {
-            float radius=texelFetch(source_footprint,q,0).x;
-            float fraction=radius<=p.band.y
+            for(int yy=0;yy<stride;yy++) for(int xx=0;xx<stride;xx++){
+                ivec2 src=min(q*stride+ivec2(xx,yy),size-1);
+                float radius=texelFetch(source_footprint,src,0).x;
+                float fraction=radius<=p.band.y
                 ? (p.band.y==p.band.x?1.:clamp((radius-p.band.x)/(p.band.y-p.band.x),0.,1.))
                 : (p.band.z==p.band.y?1.:clamp((p.band.z-radius)/(p.band.z-p.band.y),0.,1.));
-            weight*=fraction;
+                if(fraction>0.)sum+=texelFetch(source_image,src,0)*(weight*fraction/float(stride*stride));
+            }
+            continue;
         }
         if(weight>0.)sum+=texelFetch(source_image,q,0)*weight;
     }
@@ -84,6 +115,7 @@ void main() {
     }
 }
 """
+const FIRST_WIDE_BAND := 3
 const BAND_RADII := [0.0, 3.0, 6.0, 12.0, 24.0]
 const RETRY_INITIAL_MSEC := 250
 const RETRY_MAX_MSEC := 4000
@@ -94,6 +126,9 @@ var pipeline := RID()
 var sampler := RID()
 var temporary := RID()
 var footprints: Array[RID] = []
+var tile := RID()
+var half_tmp := RID()
+var half_sum := RID()
 var texture_size := Vector2i.ZERO
 var mutex := Mutex.new()
 var lens := Vector4(1, 0, 1, 24)
@@ -129,7 +164,7 @@ func presentation_copy() -> CompositorEffect:
 
 func _notification(what: int) -> void:
 	if what == NOTIFICATION_PREDELETE and rd != null:
-		for resource in [shader, sampler, temporary] + footprints:
+		for resource in [shader, sampler, temporary, tile, half_tmp, half_sum] + footprints:
 			if resource.is_valid():
 				rd.free_rid(resource)
 
@@ -198,9 +233,12 @@ func _prepare_resources(size: Vector2i) -> bool:
 
 
 func _release_targets() -> void:
-	for resource in [temporary] + footprints:
+	for resource in [temporary, tile, half_tmp, half_sum] + footprints:
 		if resource.is_valid(): rd.free_rid(resource)
 	temporary = RID()
+	tile = RID()
+	half_tmp = RID()
+	half_sum = RID()
 	footprints.clear()
 	texture_size = Vector2i.ZERO
 
@@ -222,6 +260,17 @@ func _resize_targets(size: Vector2i) -> bool:
 			return false
 		if i == 0: temporary = target
 		else: footprints.append(target)
+	format.width = ceili(size.x / 2.0)
+	format.height = ceili(size.y / 2.0)
+	half_tmp = _create_target(format)
+	half_sum = _create_target(format)
+	format.width = ceili(size.x / 8.0)
+	format.height = ceili(size.y / 8.0)
+	format.format = RenderingDevice.DATA_FORMAT_R32_SFLOAT
+	tile = _create_target(format)
+	if not half_tmp.is_valid() or not half_sum.is_valid() or not tile.is_valid():
+		_release_targets()
+		return false
 	texture_size = size
 	return true
 
@@ -270,14 +319,26 @@ func _render_callback(kind: int, data: RenderData) -> void:
 				# written in the same dispatch, so that pass binds the other as its unused input.
 				footprints[1] if axis == -1 else footprints[0],
 				footprints[0] if axis == -1 else footprints[1]]
+			var wide := axis in [0, 1] and band_index >= FIRST_WIDE_BAND
+			if wide:
+				if axis == 0: textures[2] = half_tmp
+				else:
+					textures[0] = half_tmp
+					textures[4] = half_sum
+			if axis == 2: textures[0] = half_sum
+			textures.append(tile)
 			for binding in textures.size():
 				var uniform := RDUniform.new()
 				uniform.binding = binding
-				var storage := binding in [2, 4]
+				var storage := binding in [2, 4, 5]
 				uniform.uniform_type = RenderingDevice.UNIFORM_TYPE_IMAGE if storage else RenderingDevice.UNIFORM_TYPE_SAMPLER_WITH_TEXTURE
 				if not storage: uniform.add_id(sampler)
 				uniform.add_id(textures[binding])
 				uniforms.append(uniform)
+			# Each resolution initializes its own sum on its first active band.
+			var accumulation := band_index - (maxi(FIRST_WIDE_BAND, first) if wide else first)
+			if axis == 2:
+				accumulation = int(first < FIRST_WIDE_BAND) | (int(last >= FIRST_WIDE_BAND) << 1)
 			var constants := PackedFloat32Array()
 			for column in [inverse.x, inverse.y, inverse.z, inverse.w]:
 				constants.append_array([column.x, column.y, column.z, column.w])
@@ -294,7 +355,7 @@ func _render_callback(kind: int, data: RenderData) -> void:
 				]
 			)
 			constants.append_array([BAND_RADII[maxi(band_index - 1, 0)], BAND_RADII[band_index],
-				BAND_RADII[mini(band_index + 1, BAND_RADII.size() - 1)], float(band_index - first)])
+				BAND_RADII[mini(band_index + 1, BAND_RADII.size() - 1)], float(accumulation)])
 			var uniform_set := UniformSetCacheRD.get_cache(shader, 0, uniforms)
 			if not uniform_set.is_valid(): return
 			var list := rd.compute_list_begin()
@@ -305,5 +366,6 @@ func _render_callback(kind: int, data: RenderData) -> void:
 				0,
 			)
 			rd.compute_list_set_push_constant(list, constants.to_byte_array(), constants.size() * 4)
-			rd.compute_list_dispatch(list, ceili(size.x / 8.0), ceili(size.y / 8.0), 1)
+			var extent := 16.0 if wide else 8.0
+			rd.compute_list_dispatch(list, ceili(size.x / extent), ceili(size.y / extent), 1)
 			rd.compute_list_end()
