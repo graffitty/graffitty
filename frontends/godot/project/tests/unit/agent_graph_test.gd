@@ -98,3 +98,20 @@ func test_decoded_topology_cache_is_immutable_and_validated() -> void:
 	wire.workspace_state.revision = 8
 	var changed: Dictionary = protocol.decode_message(JSON.stringify(wire).to_utf8_buffer())
 	expect(changed.message.graph.limits.run_messages == 23 and changed.message.workspace_state.revision == 8, "Changed content replaces the cached section immediately")
+
+func test_transcript_read_emits_wire_activity_once() -> void:
+	var graph: Node = Graph.new()
+	var owner := Owner.new()
+	var events: Array = []
+	graph.message_transferred.connect(func(source, target, event_id): events.append([source, target, event_id]))
+	var state := snapshot()
+	state.edges = [{"from":"t1", "to":"t2", "from_port":"read", "to_port":"in", "read":true, "revision":1, "created_revision":1}]
+	graph.import_remote(owner, state)
+	state.journal = {"events":[{"event_id":"read1", "source":"t1", "target":"t2", "source_port":"read", "target_port":"in", "edge":"t1/read>t2/in", "edge_revision":1, "status":"transcript read", "pending":false, "queued_at":1.0, "updated_at":1.0}]}
+	graph.import_remote(owner, state)
+	expect(events == [["t1", "t2", "read1"]], "A content read activates the source-to-reader wire")
+	expect(graph.event_edges.get("read1") == "t1/read>t2/in", "The pulse uses the Read port")
+	graph.import_remote(owner, state)
+	expect(events.size() == 1 and graph.queues.is_empty(), "Repeated snapshots do not replay reads or create queued work")
+	graph.free()
+	owner.free()

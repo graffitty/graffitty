@@ -155,6 +155,7 @@ mod tests {
             workspace: "$2".into(),
             server_binary: Some("binary with spaces".into()),
             no_gui: true,
+            stdio: false,
             terminal: true,
         };
         let args = child_args(&options).unwrap();

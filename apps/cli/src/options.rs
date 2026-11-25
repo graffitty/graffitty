@@ -573,6 +573,9 @@ pub struct RemoteConnect {
     /// Prepare tunnels and print a connection file without launching the GUI.
     #[usage(long)]
     pub no_gui: bool,
+    /// Emit connection JSON to stdout and own tunnels until stdin closes (GUI helper).
+    #[usage(long)]
+    pub stdio: bool,
     /// Open an interactive terminal for SSH prompts and connection errors.
     #[usage(long)]
     pub terminal: bool,

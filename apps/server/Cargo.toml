@@ -8,6 +8,7 @@ license = "Apache-2.0"
 default = []
 
 [dependencies]
+graffitty-graph-protocol = { path = "../../crates/graph-protocol" }
 graffitty-secrets = { path = "../../crates/secrets" }
 graffitty-dictation-audio = { path = "../../crates/dictation-audio" }
 usage-rs = { version = "7.3.0" }

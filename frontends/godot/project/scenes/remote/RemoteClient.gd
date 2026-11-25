@@ -190,7 +190,11 @@ func _ready() -> void:
 		connection.stream_quality = settings.get("chromium_stream", {}).duplicate()
 		connection.preferred_session = str(settings.get("initial_session", view_state.session(str(settings.get("url", "")))))
 		connection.namespace_ids = managed
-		endpoint.text = str(settings.get("url", ""))
+		endpoint.text = Authentication.profile_url(settings)
+		if _ssh_login():
+			endpoint.editable = false
+			dialog.dialog_hide_on_ok = false
+			secret.text_submitted.connect(func(_value): _connect())
 		secret.text = str(settings.get("token", ""))
 		_connect()
 		return
@@ -217,12 +221,13 @@ func _connect() -> void:
 				secret.text = str(settings.get("token", ""))
 			loaded_url = str(settings.get("url", ""))
 			loaded_secret = str(settings.get("token", ""))
-	if secret.text.is_empty() and not endpoint.text.is_empty():
-		var saved := Authentication.password(endpoint.text)
+	var address := str(settings.url) if _ssh_login() else endpoint.text
+	if secret.text.is_empty() and not address.is_empty() and not (_ssh_login() and auth_bound):
+		var saved := Authentication.password(address, str(settings.get("credential_id", "")))
 		if not saved.has("error"):
 			secret.text = saved.password
-	if endpoint.text.is_empty() or secret.text.is_empty():
-		status.text = "Enter the server URL and password"
+	if address.is_empty() or secret.text.is_empty():
+		status.text = tr("Enter the current password shown on the computer.") if _ssh_login() else tr("Enter the server URL and password")
 		_show_connection_ui()
 		return
 	if connection.connected and connection.workspace.is_empty():
@@ -231,7 +236,7 @@ func _connect() -> void:
 		connection.send_action("create", -1, { "kind": "tab" })
 	else:
 		if not auth_bound:
-			settings.url = endpoint.text
+			settings.url = address
 			Authentication.bind(self, connection, settings, false, _show_save_error)
 			connection.authenticated.connect(func():
 				settings.alias = connection.server_alias
@@ -242,8 +247,9 @@ func _connect() -> void:
 			)
 			auth_bound = true
 		connection.server_alias = str(settings.get("alias", ""))
-		connection.controller_identity = str(settings.get("credential_id", endpoint.text))
-		connection.connect_remote(endpoint.text, secret.text)
+		connection.controller_identity = str(settings.get("credential_id", address))
+		if _ssh_login(): dialog.hide()
+		connection.connect_remote(address, secret.text)
 		secret.clear()
 
 
@@ -251,8 +257,15 @@ func _show_save_error(message: String) -> void:
 	get_node("/root/Localization").text(status, message)
 
 
+func _ssh_login() -> bool:
+	return settings.get("transient", false) and Authentication.profile_url(settings).begins_with("ssh://")
+
+
 func _show_connection_ui() -> void:
-	if server_chooser.is_valid() and not settings.get("shared_local", false):
+	if _ssh_login() and not connection.connected:
+		if not dialog.visible: dialog.popup_centered()
+		secret.grab_focus.call_deferred()
+	elif server_chooser.is_valid() and not settings.get("shared_local", false):
 		server_chooser.call()
 	else:
 		dialog.popup_centered()
@@ -1266,7 +1279,16 @@ func _close_local_server() -> void:
 	detach()
 
 
+var ssh_tunnel: Node
+
+func close_ssh_tunnel() -> void:
+	if is_instance_valid(ssh_tunnel):
+		ssh_tunnel.close()
+		ssh_tunnel.queue_free()
+		ssh_tunnel = null
+
 func detach() -> void:
+	close_ssh_tunnel()
 	if local_return != null and local_return.parked and is_instance_valid(local_return.client):
 		var window := get_window()
 		connection.disconnect_remote()
@@ -1287,6 +1309,7 @@ func _exit_tree() -> void:
 	# Promoting a surviving window reparents this same live client. Keep its
 	# transport and signals connected while the host changes native windows.
 	if moving_presentation or (is_instance_valid(host) and host.moving_window): return
+	close_ssh_tunnel()
 	connection.set_block_signals(true)
 	connection.disconnect_remote()
 	# Startup validation can exit before _ready attaches these owned nodes.

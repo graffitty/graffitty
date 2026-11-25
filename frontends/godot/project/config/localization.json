@@ -143,6 +143,58 @@
       "sv": "Värld",
       "da": "Verden"
     },
+    "Save SSH host": {
+      "en-US": "Save SSH host",
+      "fr": "Enregistrer l’hôte SSH",
+      "pt-BR": "Salvar host SSH",
+      "es": "Guardar servidor SSH",
+      "it": "Salva host SSH",
+      "ko": "SSH 호스트 저장",
+      "ja": "SSH ホストを保存",
+      "de": "SSH-Host speichern",
+      "nb": "Lagre SSH-vert",
+      "sv": "Spara SSH-värd",
+      "da": "Gem SSH-vært"
+    },
+    "transcript read": {
+      "en-US": "transcript read",
+      "fr": "transcription lue",
+      "pt-BR": "transcrição lida",
+      "es": "transcripción leída",
+      "it": "trascrizione letta",
+      "ko": "대화 기록 읽음",
+      "ja": "会話記録を読み取りました",
+      "de": "Transkript gelesen",
+      "nb": "transkripsjon lest",
+      "sv": "transkription läst",
+      "da": "transskription læst"
+    },
+    "SSH connection failed.": {
+      "en-US": "SSH connection failed.",
+      "fr": "La connexion SSH a échoué.",
+      "pt-BR": "Falha na conexão SSH.",
+      "es": "La conexión SSH falló.",
+      "it": "Connessione SSH non riuscita.",
+      "ko": "SSH 연결에 실패했습니다.",
+      "ja": "SSH 接続に失敗しました。",
+      "de": "SSH-Verbindung fehlgeschlagen.",
+      "nb": "SSH-tilkoblingen mislyktes.",
+      "sv": "SSH-anslutningen misslyckades.",
+      "da": "SSH-forbindelsen mislykkedes."
+    },
+    "Could not open SSH terminal.": {
+      "en-US": "Could not open SSH terminal.",
+      "fr": "Impossible d’ouvrir le terminal SSH.",
+      "pt-BR": "Não foi possível abrir o terminal SSH.",
+      "es": "No se pudo abrir el terminal SSH.",
+      "it": "Impossibile aprire il terminale SSH.",
+      "ko": "SSH 터미널을 열 수 없습니다.",
+      "ja": "SSH ターミナルを開けませんでした。",
+      "de": "Das SSH-Terminal konnte nicht geöffnet werden.",
+      "nb": "Kunne ikke åpne SSH-terminalen.",
+      "sv": "Kunde inte öppna SSH-terminalen.",
+      "da": "Kunne ikke åbne SSH-terminalen."
+    },
     "Connect all": {
       "en-US": "Connect all",
       "fr": "Tout connecter",

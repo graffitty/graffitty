@@ -13,9 +13,9 @@ pub(super) struct Platform {
     arch: String,
 }
 
-pub(super) enum Resolved {
+enum Probe {
     Executable(String),
-    Running(String),
+    Running,
 }
 
 pub(super) fn sh_quote(value: &str) -> String {
@@ -123,17 +123,15 @@ impl Platform {
         }
     }
 
-    fn probe(&self, host: &str, version: &str) -> Result<Option<Resolved>, Error> {
+    fn probe(&self, host: &str, version: &str) -> Result<Option<Probe>, Error> {
         let response = output(host, &self.probe_command(version))?;
         if response.is_empty() {
             return Ok(None);
         }
+        if response == "running" { return Ok(Some(Probe::Running)); }
         match response.split_once('\n') {
             Some((kind, value)) if kind.trim_end() == "installed" => {
-                Ok(Some(Resolved::Executable(value.into())))
-            }
-            Some((kind, value)) if kind.trim_end() == "running" => {
-                Ok(Some(Resolved::Running(value.into())))
+                Ok(Some(Probe::Executable(value.into())))
             }
             _ => Err("Unexpected response probing the Graffitty installation".into()),
         }
@@ -156,7 +154,7 @@ impl Platform {
         }
     }
 
-    fn upload_binary(&self, host: &str, artifact: &Path) -> Result<Resolved, Error> {
+    fn upload_binary(&self, host: &str, artifact: &Path) -> Result<String, Error> {
         eprintln!(
             "Uploading {} for {}/{} on {host}…",
             artifact.display(),
@@ -168,7 +166,7 @@ impl Platform {
         } else {
             install_unix_binary(host, artifact, self.os == "macos")?
         };
-        Ok(Resolved::Executable(path))
+        Ok(path)
     }
 
     fn development_binary(&self, tag: &str) -> Result<std::path::PathBuf, Error> {
@@ -178,7 +176,7 @@ impl Platform {
         Ok(std::env::current_exe()?)
     }
 
-    fn development(&self, host: &str, tag: &str) -> Result<Resolved, Error> {
+    fn development(&self, host: &str, tag: &str) -> Result<String, Error> {
         let binary = self.development_binary(tag)?;
         eprintln!("No published release for {tag}; using this development executable.");
         self.upload_binary(host, &binary)
@@ -253,7 +251,9 @@ fn upload_release(
     let name = format!(".graffitty-install-{}", uuid::Uuid::new_v4().simple());
     output(host, &platform.directory_command(&name, true))?;
     let installed = (|| -> Result<(), Error> {
-        let status = Command::new("scp")
+        let mut command = Command::new("scp");
+        super::batch_options(&mut command);
+        let status = command
             .args(["-o", "ConnectTimeout=15"])
             .arg(dir.join(platform.script_name()))
             .arg(dir.join(format!("{tag}.txt")))
@@ -278,14 +278,21 @@ pub(super) fn resolve(
     host: &str,
     platform: &Platform,
     binary: Option<&Path>,
-) -> Result<Resolved, Error> {
+) -> Result<String, Error> {
     if let Some(artifact) = binary {
         return platform.upload_binary(host, artifact);
     }
     let version = env!("GRAFFITTY_VERSION");
     if let Some(found) = platform.probe(host, version)? {
-        eprintln!("Reusing Graffitty on {host}.");
-        return Ok(found);
+        if let Probe::Executable(path) = found {
+            eprintln!("Reusing Graffitty on {host}.");
+            return Ok(path);
+        } else {
+            if platform.os != std::env::consts::OS || platform.arch != std::env::consts::ARCH {
+                return Err("The running owner has no installed SSH helper. Supply a matching --server-binary PATH.".into());
+            }
+            return platform.upload_binary(host, &std::env::current_exe()?);
+        }
     }
     let tag = format!("v{version}");
     if !installer::valid_tag(&tag) {
@@ -295,6 +302,7 @@ pub(super) fn resolve(
     let installed = || {
         platform
             .probe(host, version)?
+            .and_then(|probe| match probe { Probe::Executable(path) => Some(path), Probe::Running => None })
             .ok_or_else(|| format!("The installer on {host} did not provide gft {version}").into())
     };
     let releases = release::Releases::configured()?;
@@ -376,7 +384,8 @@ mod tests {
         let start = decode_powershell(&win.start_command(r"C:\O'Brien\tools\gft.exe"));
         assert!(start.contains(r"$server='C:\O''Brien\tools\gft.exe'"));
         assert!(start.contains("$info.FileName = $server"));
-        assert!(start.contains(" server --listen "));
+        assert!(start.contains(" server --ssh-owner --connection "));
+        assert!(start.contains("--ssh-attach"));
         assert_eq!(win.asset().unwrap(), "graffitty-windows-x64.zip");
         assert!(platform("windows", "aarch64").asset().is_err());
     }
@@ -470,7 +479,7 @@ mod tests {
             let cmd = platform("linux", "aarch64").probe_command("1.2.3");
             let probe = || shell(home.path(), &cmd, Path::new("/usr/bin:/bin"));
             fs2::FileExt::lock_exclusive(&lock).unwrap();
-            assert_eq!(probe().stdout, b"running\n{}");
+            assert_eq!(probe().stdout, b"running\n");
             drop(lock);
             let stale = probe();
             assert!(stale.status.success() && stale.stdout.is_empty());
@@ -483,14 +492,20 @@ mod tests {
             executable(
                 &bin,
                 r#"#!/bin/sh
-case "$2" in
-    --listen)
+if [ "$2" = --ssh-owner ]; then
+    shift
+fi
+case "$4" in
+    "")
         sleep 0.2
-        printf '{}\n' > "$5"
+        printf 'private\n' > "$3"
         ;;
-    --connection)
+    --status)
         if [ ! -s "$3" ]; then touch "$HOME/early-status"; exit 1; fi
         cat "$3"
+        ;;
+    --ssh-attach)
+        echo "{}"
         ;;
 esac"#,
             );

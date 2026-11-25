@@ -146,7 +146,7 @@ impl GraphState {
                 if failed
                     || matches!(
                         row.status.as_str(),
-                        "sent to receiver" | "submitted" | "delivered"
+                        "sent to receiver" | "submitted" | "delivered" | "transcript read"
                     )
                 {
                     changes.transfers.push(Transfer {
@@ -309,6 +309,18 @@ mod tests {
     fn row(status: &str, pending: bool) -> Value {
         json!({"event_id":"e","source":"t1","target":"t2","edge_revision":1,"edge":"t1/send>t2/in", "pending":pending,
         "status":status,"queued_at":1.,"updated_at":2.})
+    }
+    #[test]
+    fn transcript_read_pulses_once_and_imported_history_stays_quiet() {
+        let mut state = GraphState::default();
+        let mut graph = snapshot();
+        state.receive(1, graph.clone()).unwrap();
+        graph["journal"]["events"] = json!([row("transcript read", false)]);
+        let changes = state.receive(1, graph.clone()).unwrap();
+        assert_eq!(changes.transfers.len(), 1);
+        assert!(!changes.transfers[0].failed);
+        assert!(state.receive(1, graph.clone()).unwrap().transfers.is_empty());
+        assert!(GraphState::default().receive(1, graph).unwrap().transfers.is_empty());
     }
     #[test]
     fn atomic_receive_rejects_malformed_packets_and_keeps_exact_integers() {

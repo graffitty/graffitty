@@ -10,7 +10,7 @@ use graffitty_transport::client::{validate_ssh_destination, validate_ssh_session
 use serde_json::{Value, json};
 use std::{
     fs::{self, File, OpenOptions},
-    io::Write,
+    io::{Read, Write},
     net::TcpListener,
     path::{Path, PathBuf},
     process::{Child, Command, Stdio},
@@ -18,8 +18,16 @@ use std::{
     time::{Duration, Instant},
 };
 type Error = Box<dyn std::error::Error>;
+static BATCH: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
+fn batch_options(command: &mut Command) {
+    if BATCH.load(std::sync::atomic::Ordering::Relaxed) {
+        command.args(["-o", "BatchMode=yes", "-o", "StrictHostKeyChecking=yes"]);
+        command.stdin(Stdio::null());
+    }
+}
 fn ssh(host: &str) -> Command {
     let mut cmd = Command::new("ssh");
+    batch_options(&mut cmd);
     cmd.args([
         "-o",
         "ConnectTimeout=15",
@@ -37,7 +45,9 @@ fn ssh(host: &str) -> Command {
 /// a child powershell.exe, so uploads cannot be piped through a command
 /// there.
 fn upload_windows(host: &str, local: &Path, name: &str) -> Result<(), Error> {
-    let status = Command::new("scp")
+    let mut command = Command::new("scp");
+    batch_options(&mut command);
+    let status = command
         .args(["-q", "-o", "ConnectTimeout=15", "-o", "ServerAliveInterval=15", "-o", "ServerAliveCountMax=3"])
         .arg(local)
         .arg(format!("{host}:{name}"))
@@ -60,10 +70,8 @@ fn output(host: &str, script: &str) -> Result<String, Error> {
 }
 fn prepare(host: &str, binary: Option<&Path>) -> Result<Value, Error> {
     let platform = deploy::Platform::detect(host)?;
-    let result = match deploy::resolve(host, &platform, binary)? {
-        deploy::Resolved::Running(descriptor) => descriptor,
-        deploy::Resolved::Executable(path) => output(host, &platform.start_command(&path))?,
-    };
+    let path = deploy::resolve(host, &platform, binary)?;
+    let result = output(host, &platform.start_command(&path))?;
     let descriptor: Value = serde_json::from_str(&result)?;
     if descriptor["protocol"] != graffitty_protocol::VERSION || descriptor["token"].as_str().is_none() {
         return Err("Unsupported server descriptor".into());
@@ -74,11 +82,7 @@ fn prepare(host: &str, binary: Option<&Path>) -> Result<Value, Error> {
 fn remote_port(descriptor: &Value) -> Result<u16, Error> {
     let url = descriptor["url"].as_str().ok_or("Missing server URL")?;
     if url.starts_with("ipc://") {
-        return Err(concat!(
-            "The running server has no remote listener. Enable Remote Access on the remote computer, ",
-            "or start a new server with `gft server --listen 127.0.0.1:0`. ",
-            "Existing sessions are still running; do not kill the server to reconnect."
-        ).into());
+        return Err("The SSH attachment helper must return a loopback WebSocket endpoint".into());
     }
     let address: std::net::SocketAddr = url
         .strip_prefix("ws://")
@@ -252,6 +256,7 @@ struct Tunnel {
 impl Tunnel {
     fn command(host: &str, port: u16, remote: u16) -> Command {
         let mut command = Command::new("ssh");
+        batch_options(&mut command);
         command.args([
             "-N",
             "-T",
@@ -366,13 +371,33 @@ pub fn run(command: RemoteCommand) -> Result<(), Error> {
     for host in hosts {
         validate_ssh_destination(host)?;
     }
+    if options.stdio && (options.terminal || options.no_gui || hosts.len() != 1) {
+        return Err("--stdio requires one host and cannot be combined with --terminal or --no-gui".into());
+    }
+    if options.stdio {
+        BATCH.store(true, std::sync::atomic::Ordering::Relaxed);
+        // The GUI can retry in an interactive terminal for trust or login prompts.
+        let probe = ssh(&hosts[0]).arg("exit 0").output()?;
+        if !probe.status.success() {
+            eprintln!("{}", String::from_utf8_lossy(&probe.stderr).trim());
+            std::process::exit(77);
+        }
+    }
     if options.terminal {
         return terminal::launch(&options);
     }
-    let RemoteConnect { hosts, alias, workspace, server_binary, no_gui, .. } = options;
+    let RemoteConnect { hosts, alias, workspace, server_binary, no_gui, stdio, .. } = options;
     let running = std::sync::Arc::new(std::sync::atomic::AtomicBool::new(true));
     let stop = running.clone();
     ctrlc::set_handler(move || stop.store(false, std::sync::atomic::Ordering::Relaxed))?;
+    if stdio {
+        let stop = running.clone();
+        thread::spawn(move || {
+            let mut buffer = [0; 256];
+            while matches!(std::io::stdin().read(&mut buffer), Ok(n) if n > 0) {}
+            stop.store(false, std::sync::atomic::Ordering::Relaxed);
+        });
+    }
     let mut tunnels = Vec::new();
     let mut connections = vec![];
     let mut controller = None;
@@ -388,6 +413,7 @@ pub fn run(command: RemoteCommand) -> Result<(), Error> {
                 if Instant::now() >= deadline { return Err("SSH tunnel did not become ready".into()); }
                 thread::sleep(Duration::from_millis(25));
             }
+            if descriptor["token"] == "" { return Err("This server requires its configured password; connect through the GUI".into()); }
             let authenticated = graffitty_transport::authenticate(&url, descriptor["token"].as_str().ok_or("Missing server password")?, None)
                 .map_err(|e| e.to_string())?;
             let graffitty_transport::Authentication::Connected(transport) = authenticated else {
@@ -398,6 +424,15 @@ pub fn run(command: RemoteCommand) -> Result<(), Error> {
         }
         connections.push(json!({"name":host,"alias":alias.as_deref().unwrap_or(""),"credential_id":identity,"transient":true,"url":url,"token":descriptor["token"],"initial_session":workspace}));
         tunnels.push(tunnel);
+    }
+    if stdio {
+        println!("{}", json!({"connections":connections}));
+        std::io::stdout().flush()?;
+        while running.load(std::sync::atomic::Ordering::Relaxed) {
+            for tunnel in &mut tunnels { tunnel.poll()?; }
+            thread::sleep(Duration::from_millis(100));
+        }
+        return Ok(());
     }
     let path = std::env::temp_dir().join(format!(
         "graffitty-connections-{}.json",
@@ -446,8 +481,7 @@ mod tests {
         let error = remote_port(&json!({"url":"ipc:///tmp/session.sock"}))
             .unwrap_err()
             .to_string();
-        assert!(error.contains("no remote listener"));
-        assert!(error.contains("Existing sessions are still running"));
+        assert!(error.contains("loopback WebSocket"));
     }
 
     #[test]

@@ -139,6 +139,25 @@ class LastSessionShutdownTests(unittest.TestCase):
             self.cli(owner, "server", "stop", "--kill-sessions")
             self.assert_stopped(owner, panes)
 
+    def test_ssh_attach_reuses_private_owner_and_preserves_empty_shutdown(self):
+        with self.owner() as owner:
+            peer = Peer(owner.local, "ssh-existing")
+            self.addCleanup(peer.socket.close)
+            panes = peer.topology["panes"]
+            self.watch_panes(owner, panes)
+            command = [owner.binary, "server", "--connection", str(owner.descriptor), "--ssh-attach"]
+            def attach():
+                result = subprocess.run(command, env=owner.env, capture_output=True, text=True, timeout=10)
+                self.assertEqual(result.returncode, 0, result.stderr)
+                return json.loads(result.stdout)
+            first = attach()
+            self.assertEqual(first, attach())
+            self.assertEqual(first["pid"], owner.process.pid)
+            self.assertTrue(first["url"].startswith("ws://127.0.0.1:"))
+            self.assertEqual(peer.sync()["panes"][0]["pid"], panes[0]["pid"])
+            self.cli(owner, "session", "kill", "-t", "ssh-existing")
+            self.assert_stopped(owner, panes)
+
     def test_stop_empty_server(self):
         with self.owner() as owner:
             self.cli(owner, "server", "stop")

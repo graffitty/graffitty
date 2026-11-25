@@ -147,7 +147,7 @@ func open_remote_server(source: Node, settings: Dictionary, in_new_window := fal
 	window.add_child(client)
 	window.show()
 	window.grab_focus()
-	if in_new_window:
+	if in_new_window and not client._ssh_login():
 		var manager := show_servers(client)
 		manager.open_when_ready = true
 	return client

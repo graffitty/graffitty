@@ -1937,6 +1937,7 @@ dependencies = [
  "fs2",
  "graffitty-chromium-video",
  "graffitty-dictation-audio",
+ "graffitty-graph-protocol",
  "graffitty-platform",
  "graffitty-protocol",
  "graffitty-remote-auth",

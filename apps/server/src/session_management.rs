@@ -18,6 +18,7 @@ pub fn handles(method: &str) -> bool {
             | "server.stop"
             | "server.restart"
             | "server.status"
+            | "server.ssh_attach"
     )
 }
 
@@ -293,6 +294,15 @@ pub fn dispatch(server: &mut Server, request: &Value) -> Result<Value, Error> {
         let command = server.holders.as_ref().map(|holders| holders.restart_command());
         save_environment(server)?;
         return Ok(json!({"restarting":true,"terminals":held,"command":command}));
+    }
+    if method == "server.ssh_attach" {
+        if server.ssh_listener.is_none() {
+            server.ssh_listener = Some(crate::network_listener("127.0.0.1:0")?);
+        }
+        if let Some(since) = &mut server.ssh_idle_since { *since = std::time::Instant::now(); }
+        let address = server.ssh_listener.as_ref().unwrap().local_addr()?;
+        return Ok(json!({"url":format!("ws://{address}"), "token":server.remote_token,
+            "protocol":graffitty_protocol::VERSION, "pid":std::process::id()}));
     }
     if method == "server.status" {
         // Terminals started under an earlier build stay with that build's

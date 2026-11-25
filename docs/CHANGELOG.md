@@ -5,8 +5,10 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [v0.0.5] - 2026-11-24
+### :sparkles: New Features
+- improve remote connections, session navigation and graph activity ([#6](https://github.com/graffitty/graffitty/pull/6)).
+
 ### :bug: Bug Fixes
-- apply remote access settings live and repair mobile navigation, text selection and agent captions ([#6](https://github.com/graffitty/graffitty/pull/6)).
 - **chromium**: send virtual-key codes for punctuation keys ([#5](https://github.com/graffitty/graffitty/pull/5)).
 
 ## [v0.0.4] - 2026-11-24

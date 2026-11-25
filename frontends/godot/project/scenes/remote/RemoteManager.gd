@@ -352,7 +352,7 @@ func _load_connections() -> void:
 	for settings in Authentication.launch_connections(args): open_connection(settings)
 	if use_saved:
 		for settings in Authentication.saved_connections():
-			if settings is Dictionary and settings.get("url") is String:
+			if settings is Dictionary and settings.get("url") is String and not str(settings.url).begins_with("ssh://"):
 				var key := _connection_key(settings)
 				if not entries.has(key): _remember_entry(settings, "disconnected", "Ready to connect")
 		if preload("res://scenes/input/InteractionProfile.gd").touch_controls():

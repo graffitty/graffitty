@@ -1064,3 +1064,35 @@ fn discovery_unknown_never_replaces_lifecycle_status_after_a_restart() {
     g.observe_agent(1, &json!({"provider":"pi","pid":8,"status":"unknown"}));
     assert_eq!(g.nodes["t1"]["status"], "unknown");
 }
+
+#[test]
+fn transcript_reads_use_the_granting_wire_without_sending_messages() {
+    let mut graph = Graph::default();
+    for id in 1..=2 {
+        graph.add(id, format!("Agent {id}"));
+        graph.dispatch(id, "agent.event", &json!({"event":"SessionStart","provider":"codex","pid":id,"session_id":format!("s{id}")})).unwrap();
+    }
+    graph.record_read("t1", "t2");
+    graph.record_read("t1", "t1");
+    assert!(graph.receipts.is_empty());
+    for port in ["turn_completed", "read"] {
+        graph.dispatch(1, "graph.connect", &json!({"from":"t1","from_port":port,"to":"t2"})).unwrap();
+    }
+    graph.record_read("t1", "t2");
+    assert_eq!(graph.receipts.len(), 1);
+    assert_eq!(graph.receipts[0]["edge"], "t1/read>t2/in");
+    assert_eq!(graph.receipts[0]["status"], "transcript read");
+    assert!(graph.queues.values().all(|q| q.is_empty()));
+    assert!(graph.runs.is_empty());
+    for edge in graph.edges.values_mut() { edge["muted"] = json!(true); }
+    graph.record_read("t1", "t2");
+    assert_eq!(graph.receipts.len(), 1);
+    for edge in graph.edges.values_mut() { edge["muted"] = json!(false); edge["stop_at"] = json!(1.0); }
+    graph.record_read("t1", "t2");
+    assert_eq!(graph.receipts.len(), 1);
+    for edge in graph.edges.values_mut() {
+        if edge["turn_completed"] == true { edge.as_object_mut().unwrap().remove("stop_at"); }
+    }
+    graph.record_read("t1", "t2");
+    assert_eq!(graph.receipts[1]["edge"], "t1/turn_completed>t2/in");
+}

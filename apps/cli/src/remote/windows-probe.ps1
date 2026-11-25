@@ -18,7 +18,7 @@ if ([IO.File]::Exists($descriptor) -and [IO.File]::Exists($lockFile)) {
         $lock.Lock(0, 1)
     } catch [IO.IOException] {
         if (($_.Exception.GetBaseException().HResult -band 65535) -ne 33) { throw }
-        [Console]::WriteLine("running`n" + [IO.File]::ReadAllText($descriptor))
+        [Console]::WriteLine("running")
     } finally {
         $lock.Dispose()
     }

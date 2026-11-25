@@ -118,7 +118,7 @@ impl Flow {
                 && self.known.get(id).map(String::as_str) != Some(status)
             {
                 let failed = status.starts_with("failed") || status.starts_with("cancel");
-                if failed || matches!(status, "sent to receiver" | "submitted" | "delivered") {
+                if failed || matches!(status, "sent to receiver" | "submitted" | "delivered" | "transcript read") {
                     self.pulses.retain(|pulse| pulse.event_id != id);
                     let edge = event_edge(row);
                     if failed || live.contains(&edge) {
@@ -191,6 +191,17 @@ mod tests {
         json!({"event_id":"e1","source":"t1","target":"t2","source_port":"answer","target_port":"prompt","edge":"t1/answer>t2/prompt","status":status,"pending":pending})
     }
 
+    #[test]
+    fn transcript_read_runs_a_successful_pulse() {
+        let mut flow = Flow::default();
+        let mut graph = graph();
+        flow.update(&graph, 0., 100.);
+        graph["journal"]["events"] = json!([event("transcript read", false)]);
+        flow.update(&graph, 0., 100.);
+        assert_eq!(flow.pulses.len(), 1);
+        assert!(!flow.pulses[0].failed);
+        assert!(flow.waiting.is_empty());
+    }
     #[test]
     fn imported_history_is_quiet_and_each_transport_transition_runs_once() {
         let mut flow = Flow::default();

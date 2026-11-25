@@ -47,6 +47,23 @@ func test_groups_include_local_and_every_remote_without_duplicate_sessions() -> 
 	parent.free()
 	for peer in peers: peer.free()
 
+class SshClient extends Node:
+	var settings := {"url": "ws://127.0.0.1:34051", "transient": true, "credential_id": "ssh:fixture"}
+
+func test_ssh_tunnel_and_saved_destination_share_one_desktop_group() -> void:
+	var client := SshClient.new()
+	var host := Host.new()
+	var peer := Peer.new()
+	peer.url = client.settings.url
+	host.session_backend.connection = peer
+	client.add_child(host)
+	client.add_child(peer)
+	var saved := [{"url": "ssh://fixture"}]
+	var groups := Model.collect([host], saved, true)
+	expect(groups.size() == 2 and groups[1].id == "ssh://fixture" and groups[1].peer == peer, "SSH destination groups the live tunnel with its saved desktop row")
+	expect(Model.collect([], saved, false).is_empty(), "Mobile omits desktop SSH profiles")
+	client.free()
+
 func test_each_window_highlights_only_the_session_it_shows() -> void:
 	var parent := Node.new()
 	var windows: Array = []

@@ -264,7 +264,7 @@ impl Inspector {
                 let source=string(row,"status");
                 let failed=source.starts_with("failed") || source.starts_with("cancel failed")
                     || source.starts_with("cancellation unconfirmed: ") || source.starts_with("delivery unconfirmed: ");
-                let sent=matches!(source,"sent to receiver" | "submitted" | "delivered");
+                let sent=matches!(source,"sent to receiver" | "submitted" | "delivered" | "transcript read");
                 let icon=if failed {"[!]"}else if source.starts_with("cancelled"){"[-]"}
                     else if row["pending"]==true {if source=="queued in Graffitty" {"[ ]"}else{"[~]"}}
                     else if sent {"[x]"}else{"[?]"};

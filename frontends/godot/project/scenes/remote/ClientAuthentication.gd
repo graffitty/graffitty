@@ -20,6 +20,14 @@ static func saved_connections() -> Array:
 	return read_connections().get("connections", [])
 
 
+## The SSH process owns its temporary WebSocket. Only its destination identifies the profile.
+static func profile_url(settings: Dictionary) -> String:
+	var identity := str(settings.get("credential_id", ""))
+	if settings.get("transient", false) and identity.begins_with("ssh:") and identity.length() > 4:
+		return "ssh://" + identity.substr(4)
+	return str(settings.get("url", ""))
+
+
 static func launch_connections(args: PackedStringArray) -> Array[Dictionary]:
 	var result: Array[Dictionary] = []
 	for arg in args:
@@ -57,9 +65,12 @@ static func remember(settings: Dictionary, password: String) -> String:
 
 static func save_connection(settings: Dictionary) -> String:
 	if bool(settings.get("transient", false)): return ""
-	var error := normalize_address(settings)
-	if not error.is_empty(): return error
+	var ssh := str(settings.url).begins_with("ssh://")
+	if not ssh:
+		var error := normalize_address(settings)
+		if not error.is_empty(): return error
 	var entry := {"alias": settings.get("alias", ""), "chromium_stream": settings.get("chromium_stream", {}), "url": settings.url, "name": settings.get("name", ""), "hostname": settings.get("hostname", ""), "platform": settings.get("platform", ""), "username": settings.get("username", ""), "remember": bool(settings.get("remember", false))}
+	if ssh: entry.initial_session = str(settings.get("initial_session", ""))
 	var result: Dictionary = JSON.parse_string(ClassDB.instantiate("RemoteAuth").save_connection(connection_path(), entry))
 	if result.has("connection"): settings.alias = result.connection.alias
 	if str(result.get("error", "")).is_empty(): _notify_connections()
@@ -74,12 +85,7 @@ static func normalize_address(settings: Dictionary) -> String:
 
 
 static func remove_connection(settings: Dictionary) -> String:
-	var loaded := read_connections()
-	if loaded.has("error"): return str(loaded.error)
-	var entries: Array = loaded.connections.filter(func(entry): return entry is Dictionary and entry.get("url") != settings.url)
-	var result := Store.new().credential("delete", account(str(settings.url), str(settings.get("credential_id", ""))))
-	if not result.get("ok", false): return str(result.get("error", "Cannot remove saved password"))
-	return _save(entries)
+	return forget(str(settings.url), str(settings.get("credential_id", "")))
 
 
 static func clear_password(url: String, credential_id := "") -> String:
@@ -88,18 +94,13 @@ static func clear_password(url: String, credential_id := "") -> String:
 
 
 static func forget(url: String, credential_id := "") -> String:
-	var loaded := read_connections()
-	if loaded.has("error"): return str(loaded.error)
-	var result := Store.new().credential("delete", account(url, credential_id))
-	if not result.get("ok", false):
-		return str(result.get("error", "System credential store operation failed"))
-	return _save(loaded.connections.filter(func(entry): return entry is Dictionary and entry.get("url") != url))
-
-
-static func _save(entries: Array) -> String:
-	var result: Dictionary = JSON.parse_string(ClassDB.instantiate("RemoteAuth").save_connections(connection_path(), entries))
-	if str(result.get("error", "")).is_empty(): _notify_connections()
+	if not url.begins_with("ssh://"):
+		var error := clear_password(url, credential_id)
+		if not error.is_empty(): return error
+	var result: Dictionary = JSON.parse_string(ClassDB.instantiate("RemoteAuth").remove_connection(connection_path(), url))
+	if result.get("changed", false): _notify_connections()
 	return str(result.get("error", ""))
+
 
 static func _notify_connections() -> void:
 	var tree := Engine.get_main_loop() as SceneTree
@@ -111,6 +112,14 @@ static func password(url: String, credential_id := "") -> Dictionary:
 
 
 static func bind(owner: Node, connection: Node, settings: Dictionary, remember_password: bool, on_save_error: Callable) -> void:
+	var url := profile_url(settings)
+	if url.begins_with("ssh://"):
+		connection.session_switched.connect(func():
+			var result: Dictionary = JSON.parse_string(ClassDB.instantiate("RemoteAuth").update_saved_session(connection_path(), url, connection.workspace))
+			if result.has("error"): on_save_error.call(str(result.error))
+			elif result.get("changed", false):
+				_notify_connections()
+				owner.get_tree().call_group_flags(SceneTree.GROUP_CALL_DEFERRED, &"server_order_views", &"saved_servers_reordered"))
 	connection.authenticated.connect(func():
 		for field in ["hostname", "platform", "username"]:
 			settings[field] = connection.get("server_" + field)
