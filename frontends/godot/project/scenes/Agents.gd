@@ -456,6 +456,10 @@ func _reveal(host: Node, key: String) -> void:
 		client.get_parent().reveal_pane(key)
 	else:
 		host.reveal_pane(key)
+	# Share prefix navigation's framing: return tiled panes to Main, or pan
+	# clipped/offscreen panes into view without fitting one pane to the screen.
+	if is_instance_valid(host.workspace_view):
+		host.workspace_view.reveal_navigation_target(key)
 
 ## Switch the server's view to the agent's session, then focus its pane once
 ## the new topology presents it.
