@@ -9,7 +9,7 @@ var traces: Array = []
 func settled(host: Node) -> bool:
 	return not host.session_switch_in_progress and host.world.tab_fx_t < 0.0 and not host.world.tab_fx_preparing
 
-func prepare(host: Node, name: String, offset: float) -> void:
+func prepare(host: Node, name: String, offset: float, zoom := .55) -> void:
 	await client.connection.request_action("session_switch", {"name": name})
 	if not await until(func(): return settled(host) and host.active_terminal() != null):
 		check(false, "Prepare " + name)
@@ -24,7 +24,7 @@ func prepare(host: Node, name: String, offset: float) -> void:
 	pane["graph_floating"] = true
 	view.overview = true
 	view.navigation_center = Vector2(offset + 700, 550)
-	view.navigation_zoom = .55
+	view.navigation_zoom = zoom
 	view.refresh()
 	view._apply_navigation()
 	host.session_backend.commit_workspace(host)
@@ -61,7 +61,7 @@ func run() -> void:
 		quit(1)
 		return
 	var host: Node = client.host
-	for mode in [["flat-2d", "fly_away_and_in"], ["", "fly_away_and_in"], ["flat-2d", "fly_away"], ["", "fly_away"]]:
+	for mode in [["flat-2d", "fly_away_and_in"], ["flat-3d", "fly_away_and_in"], ["flat-2d", "fly_away"], ["flat-3d", "fly_away"]]:
 		var path: String = mode[0]
 		var effect: String = mode[1]
 		check(host.switch_world(path), "Open " + path)
@@ -70,7 +70,7 @@ func run() -> void:
 		host.set_session_transition_effect("none")
 		await prepare(host, "beta", -2400)
 		await snapshot(host, prefix + "destination")
-		await prepare(host, "alpha", 2000)
+		await prepare(host, "alpha", 2000, 1.0)
 		host.set_session_transition_effect(effect)
 		await client.connection.request_action("session_switch", {"name":"beta"})
 		var world: Node = host.world
@@ -81,9 +81,30 @@ func run() -> void:
 			quit(1)
 			return
 		world.set_process(false)
+		var projection_stable := true
+		var checked_frames := 0
 		while world.tab_fx_t < world.tab_fx_dur:
 			world._process(minf(1.0 / 60, world.tab_fx_dur - world.tab_fx_t))
+			if path == "flat-2d" and is_instance_valid(world._transition_out):
+				var layer: Node2D = world._transition_out
+				projection_stable = projection_stable and layer.screen_space and layer.global_transform.is_equal_approx(layer.depth_projection)
+				checked_frames += 1
+			elif path == "flat-3d":
+				for layer in world.tab_fx_out:
+					if not layer.get_meta("transition_screen_space", false):
+						projection_stable = false
+						continue
+					var reference: Transform3D = layer.get_meta("transition_camera")
+					var captured: Vector4 = layer.get_meta("transition_frustum")
+					var presentation: Transform3D = layer._material().get_shader_parameter("flight_camera_transform")
+					for point in [Vector3(-1, 1, -5), Vector3(1, -1, -3)]:
+						var original: Vector3 = reference * point
+						var before := screen_fraction(reference, captured, original)
+						var after := screen_fraction(world.cam.global_transform, world.proj_rect, presentation * original)
+						projection_stable = projection_stable and before.distance_to(after) < .0001
+					checked_frames += 1
 			await process_frame
+		check(projection_stable and checked_frames > 2, prefix + "Departure retains its screen scale while saved camera zoom changes")
 		await snapshot(host, prefix + "landed")
 		world._process(0.0)
 		for index in 6:
@@ -96,3 +117,7 @@ func run() -> void:
 	client.queue_free()
 	await process_frame
 	quit(0 if failures.is_empty() else 1)
+
+func screen_fraction(camera: Transform3D, frustum: Vector4, point: Vector3) -> Vector2:
+	var local := camera.affine_inverse() * point
+	return (Vector2(local.x, local.y) / -local.z - Vector2(frustum.x, frustum.y)) / Vector2(frustum.z, frustum.w)

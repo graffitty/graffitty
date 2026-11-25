@@ -17,6 +17,10 @@ func uses_workspace_backdrop() -> bool:
 	return backdrop_fill_viewport and world_mode in ["color", "transparent"]
 
 
+func screen_space_session_flight() -> bool:
+	return session_transition_active
+
+
 func _begin_navigation(prev: int, idx: int, speed: float) -> void:
 	if tab_fx_t >= 0.0: camera_motion.reset(camera_motion.frame)
 	super._begin_navigation(prev, idx, speed)

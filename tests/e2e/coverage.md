@@ -72,6 +72,19 @@ outside Git. The iOS native-only build was queued behind another build's lock
 and canceled without compiling; no Android/iOS device run or installation was
 performed. UI-13 and the shared iOS control checks still require hardware evidence.
 
+## Flat session-flight framing
+
+2026-11-25: Flat 2D/3D retain each departing session's screen projection while
+the live camera restores the next session's zoom. The authored-world kit keeps
+world-space travel. Five terminal-presentation unit tests and the deferred 3D
+projection check passed. The existing private-server landing harness passed
+Fly away and Fly away and in in both Flat renderers with different saved zooms:
+all four cases retained departure framing, and 32 rendered landing/live frames
+met the 96% colored-marker overlap threshold. The Metal scatter-depth smoke
+also passed, including side faces, clipping, landing and interruption checks.
+The macOS background guards passed. These are rendered desktop tests; physical
+mobile acceptance remains pending.
+
 ## Session viewport retention and flight effects (UI-08)
 
 2026-11-14: Fly away and in now prepares the full destination terminal geometry

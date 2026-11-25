@@ -88,6 +88,7 @@ uniform vec3 group_travel_dv;
 uniform bool camera_relative_flight = false;
 uniform mat4 flight_camera_transform;
 uniform vec3 flight_camera_eye;
+uniform mat3 flight_camera_axes = mat3(1.0);
 uniform float fly = 0.0;          // 0 still on the wall, 1 everyone has passed
 uniform float fly_stagger = 0.45; // how much of that is start times, not travel
 uniform float fly_reach = 1.25;   // 1 is exactly the camera; past it is behind you
@@ -304,7 +305,7 @@ void vertex() {
 		}
 		vec3 eye = camera_relative_flight ? flight_camera_eye : CAMERA_POSITION_WORLD;
 		mat3 camera_axes = mat3(INV_VIEW_MATRIX);
-		if (camera_relative_flight) { camera_axes = transpose(mat3(flight_camera_transform)) * camera_axes; }
+		if (camera_relative_flight) { camera_axes = flight_camera_axes; }
 		vec3 camera_centre = transpose(camera_axes) * (group_centre - eye);
 		float depth = max(-camera_centre.z, 0.00001);
 		vec2 sheet_uv = source_sheet_rect.xy + (chunked_flight ? centre_uv : vec2(0.5)) * source_sheet_rect.zw;
@@ -341,7 +342,7 @@ void vertex() {
 		float random = dust_hash(centre_uv * dust_tex_size);
 		vec3 eye = camera_relative_flight ? flight_camera_eye : CAMERA_POSITION_WORLD;
 		mat3 axes = mat3(INV_VIEW_MATRIX);
-		if (camera_relative_flight) { axes = transpose(mat3(flight_camera_transform)) * axes; }
+		if (camera_relative_flight) { axes = flight_camera_axes; }
 		vec3 eye_centre = transpose(axes) * (centre - eye);
 		float depth = max(-eye_centre.z, 0.00001);
 		vec2 sheet_uv = source_sheet_rect.xy + centre_uv * source_sheet_rect.zw;

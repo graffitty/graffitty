@@ -18,6 +18,7 @@ var ui_groups: Array[Node2D] = []
 var dust_mode := false
 var effect_control: RefCounted
 var depth_mode := false
+var screen_space := false
 var depth_direction := 1.0
 var depth_center := Vector2.ZERO
 var depth_projection := Transform2D.IDENTITY
@@ -73,6 +74,7 @@ func build(world: Node) -> void:
 	dust_mode = world.dust_effect()
 	effect_control = world.effect_control
 	depth_mode = world.depth_effect()
+	screen_space = world.screen_space_session_flight()
 	depth_direction = world.tab_fx_direction
 	depth_center = world.camera_2d.position
 	depth_projection = get_parent().global_transform
@@ -285,13 +287,14 @@ func ui_group(center: Vector2, extent: Vector2) -> Node2D:
 
 func set_progress(value: float) -> void:
 	progress = clampf(value, 0.0, 1.0)
+	if depth_mode or screen_space:
+		transform = get_parent().global_transform.affine_inverse() * depth_projection
 	if depth_mode:
 		var phase := DepthMotion.phase(progress)
 		var magnification := DepthMotion.magnification(progress, depth_direction, arriving)
 		var opacity := (1.0 - phase) * (1.0 - DepthMotion.phase(depth_retirement / DepthMotion.RETIRE_DURATION) if depth_retirement >= 0.0 else 1.0)
 		# Cancel the live camera's saved pan/zoom. The whole captured workspace
 		# keeps its original projection and moves with one common dolly scale.
-		transform = get_parent().global_transform.affine_inverse() * depth_projection
 		for group in pane_groups + ui_groups:
 			group.position = depth_center + (Vector2(group.get_meta("depth_origin")) - depth_center) * magnification
 			group.scale = Vector2(group.get_meta("depth_scale")) * magnification

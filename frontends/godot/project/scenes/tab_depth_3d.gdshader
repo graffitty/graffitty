@@ -24,6 +24,7 @@ uniform bool arrival_flight = false;
 uniform bool camera_relative_flight = false;
 uniform mat4 flight_camera_transform;
 uniform vec3 flight_camera_eye;
+uniform mat3 flight_camera_axes = mat3(1.0);
 uniform float ink_gain = 1.0;
 uniform float exposure_compensation = 1.0;
 #include "piece_sheet_projection.gdshaderinc"

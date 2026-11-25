@@ -30,7 +30,13 @@ error and keep the current terminal usable. Create a detached session and
 verify that it appears in the live menu without switching the current view.
 Keep the owner and client binaries frozen and retain screenshots and transcripts.
 
-Repeat with **Fly away** and **Fly away and in** in Flat 2D and a 3D world.
+Repeat with **Fly away** and **Fly away and in** in Flat 2D, Flat 3D, and an
+authored scenery world. In both Flat renderers, switch from Main View to a
+zoomed-out session and back: outgoing letters must keep the departing screen's
+scale while flying, without first shrinking or enlarging to the incoming view.
+Incoming pieces use their own session's framing. Repeat during an unfinished
+flight; retiring pieces must remain independent of the new camera. Authored
+worlds such as Bistro and Edinburgh Castle keep their camera-driven travel.
 Camera travel must end at the restored session view. After both sessions have
 been running for two seconds, CPU and RAM must appear with the destination
 panes, including a session never viewed before. Inactive terminal sessions keep
