@@ -9,7 +9,7 @@ const API_VERSION := 1
 const UserConfig := preload("res://config/UserConfig.gd")
 const Paths := preload("res://graffitty/paths.gd")
 const WorldConfig := preload("res://graffitty/world_config.gd")
-## Built-in world paths. Mobile defaults to Flat 2D; desktop to Flat 3D.
+## Built-in world paths. Flat 2D is the default on every platform.
 const FLAT_3D := "flat-3d"
 const FLAT_2D := "flat-2d"
 const SessionModel := preload("res://scenes/TerminalSession.gd")
@@ -1407,7 +1407,7 @@ func session_count() -> int:
 
 
 static func default_world() -> String:
-	return FLAT_2D if OS.has_feature("mobile") else FLAT_3D
+	return FLAT_2D
 
 
 ## A world value without a path separator or `.pck` suffix is a world id:

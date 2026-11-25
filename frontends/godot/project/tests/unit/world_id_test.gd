@@ -21,6 +21,8 @@ func test_discovered_world_ids_resolve_to_their_path() -> void:
 		JSON.stringify({ "api": Host.API_VERSION, "id": "test-id-world", "name": "Test" }))
 	OS.set_environment("XDG_DATA_HOME", data)
 	var host = Host.new()
+	expect(Host.default_world() == "flat-2d", "An unconfigured workspace starts in Flat 2D")
+	expect(host.resolve_world("flat-3d") == "flat-3d", "Flat 3D can still be selected explicitly")
 	expect(host.resolve_world("test-id-world") == pack, "An id resolves to the discovered pack")
 	expect(host.resolve_world("flat-2d") == "flat-2d", "Built-in ids stay as they are")
 	expect(host.resolve_world(pack) == pack, "Paths stay as they are")
