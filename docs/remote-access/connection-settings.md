@@ -67,3 +67,11 @@ For several hosts, pass their SSH aliases together:
 ```sh
 gft remote connect build-server home-pc laptop
 ```
+
+## Plain `ssh` from a Graffitty terminal
+
+If you run `ssh user@remote-host` inside a terminal pane, install the Ghostty terminfo once on that host so shell programs recognize the terminal. This command writes to `~/.terminfo` on the remote host:
+
+```sh
+infocmp -x xterm-ghostty | ssh user@remote-host -- tic -x -
+```

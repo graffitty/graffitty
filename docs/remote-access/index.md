@@ -1,11 +1,10 @@
 # Remote access
 
-Use another computer's terminals, browsers, and agents from desktop or Android.
-Programs keep running there when you disconnect.
+The **Graffitty server** runs your terminals, browsers, and agents on the remote computer. Your Graffitty client connects to that server either directly by IP address or through an SSH tunnel. Choose one connection method. Your programs keep running when you disconnect.
 
-## Connect to a Graffitty server (recommended)
+## Connect directly to the Graffitty server
 
-On the computer that will run your sessions, choose **one** way to enable sharing.
+On the remote computer, enable sharing using **one** of these methods.
 
 **Desktop GUI** — Open **Sessions → Remote Access Settings…** and turn on **Enable remote access**. Enter the host’s LAN or Tailscale IP, leave the port at `7183`, choose a password mode, and select **Save**.
 
@@ -35,26 +34,15 @@ gft server --listen 192.0.2.10:7183
 
 Sharing is off by default. Android requires a server and has no local terminal mode.
 
-## Connect over SSH instead
+## Connect to the Graffitty server through an SSH tunnel
+
+If you have SSH access to the remote computer, run this on your **client computer**:
 
 ```sh
 gft remote connect user@remote-host
 ```
 
-`user@remote-host` is an SSH destination. Graffitty reuses the same version
-if it is already installed there. Otherwise it runs the standard installer
-for the remote OS and CPU. If the remote cannot download the release, your
-computer uploads it over SSH. The connection uses an SSH tunnel, so you only
-need SSH access to the remote. See [connection settings](connection-settings.md#set-up-the-server-over-ssh).
-
-## Plain `ssh` from a Graffitty terminal
-
-Graffitty uses Ghostty, so remote computers need its terminfo. Run this once
-per remote; it installs to `~/.terminfo` there:
-
-```sh
-infocmp -x xterm-ghostty | ssh user@remote-host -- tic -x -
-```
+Graffitty installs the server if needed, starts or reuses it on the remote computer, and connects your client to it through the tunnel. Only the SSH port needs to be reachable. [SSH setup details](connection-settings.md#set-up-the-server-over-ssh)
 
 ## Leave safely
 
@@ -71,4 +59,5 @@ Input typed during a network outage is discarded.
 - [Passwords and optional login codes](authentication.md).
 - [Saved servers and remote CLI targets](saved-servers.md).
 - [Browsers, Android controls, and uploads](connected-workspace.md).
+- [Terminal setup for a regular SSH shell](connection-settings.md#plain-ssh-from-a-graffitty-terminal).
 - [Encryption details](connection-settings.md#understand-encryption).
