@@ -2,6 +2,8 @@
 
 Manage connections after [setting up remote access](index.md).
 
+On iPhone and iPad, tap **‹** immediately to the left of the tab strip’s **⌄** menu to return to the server list. Your sessions keep running.
+
 ## Remember an SSH host
 
 Connect once with `gft remote connect user@computer`. In **Sessions → Servers…**, choose **Save SSH host** on its card.
