@@ -2501,11 +2501,7 @@ func _files_dropped(files: PackedStringArray) -> void:
 	if target == null:
 		return
 	if not str(target.get_ui_state().get("modal", "")).is_empty(): return
-	var shell: String = session_model(active_session_id).shell.replace("\\", "/").get_file().to_lower().trim_suffix(".exe")
-	var quoted := PackedStringArray()
-	for path in files:
-		quoted.append("'" + path.replace("'", "''" if shell in ["pwsh", "powershell"] else "'\"'\"'") + "'")
-	target.paste_text(" ".join(quoted))
+	target.paste_files(files)
 
 
 func select_workspace(id: int, instant := false) -> void:

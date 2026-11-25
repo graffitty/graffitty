@@ -14234,6 +14234,19 @@
       "nb": "Opplasting mislyktes",
       "sv": "Uppladdningen misslyckades",
       "da": "Upload mislykkedes"
+    },
+    "Could not paste files": {
+      "en-US": "Could not paste files",
+      "fr": "Impossible de coller les fichiers",
+      "pt-BR": "Não foi possível colar os arquivos",
+      "es": "No se pudieron pegar los archivos",
+      "it": "Impossibile incollare i file",
+      "ko": "파일을 붙여넣을 수 없습니다",
+      "ja": "ファイルを貼り付けられませんでした",
+      "de": "Dateien konnten nicht eingefügt werden",
+      "nb": "Kunne ikke lime inn filene",
+      "sv": "Det gick inte att klistra in filerna",
+      "da": "Filerne kunne ikke indsættes"
     }
   }
 }

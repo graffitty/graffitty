@@ -55,3 +55,22 @@ received/total size, percentage and a progress bar. The same notification stays
 visible throughout the transfer, then uses the normal eight-second lifetime
 after completion. Failures are shown as errors; history retains one entry per
 upload. A CLI-only upload still works without a frontend.
+
+## Drop files and paste from the clipboard
+
+Local file drops and copied files paste their original paths in one operation;
+file contents are not read or copied. Remote drops and copied files upload
+sequentially, then paste the successful destination paths together with a
+trailing space. Files that cannot be read or exceed 32 MiB fail without blocking
+other files. Folders can be pasted locally; remote folder upload is unsupported.
+
+Text paste stays a normal bracketed paste. On a local desktop, an image-only
+clipboard sends Ctrl+V so the foreground program can read the clipboard.
+Remote clipboard images and mobile native image content are uploaded first.
+A macOS screenshot thumbnail is staged even locally because its source is
+short-lived and may be inaccessible to the terminal process.
+
+Typing during upload waits behind the completed path paste; a failed batch
+discards queued input so Enter cannot submit a draft with missing attachments.
+An ordinary `ssh` command inside a local terminal does not change the app's
+local/remote file routing.

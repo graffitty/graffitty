@@ -62,3 +62,41 @@ mod tests {
         assert!(Attachment::image(b"not an image".to_vec()).is_err());
     }
 }
+
+/// Adapted from herdr-app terminal/drag_paths.rs (see NOTICE).
+/// Reject controls even inside quotes: unbracketed paste treats newlines as Enter.
+pub fn quote_paths(paths: &[String], powershell: bool) -> Result<String> {
+    ensure!(!paths.is_empty(), "No files were dropped");
+    let mut quoted = Vec::with_capacity(paths.len());
+    for path in paths {
+        ensure!(!path.is_empty() && !path.chars().any(char::is_control), "Paths containing control characters cannot be pasted safely");
+        quoted.push(format!("'{}'", path.replace('\'', if powershell { "''" } else { "'\\''" })));
+    }
+    Ok(quoted.join(" ") + " ")
+}
+
+/// macOS screenshot thumbnails disappear shortly after dragging. Stage those
+/// through the existing attachment store even for a local terminal.
+pub fn temporary_screenshot(paths: &[String]) -> bool {
+    paths.len() == 1 && Path::new(&paths[0]).is_absolute() && Path::new(&paths[0]).ancestors().skip(1).any(|directory| {
+        directory.file_name().and_then(|name| name.to_str()).is_some_and(|name| name.starts_with("NSIRD_"))
+            && directory.parent().and_then(Path::file_name).is_some_and(|name| name == "TemporaryItems")
+    })
+}
+
+#[cfg(test)]
+mod path_tests {
+    use super::*;
+    #[test]
+    fn paths_are_one_safe_paste_with_a_trailing_space() {
+        let paths = vec!["/work/한글 O'Brien.png".into(), "/work/a b".into()];
+        assert_eq!(quote_paths(&paths, false).unwrap(), "'/work/한글 O'\\''Brien.png' '/work/a b' ");
+        assert_eq!(quote_paths(&paths, true).unwrap(), "'/work/한글 O''Brien.png' '/work/a b' ");
+        for bad in ["", "a\nb", "a\rb", "a\tb", "a\u{1b}b", "a\u{7f}b"] {
+            assert!(quote_paths(&[bad.into()], false).is_err());
+        }
+        assert!(quote_paths(&[], false).is_err());
+        assert!(temporary_screenshot(&["/tmp/TemporaryItems/NSIRD_capture/shot.png".into()]));
+        assert!(!temporary_screenshot(&["/tmp/shot.png".into()]));
+    }
+}

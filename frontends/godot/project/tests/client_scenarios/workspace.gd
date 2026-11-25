@@ -1585,6 +1585,36 @@ finally:
 	await until(func(): return "INPUT_ORDER_MATCH" in text_in(), "Typing during upload follows the completed image")
 	expect(not "PASTE_WRONG" in text_in(),"Paste does not duplicate or execute intermediate lines")
 	terminal().send_text("\u0003")
+	await wait(.3)
+	var files := PackedStringArray()
+	for i in 2:
+		var path := OS.get_cache_dir().path_join("gft-paste-%d-%d.txt" % [OS.get_process_id(), i])
+		var file := FileAccess.open(path, FileAccess.WRITE)
+		file.store_string("file-%d 한글" % i)
+		file.close()
+		files.append(path)
+	run_python("""import os,tty,termios,shlex,pathlib
+old=termios.tcgetattr(0)
+try:
+ tty.setraw(0)
+ os.write(1,b'\\x1b[?2004hFILES_READY\\r\\n')
+ data=b''
+ while b'AFTER_FILES' not in data: data+=os.read(0,4096)
+ body=data.split(b'\\x1b[200~',1)[-1].split(b'\\x1b[201~',1)[0]
+ paths=shlex.split(body.decode())
+ ok=len(paths)==2 and [pathlib.Path(p).read_text() for p in paths]==['file-0 한글','file-1 한글']
+ ok=ok and data==b'\\x1b[200~'+body+b'\\x1b[201~AFTER_FILES' and body.endswith(b' ')
+ os.write(1,b'FILES_MATCH\\r\\n' if ok else b'FILES_WRONG\\r\\n')
+finally:
+ os.write(1,b'\\x1b[?2004l')
+ termios.tcsetattr(0,termios.TCSANOW,old)
+""")
+	if await until(func(): return "FILES_READY" in text_in(), "Batch receiver enables bracketed paste"):
+		terminal().paste_files(files)
+		terminal().send_text("AFTER_FILES")
+		await until(func(): return "FILES_MATCH" in text_in(), "Two remote files upload before one path paste and later typing", 30.0)
+		expect(not "FILES_WRONG" in text_in(), "Batch has exact bytes, one bracket pair and a trailing space")
+	for path in files: DirAccess.remove_absolute(path)
 
 func mouse_reporting() -> void:
 	run_python("""import os,tty,termios,re
@@ -2823,7 +2853,8 @@ func auth_recovery() -> void:
 	manager.open_connection(restored[0].merged({"token": settings.token}, true))
 	await until(func(): return manager.transports.has(key) and manager.transports[key].connected, "Reloaded connection authenticates again")
 	expect(manager.save_hint.text.is_empty(), "Hostname refresh resaves loaded quality without a numeric type error")
-	expect(authentication._save(authentication.saved_connections()).is_empty(), "Bulk connection saves accept the same loaded preferences")
+	for entry in authentication.saved_connections():
+		expect(authentication.save_connection(entry).is_empty(), "Saved connections accept the same loaded preferences")
 	expect(transport.connected, "Saved-settings round trip leaves the original workspace connected")
 
 func dominant_pixels(image: Image, channel: int) -> int:

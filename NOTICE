@@ -29,3 +29,10 @@ Remote redial timing and connection supervision are adapted from herdr-core,
 crates/herdr-core/src/remote.rs, revision 7cb4de47164f1d65db84dfab294166994f143a15,
 under Apache-2.0. Graffitty uses its own SSH tunnels, authenticated WebSocket
 sessions and controller capabilities.
+
+Desktop file-drop quoting and local/remote clipboard routing are adapted from
+herdr-app src/terminal.rs and src/terminal/drag_paths.rs, revision
+a2e8e3ffa84439d4a245a1e6aa8947ef0dd20a1b,
+https://github.com/herdrdev/herdr-app, under Apache-2.0.
+Graffitty uses its existing Rust upload transport, asynchronous file reads,
+explicit owner filesystem capability and destination-shell quoting.

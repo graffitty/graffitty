@@ -626,6 +626,10 @@ func _refresh_body() -> void:
 		pair.model.foreground_app = pane.get("app", {})
 		pair.model.effect_holds = pane.get("effect_holds", [])
 		pair.model.shell = str(pane.shell)
+		var transport: Node = connection.owners.get(id) if federated else connection
+		var local: bool = is_instance_valid(transport) and (transport.socket is SharedSessionPeer or str(transport.url).begins_with("ipc://"))
+		var shell := str(pane.shell).replace("\\", "/").get_file().to_lower().trim_suffix(".exe")
+		pair.term.set_attachment_context(local, shell in ["pwsh", "powershell"])
 		if pair.term.has_method("set_remote_shell_pid"):
 			pair.term.set_remote_shell_pid(int(pane.get("pid", -1)))
 		var font_size := int(pane.get("font_size", host.world.term_font_size))
@@ -1150,7 +1154,6 @@ func _flush_terminal_input(id: int) -> void:
 
 
 func _paste_attachment(id: int, terminal: Node, attachment: Dictionary) -> void:
-	var failure: String = attachment.get("error", "")
 	var transport: Node = connection.owners.get(id) if federated else connection
 	if not is_instance_valid(transport):
 		terminal.file_paste_finished(false)
@@ -1160,31 +1163,60 @@ func _paste_attachment(id: int, terminal: Node, attachment: Dictionary) -> void:
 	var upload := TerminalFileUpload.new()
 	var current := func() -> bool:
 		return is_instance_valid(transport) and transport.connected and transport.socket == peer and transport.workspace == workspace and is_instance_valid(terminal) and is_instance_valid(host) and host.sessions.has(id) and host.sessions[id].term == terminal and (not federated or connection.owners.get(id) == transport)
-	if failure.is_empty() and peer is SharedSessionPeer:
-		var destination: Dictionary = await transport.request_action("local_attachment", {"session": id, "name": attachment.name})
-		if destination.get("type") != "ack" or not current.call():
-			failure = destination.get("message", "Attachment destination changed")
-		else:
-			failure = upload.write_local(destination.path, attachment.data)
-			if failure.is_empty():
-				var pasted: Dictionary = await transport.request_action("paste", {"session": id, "text": destination.text})
-				if pasted.get("type") != "ack": failure = pasted.get("message", "Attachment paste failed")
-	else:
-		if failure.is_empty(): failure = upload.start(str(attachment.name), attachment.data)
-		while failure.is_empty():
+	var files: Array = Array(attachment.paths) if attachment.has("paths") else [attachment]
+	var paths := PackedStringArray()
+	var failures := PackedStringArray()
+	for item in files:
+		if not current.call():
+			failures.append("Attachment destination disconnected or changed")
+			break
+		var file: Dictionary = item if item is Dictionary else {}
+		if item is String:
+			upload.read_file(item)
+			while file.is_empty() and current.call():
+				file = upload.read_result()
+				if file.is_empty(): await get_tree().process_frame
 			if not current.call():
-				failure = "Attachment destination disconnected or changed"
+				failures.append("Attachment destination disconnected or changed")
 				break
-			var params: Dictionary = upload.next_chunk()
-			if params.is_empty(): break
-			var reply: Dictionary = await transport.request_action("rpc", {"session": id, "method": "terminal.put", "params": params}, 30000)
-			var result: Dictionary = upload.accept(reply)
-			failure = result.get("error", "")
-			if result.get("done", false): break
-	if is_instance_valid(terminal): terminal.file_paste_finished(failure.is_empty())
-	if not failure.is_empty():
-		get_node("/root/TerminalApplication").notifications.post(tr("Paste"), tr("Could not paste image"), host, "error", 8.0, "", {"title": "Paste", "body": "Could not paste image"})
-		push_warning(failure)
+		var failure: String = file.get("error", "")
+		if failure.is_empty() and (peer is SharedSessionPeer or str(transport.url).begins_with("ipc://")):
+			var destination: Dictionary = await transport.request_action("local_attachment", {"session": id, "name": file.name})
+			if destination.get("type") != "ack" or not current.call():
+				failure = destination.get("message", "Attachment destination changed")
+			else:
+				failure = upload.write_local(destination.path, file.data)
+				if failure.is_empty(): paths.append(str(destination.path))
+		elif failure.is_empty():
+			failure = upload.start(str(file.name), file.data)
+			while failure.is_empty():
+				if not current.call():
+					failure = "Attachment destination disconnected or changed"
+					break
+				var params: Dictionary = upload.next_chunk()
+				if params.is_empty(): break
+				var reply: Dictionary = await transport.request_action("rpc", {"session": id, "method": "terminal.put", "params": params}, 30000)
+				var result: Dictionary = upload.accept(reply)
+				failure = result.get("error", "")
+				if result.get("done", false):
+					paths.append(str(result.path))
+					break
+		if not failure.is_empty(): failures.append(failure)
+	# Herdr batches successful paths into one paste after sequential uploads.
+	# Bind it to the original peer and pane; focus changes never redirect it.
+	if not paths.is_empty() and current.call():
+		var shell: String = host.session_model(id).shell.replace("\\", "/").get_file().to_lower().trim_suffix(".exe")
+		var quoted: Dictionary = upload.quote_paths(paths, shell in ["pwsh", "powershell"])
+		if quoted.has("error"): failures.append(str(quoted.error))
+		else:
+			var pasted: Dictionary = await transport.request_action("paste", {"session": id, "text": quoted.text})
+			if pasted.get("type") != "ack": failures.append(str(pasted.get("message", "Attachment paste failed")))
+	elif not paths.is_empty(): failures.append("Attachment destination disconnected or changed")
+	if is_instance_valid(terminal): terminal.file_paste_finished(failures.is_empty())
+	if not failures.is_empty():
+		if is_instance_valid(host):
+			get_node("/root/TerminalApplication").notifications.post(tr("Paste"), tr("Could not paste files"), host, "error", 8.0, "", {"title": "Paste", "body": "Could not paste files"})
+		push_warning("\n".join(failures))
 
 
 func _release_host() -> void:

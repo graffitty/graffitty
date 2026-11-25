@@ -681,6 +681,9 @@ impl Terminal {
     fn remote_take_attachment(&mut self) -> VarDictionary {
         let mut result = VarDictionary::new();
         if let Some(st) = self.state.as_mut() {
+            if let Some(paths) = st.attachment_paths.take() {
+                result.set("paths", &PackedStringArray::from_iter(paths.iter().map(GString::from)));
+            }
             if let Some(file) = st.attachment.take() {
                 match file {
                     Ok(file) => { result.set("name", file.name.as_str()); result.set("data", &PackedByteArray::from(file.bytes.as_slice())); },
@@ -717,9 +720,17 @@ impl Terminal {
     }
 
     #[func]
-    fn paste_file(&mut self, path: GString) {
+    fn set_attachment_context(&mut self, local: bool, powershell: bool) {
+        if let Some(st) = self.state.as_mut() {
+            st.attachment_local = local;
+            st.attachment_powershell = powershell;
+        }
+    }
+
+    #[func]
+    fn paste_files(&mut self, paths: PackedStringArray) {
         let Some(st) = self.state.as_mut().filter(|s| !s.exited && !s.attachment_busy) else { return; };
-        st.queue_attachment(graffitty_client_core::clipboard_paste::Attachment::file(std::path::Path::new(&path.to_string())));
+        st.paste_paths(paths.as_slice().iter().map(ToString::to_string).collect());
     }
 
     #[func]
@@ -3740,6 +3751,9 @@ struct State {
     clipboard_write_enabled: Rc<Cell<bool>>,
     attachment: Option<Result<graffitty_client_core::clipboard_paste::Attachment, String>>,
     attachment_busy: bool,
+    attachment_paths: Option<Vec<String>>,
+    attachment_local: bool,
+    attachment_powershell: bool,
     attachment_prefix: Vec<u8>,
     sync_elapsed: f64,
     blink_elapsed: f64,
@@ -4112,6 +4126,9 @@ impl State {
             clipboard_write_enabled,
             attachment: None,
             attachment_busy: false,
+            attachment_paths: None,
+            attachment_local: false,
+            attachment_powershell: false,
             attachment_prefix: Vec::new(),
             sync_elapsed: 0.0,
             blink_elapsed: 0.0,
@@ -4835,11 +4852,27 @@ impl State {
     /// Paste, encoded through libghostty (strips controls, bracketed paste).
     fn paste_clipboard(&mut self) {
         if self.attachment_busy { return; }
-        match crate::clipboard::paste() {
+        match crate::clipboard::paste(self.attachment_local) {
             Ok(crate::clipboard::Paste::Text(text)) => self.paste_str(&text),
+            Ok(crate::clipboard::Paste::Paths(paths)) => self.paste_paths(paths),
+            Ok(crate::clipboard::Paste::NativeImage) => self.writer.write(b"\x16"),
             Ok(crate::clipboard::Paste::File(file)) => self.queue_attachment(Ok(file)),
             Ok(crate::clipboard::Paste::Empty) => {},
             Err(error) => self.queue_attachment(Err(error)),
+        }
+    }
+
+    fn paste_paths(&mut self, paths: Vec<String>) {
+        use graffitty_client_core::clipboard_paste::{quote_paths, temporary_screenshot};
+        match quote_paths(&paths, self.attachment_powershell) {
+            Err(error) => self.queue_attachment(Err(error)),
+            Ok(text) if self.attachment_local && !temporary_screenshot(&paths) => self.paste_str(&text),
+            Ok(_) => {
+                self.attachment_prefix = self.writer.take_all();
+                self.attachment_paths = Some(paths);
+                self.attachment_busy = true;
+                self.writer.notify();
+            }
         }
     }
 

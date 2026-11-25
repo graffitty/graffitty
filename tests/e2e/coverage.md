@@ -2043,3 +2043,27 @@ the long press clicks once; one held into the long press does not).
 
 These are private-server and headless UI checks. Physical mobile testing and
 installation of the upload-notification change remain outstanding.
+
+## Herdr-style file routing and agent selection framing
+
+2026-11-25, macOS ARM64 development build:
+
+- `android-bracketed-paste --simulated` passed all 14 assertions with a real
+  isolated server and PTY. A large PNG and two files arrive intact; the two
+  paths are delivered in one bracketed paste with a trailing space, followed
+  by queued typing. This run completed without the older shutdown leak error.
+- `tests/file_paste_smoke.gd` passed ten assertions: local paths avoid reads,
+  one unpaced input batch, POSIX/PowerShell quoting, remote path deferral,
+  multiple files, input ordering, failure discard and control rejection.
+  Local path encoding/queue draining measured 121 microseconds in this run;
+  this is not end-to-end display latency.
+- Two shared Rust clipboard/path tests passed. Native extension build and
+  Godot import passed.
+- Agents-filtered unit tests: 22 passed. Pane inspection: 12 passed. Navigator:
+  ten passed, covering Main framing, partially hidden panes and zoom retention.
+  Agent row selection calls the same camera reveal as prefix navigation.
+
+The shared scenario had a stale call to removed `ClientAuthentication._save`;
+it now uses the current per-connection save API. Physical desktop clipboard
+formats, macOS temporary screenshot grants and physical mobile input remain
+unverified. These changes have not been installed into the production app.
