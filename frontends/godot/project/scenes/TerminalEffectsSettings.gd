@@ -9,6 +9,7 @@ var adaptive_groups: Dictionary = {}
 var adaptive_group_values: Dictionary = {}
 var zoom_mode := OptionButton.new()
 var depth_blur := CheckBox.new()
+var blur_color := ColorPickerButton.new()
 var trail := OptionButton.new()
 var particles := OptionButton.new()
 var status := Label.new()
@@ -37,8 +38,6 @@ func _ready() -> void:
 	grid.add_theme_constant_override("h_separation", 18)
 	grid.add_theme_constant_override("v_separation", 9)
 	scroll.add_child(grid)
-	depth_blur.button_pressed = host.effect_enabled("camera.dof")
-	row("Depth-of-field blur", depth_blur)
 	for name in TRAILS: trail.add_item(name.capitalize())
 	trail.select(TRAILS.find(host.cursor_trail_style()))
 	row("Cursor trail", trail)
@@ -64,6 +63,7 @@ func _ready() -> void:
 			else:
 				number(id, style.capitalize() + " " + key.replace("_", " "), value)
 	var fx = host.world.fx_cfg
+	_add_blur_controls(host.effect_enabled("camera.dof"), Color(str(fx.scene.camera.dof_blur_tint)))
 	var camera: Dictionary = host.world.get_meta("effects_camera_settings", {"intensity": 1.0, "maximum": fx.frame(str(fx.behavior.active_state))["camera.zoom"]})
 	number("intensity", "Typing camera intensity (0–1)", camera.intensity)
 	number("maximum", "Typing camera maximum zoom (1–2)", camera.maximum)
@@ -93,6 +93,18 @@ func _ready() -> void:
 	canceled.connect(queue_free)
 	popup_centered.call_deferred()
 
+func _add_blur_controls(enabled: bool, tint: Color) -> void:
+	depth_blur.button_pressed = enabled
+	row("Depth-of-field blur", depth_blur)
+	blur_color.color = tint
+	blur_color.edit_alpha = false
+	var caption := row("Blur color", blur_color)
+	var sync := func(on: bool):
+		blur_color.disabled = not on
+		caption.modulate.a = 1.0 if on else 0.5
+	depth_blur.toggled.connect(sync)
+	sync.call(enabled)
+
 func _sync_zoom_mode() -> void:
 	for id in ["intensity", "maximum"]:
 		fields[id].editable = zoom_mode.selected == 0
@@ -101,13 +113,14 @@ func _sync_zoom_mode() -> void:
 	for button in adaptive_groups.values():
 		button.disabled = zoom_mode.selected != 1
 
-func row(caption: String, control: Control) -> void:
+func row(caption: String, control: Control) -> Label:
 	var label := Label.new()
 	label.text = caption
 	grid.add_child(label)
 	control.size_flags_horizontal = Control.SIZE_EXPAND_FILL
 	control.custom_minimum_size.x = 140
 	grid.add_child(control)
+	return label
 
 func number(id: String, caption: String, value: Variant) -> void:
 	var edit := LineEdit.new()
@@ -169,6 +182,11 @@ func apply_changes() -> void:
 	for config in [host.terminal_config, host.world.terminal_config]: config.effects = candidate.copy().effects
 	var world: Node = host.world
 	candidate.apply_effects(world.fx_cfg)
+	if Color(str(world.fx_cfg.scene.camera.dof_blur_tint)) != blur_color.color:
+		var tint := "#" + blur_color.color.to_html(false)
+		world.fx_cfg.set_option("scene.camera", "dof_blur_tint", tint)
+		config_source.remember(OS.get_cmdline_user_args(), {"effects": {"camera": {"dof_blur_tint": tint}}})
+		world._fx_apply_scene()
 	world.fx_cfg.set_option("scene.camera", "zoom_mode", "adaptive" if zoom_mode.selected == 1 else "typing")
 	world.fx_cfg.set_option("scene.camera", "adaptive_zoom_in_seconds", values.adaptive_in)
 	world.fx_cfg.set_option("scene.camera", "adaptive_zoom_out_seconds", values.adaptive_out)

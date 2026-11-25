@@ -2138,7 +2138,7 @@
       "pt-BR": "Rastro",
       "es": "Estela",
       "it": "Scia",
-      "ko": "번짐",
+      "ko": "잔상",
       "ja": "残像",
       "de": "Nachziehen",
       "nb": "Etterslep",
@@ -8853,6 +8853,19 @@
       "sv": "Effekter",
       "da": "Effekter"
     },
+    "Blur color": {
+      "en-US": "Blur color",
+      "fr": "Couleur du flou",
+      "pt-BR": "Cor do desfoque",
+      "es": "Color del desenfoque",
+      "it": "Colore della sfocatura",
+      "ko": "블러 색",
+      "ja": "ぼかしの色",
+      "de": "Unschärfefarbe",
+      "nb": "Farge på uskarphet",
+      "sv": "Oskärpans färg",
+      "da": "Farve på sløring"
+    },
     "Depth-of-field blur": {
       "en-US": "Depth-of-field blur",
       "fr": "Flou de profondeur de champ",
@@ -9054,7 +9067,7 @@
       "pt-BR": "Rastro: cor",
       "es": "Estela: color",
       "it": "Scia: colore",
-      "ko": "번짐 색",
+      "ko": "커서 잔상 색",
       "ja": "残像の色",
       "de": "Nachziehen: Farbe",
       "nb": "Etterslep: farge",
