@@ -660,11 +660,44 @@ pub fn save_connections(path: &Path, connections: &[SavedConnection]) -> Result<
     Ok(())
 }
 
+fn connections_lock(path: &Path) -> Result<fs::File> {
+    fs::create_dir_all(path.parent().context("Missing connections directory")?)?;
+    let lock = fs::OpenOptions::new().create(true).truncate(false).write(true)
+        .open(path.with_extension("lock"))?;
+    lock.lock()?;
+    Ok(lock)
+}
+
+/// Persist a selection only while the user still has the machine saved.
+pub fn update_saved_session(path: &Path, url: &str, session: &str) -> Result<bool> {
+    let url = saved_url(url)?;
+    validate_ssh_session(session)?;
+    let _lock = connections_lock(path)?;
+    let mut entries = load_connections(path)?;
+    let Some(entry) = entries.iter_mut().find(|entry| entry.url == url) else { return Ok(false) };
+    if entry.initial_session == session { return Ok(false); }
+    entry.initial_session = session.to_owned();
+    save_connections(path, &entries)?;
+    Ok(true)
+}
+
+pub fn remove_connection(path: &Path, url: &str) -> Result<bool> {
+    let url = saved_url(url)?;
+    let _lock = connections_lock(path)?;
+    let mut entries = load_connections(path)?;
+    let previous = entries.len();
+    entries.retain(|entry| entry.url != url);
+    if entries.len() == previous { return Ok(false); }
+    save_connections(path, &entries)?;
+    Ok(true)
+}
+
 /// Move a saved server without rewriting credentials or
 /// connection identity. The existing array is the single persisted order.
 pub fn reorder_connections(path: &Path, source: &str, target: &str, before: bool) -> Result<()> {
     let source = saved_url(source)?;
     let target = saved_url(target)?;
+    let _lock = connections_lock(path)?;
     let mut entries = load_connections(path)?;
     ensure!(entries.iter().any(|entry| entry.url == source), "Source server is not saved");
     ensure!(entries.iter().any(|entry| entry.url == target), "Target server is not saved");
@@ -687,10 +720,7 @@ pub fn upsert_connection(path: &Path, mut connection: SavedConnection) -> Result
     connection.validate()?;
     // Several windows can authenticate together. Reserve generated aliases in
     // one read/modify/write transaction, including when the file is new.
-    fs::create_dir_all(path.parent().context("Missing connections directory")?)?;
-    let lock = fs::OpenOptions::new().create(true).truncate(false).write(true)
-        .open(path.with_extension("lock"))?;
-    lock.lock()?;
+    let _lock = connections_lock(path)?;
     let mut connections = load_connections(path)?;
     for entry in &mut connections { entry.url = saved_url(&entry.url)?; }
     if connection.alias.is_empty() {
@@ -1254,6 +1284,26 @@ mod tests {
             assert_eq!(saved_url(&format!("ssh://{host}")).unwrap(), format!("ssh://{host}"));
         }
         assert!(validated_request("ssh://Build-Alias").is_err());
+    }
+
+    #[test]
+    fn updating_last_session_never_recreates_a_forgotten_profile() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("connections.json");
+        let url = "ssh://desk";
+        assert!(!update_saved_session(&path, url, "$2").unwrap());
+        assert!(!path.exists());
+        let entry = serde_json::from_value(json!({"name":"Desk", "url":url})).unwrap();
+        upsert_connection(&path, entry).unwrap();
+        assert!(update_saved_session(&path, url, "$2").unwrap());
+        assert!(!update_saved_session(&path, url, "$2").unwrap());
+        assert_eq!(load_connections(&path).unwrap()[0].initial_session, "$2");
+        std::thread::scope(|scope| {
+            scope.spawn(|| remove_connection(&path, url).unwrap());
+            scope.spawn(|| update_saved_session(&path, url, "$3").unwrap());
+        });
+        assert!(!update_saved_session(&path, url, "$4").unwrap());
+        assert!(load_connections(&path).unwrap().is_empty());
     }
 
     #[test]
