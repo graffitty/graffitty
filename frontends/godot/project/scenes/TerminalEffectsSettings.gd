@@ -8,6 +8,7 @@ var captions: Dictionary = {}
 var adaptive_groups: Dictionary = {}
 var adaptive_group_values: Dictionary = {}
 var zoom_mode := OptionButton.new()
+var depth_blur := CheckBox.new()
 var trail := OptionButton.new()
 var particles := OptionButton.new()
 var status := Label.new()
@@ -36,6 +37,8 @@ func _ready() -> void:
 	grid.add_theme_constant_override("h_separation", 18)
 	grid.add_theme_constant_override("v_separation", 9)
 	scroll.add_child(grid)
+	depth_blur.button_pressed = host.effect_enabled("camera.dof")
+	row("Depth-of-field blur", depth_blur)
 	for name in TRAILS: trail.add_item(name.capitalize())
 	trail.select(TRAILS.find(host.cursor_trail_style()))
 	row("Cursor trail", trail)
@@ -178,6 +181,7 @@ func apply_changes() -> void:
 	for property in ["terminal_effects", "effects_2d"]:
 		var renderer = world.get(property)
 		if renderer != null: renderer.configure(world.fx_cfg)
+	host.set_effect_enabled("camera.dof", depth_blur.button_pressed)
 	host._update_menu()
 	draft = candidate
 	status.text = "Effects applied to this window."

@@ -8853,6 +8853,19 @@
       "sv": "Effekter",
       "da": "Effekter"
     },
+    "Depth-of-field blur": {
+      "en-US": "Depth-of-field blur",
+      "fr": "Flou de profondeur de champ",
+      "pt-BR": "Desfoque de profundidade de campo",
+      "es": "Desenfoque de profundidad de campo",
+      "it": "Sfocatura della profondità di campo",
+      "ko": "피사계 심도 블러",
+      "ja": "被写界深度ぼかし",
+      "de": "Tiefenschärfeunschärfe",
+      "nb": "Dybdeuskarphet",
+      "sv": "Skärpedjupsoskärpa",
+      "da": "Dybdeuskarphed"
+    },
     "Cursor trail": {
       "en-US": "Cursor trail",
       "fr": "Traînée du curseur",

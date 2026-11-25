@@ -16,6 +16,7 @@ var glyphs: Array[MultiMeshInstance2D] = []
 var pane_groups: Array[Node2D] = []
 var ui_groups: Array[Node2D] = []
 var dust_mode := false
+var effect_control: RefCounted
 var depth_mode := false
 var depth_direction := 1.0
 var depth_center := Vector2.ZERO
@@ -70,6 +71,7 @@ func _resize_panel(sprite: Sprite2D, extent: Vector2) -> void:
 
 func build(world: Node) -> void:
 	dust_mode = world.dust_effect()
+	effect_control = world.effect_control
 	depth_mode = world.depth_effect()
 	depth_direction = world.tab_fx_direction
 	depth_center = world.camera_2d.position
@@ -294,9 +296,10 @@ func set_progress(value: float) -> void:
 			group.position = depth_center + (Vector2(group.get_meta("depth_origin")) - depth_center) * magnification
 			group.scale = Vector2(group.get_meta("depth_scale")) * magnification
 			if group.has_meta("graph_layer"): group.modulate.a = opacity
+		var blur := phase * 6.0 if effect_control.allows("camera.dof") else 0.0
 		for item in panels:
 			item.material.set_shader_parameter("depth_alpha", opacity)
-			item.material.set_shader_parameter("depth_blur", phase * 6.0)
+			item.material.set_shader_parameter("depth_blur", blur)
 		_update_raster()
 		return
 	for group in ui_groups:

@@ -5215,6 +5215,7 @@ func _prepare_transition_layer(layer: Node) -> void:
 
 
 func _update_transition_lens(layer: Node) -> void:
+	layer._material().set_shader_parameter("blur_limit", terminal_effects.blur_limit if effect_control.allows("camera.dof") else 0.0)
 	if layer.departing_lens.y > 0.0: return # set_fly owns this capture's lens
 	layer._material().set_shader_parameter("focus_depth", terminal_effects.focus_depth)
 	layer._material().set_shader_parameter(
@@ -5225,7 +5226,6 @@ func _update_transition_lens(layer: Node) -> void:
 			else terminal_effects.blur_radius / maxf(terminal_effects.depth_range, 0.0263)
 		),
 	)
-	layer._material().set_shader_parameter("blur_limit", terminal_effects.blur_limit)
 
 
 func _layer_fly(layer: Node, value: float, arriving := false) -> float:

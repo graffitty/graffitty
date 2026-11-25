@@ -54,6 +54,9 @@ func synchronize(world: Node) -> void:
 			material.set_shader_parameter("screen_dof", true)
 			phase = maxf(phase, float(material.get_shader_parameter("fly")))
 		var effects: Node = world.terminal_effects
+		if not world.effect_control.allows("camera.dof"):
+			render_pass.lens.set_lens(effects.focus_depth, 0.0, effects.depth_range, 0.0)
+			continue
 		var first: Node = groups[id][0]
 		if first.departing_lens.y > 0.0:
 			# Preserve the tilted sheet's depth gradient, including zero blur
