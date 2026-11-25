@@ -1497,8 +1497,8 @@ func switch_world(path: String) -> bool:
 
 func available_worlds() -> Array[Dictionary]:
 	var result: Array[Dictionary] = [
-		{ "name": "Flat 3D", "path": FLAT_3D, "id": FLAT_3D },
 		{ "name": "Flat 2D", "path": FLAT_2D, "id": FLAT_2D },
+		{ "name": "Flat 3D", "path": FLAT_3D, "id": FLAT_3D },
 	]
 	if OS.has_feature("mobile"):
 		return result
@@ -1511,6 +1511,7 @@ func available_worlds() -> Array[Dictionary]:
 			var pack := directory.path_join(subdir).path_join(subdir + ".pck")
 			if FileAccess.file_exists(pack):
 				candidates.append(pack)
+	var installed: Array[Dictionary] = []
 	var seen := { FLAT_3D: true, FLAT_2D: true }
 	for candidate in candidates:
 		var manifest_path := _plugin_manifest(candidate)
@@ -1527,7 +1528,7 @@ func available_worlds() -> Array[Dictionary]:
 		if manifest.get("api", 0) != API_VERSION or id.is_empty() or seen.has(id):
 			continue
 		seen[id] = true
-		result.append(
+		installed.append(
 			{
 				"name": str(manifest.get("name", id.capitalize())),
 				"path": candidate,
@@ -1535,6 +1536,8 @@ func available_worlds() -> Array[Dictionary]:
 				"menu": str(manifest.get("menu", "")),
 			}
 		)
+	installed.sort_custom(func(a, b): return str(a.name).naturalnocasecmp_to(str(b.name)) < 0)
+	result.append_array(installed)
 	return result
 
 
