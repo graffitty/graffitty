@@ -6,7 +6,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [v0.0.6] - 2026-11-25
 ### :bug: Bug Fixes
-- keep terminals running when Graffitty updates on Windows ([#7](https://github.com/graffitty/graffitty/pull/7)).
+- keep terminals running through Windows updates and remember the sidebar width ([#7](https://github.com/graffitty/graffitty/pull/7)).
 
 ## [v0.0.5] - 2026-11-25
 ### :sparkles: New Features

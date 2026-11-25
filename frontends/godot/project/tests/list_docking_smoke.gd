@@ -397,6 +397,21 @@ func run() -> void:
 	check(saved.widths.left == 44 and saved._saved.sessions.side == "left" and saved._saved.sessions.open, "Fold, placement and open state persist")
 	check(is_equal_approx(saved._saved.sessions.weight / saved._saved.agents.weight, ratio), "Saved layout retains stack proportions")
 	saved.free()
+	# A bar row is as tall as its bar, which may be under a resizable row's minimum.
+	var bar_layout := {"version": 1, "widths": {"left": 395.5, "right": 300.0}, "expanded": {"left": 395.5, "right": 300.0},
+		"band_rows": {"top": [], "bottom": [28.0]},
+		"panels": {"sessions": {"side": "left", "row": 0, "weight": 1.0, "order": 0, "open": true, "folded": false, "own_row": false, "height": 560.0, "scale": 1.0}}}
+	var bar_path := space.state_path + ".bar"
+	var bar_file := FileAccess.open(bar_path, FileAccess.WRITE)
+	bar_file.store_string(JSON.stringify(bar_layout))
+	bar_file.close()
+	var bar_saved := Space.new()
+	bar_saved.state_path = bar_path
+	root.add_child(bar_saved)
+	bar_saved.load_layout()
+	check(is_equal_approx(bar_saved.widths.left, 395.5) and bar_saved._saved.has("sessions"), "A layout with a bar row shorter than a resizable row still restores the sidebar width")
+	bar_saved.free()
+	DirAccess.remove_absolute(bar_path)
 	space.toggle_fold("left")
 	check(is_equal_approx(first.size.x, expanded) and not a.compact, "Rail restores the previous expanded width")
 	plan = space.plan(first, Vector2(1278, 200))

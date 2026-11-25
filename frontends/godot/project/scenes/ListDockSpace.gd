@@ -692,8 +692,10 @@ func load_layout() -> void:
 	for side in ["top", "bottom"]:
 		var rows = data.band_rows.get(side)
 		if not rows is Array: return
+		# A row of bars (the status line) is as tall as its bar, which can be
+		# shorter than a resizable row's minimum. Only a non-positive height is invalid.
 		for height in rows:
-			if not (height is float or height is int) or not is_finite(height) or height < MIN_BAND_HEIGHT or height > 10000: return
+			if not (height is float or height is int) or not is_finite(height) or height <= 0 or height > 10000: return
 	for key in ["widths", "expanded"]:
 		if not data.get(key) is Dictionary: return
 		for side in ["left", "right"]:
