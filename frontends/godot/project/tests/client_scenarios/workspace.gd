@@ -2794,7 +2794,7 @@ func connections_scroll() -> void:
 	root.content_scale_factor = saved_factor
 	await wait(.3)
 	expect(root.get_visible_rect().has_point(point(manager.connection_tab)), "Navigation remains visible when the connection list exceeds viewport")
-	var scroll: ScrollContainer = manager.chooser.find_children("*","ScrollContainer",true,false)[0]
+	var scroll: ScrollContainer = manager.chooser.row_scroll
 	expect(scroll.get_v_scroll_bar().max_value>scroll.size.y,"Large list exposes scrolling rather than growing dialog off-screen")
 	scroll.scroll_vertical = int(scroll.get_v_scroll_bar().max_value)
 	await wait(.2)
@@ -2809,7 +2809,7 @@ func connections_scroll() -> void:
 	# A card's tap is its connection action; the start control opens the workspace.
 	await tap(main_card.select)
 	expect(manager.chooser.visible and transport.connected,"Tapping a connected card keeps its connection and the server page")
-	manager.chooser.scroll.scroll_vertical = 0
+	manager.chooser.row_scroll.scroll_vertical = 0
 	await wait(.2)
 	await tap(manager.touch_start.brand)
 	expect(not manager.chooser.visible and transport.connected,"Touch to start opens the connected workspace")
@@ -2825,7 +2825,7 @@ func auth_recovery() -> void:
 	manager.open_connection(wrong)
 	var key: String = manager._connection_key(wrong)
 	if not await until(func(): return manager.states[key].state == "password", "Wrong password produces a recoverable server card"): return
-	manager.chooser.scroll.ensure_control_visible(manager.cards[key])
+	manager.chooser.row_scroll.ensure_control_visible(manager.cards[key])
 	await wait()
 	await tap(manager.cards[key].more)
 	await wait(.2)
@@ -3254,7 +3254,7 @@ func client_controls() -> void:
 	await tap(manager.cards[manager._connection_key(settings)].select)
 	expect(transport.connected, "Clearing font cache preserves the server connection")
 	# A connected card's tap stays on the server page; the start control returns.
-	manager.chooser.scroll.scroll_vertical = 0
+	manager.chooser.row_scroll.scroll_vertical = 0
 	await wait(.2)
 	await tap(manager.touch_start.brand)
 	expect(not manager.chooser.visible, "Touch to start returns to the workspace after clearing the cache")

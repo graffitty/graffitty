@@ -54,15 +54,15 @@ def bundle(app):
         for dependency in dependencies(binary):
             if not dependency.startswith("/") or dependency.startswith(("/usr/lib/", "/System/Library/")):
                 continue
-            source = Path(dependency)
-            if not source.is_file():
-                raise RuntimeError(f"Missing dylib dependency of {binary}: {source}")
             # LC_ID_DYLIB is listed by otool too; it is not a dependency.
             identity = inspect_macho(binary, "-D")[1:]
             if dependency in [line.strip() for line in identity]:
                 subprocess.run(["install_name_tool", "-id", "@rpath/" + binary.name, str(binary)], check=True)
                 resign(binary)
                 continue
+            source = Path(dependency)
+            if not source.is_file():
+                raise RuntimeError(f"Missing dylib dependency of {binary}: {source}")
             if dependency not in copied:
                 digest = hashlib.sha256(source.read_bytes()).hexdigest()
                 if source.name in identities and identities[source.name] != digest:

@@ -44,6 +44,9 @@ class SizeClaimTests(unittest.TestCase):
                                           and m["workspace_state"]["tabs"][str(tab)]["area"] == area)
 
                     narrow, wide = [0, 34, 412, 846], [0, 34, 1440, 866]
+                    focus = "t" + str(phone.topology["panes"][0]["id"])
+                    for peer in (desktop, phone):
+                        self.assertEqual(peer.action("main_view", tab=tab, pane=focus)["type"], "ack")
                     claim(phone, narrow)
                     narrow_columns = seen(phone, "self", narrow)["panes"][0]["columns"]
                     seen(desktop, "other", narrow)
@@ -55,6 +58,19 @@ class SizeClaimTests(unittest.TestCase):
                     claim(phone, wide, claim=False)
                     phone.send({"type": "sync", "session": -1, "request": 999})
                     self.assertEqual(tab_role(phone.until(lambda m: m.get("type") == "topology")), "other")
+                    # Hold focus on different real panes, then submit an already queued resize.
+                    split = desktop.action("create", phone.topology["panes"][0]["id"], kind="pane")
+                    other = "t" + str(split["created"])
+                    desktop.action("main_view", tab=tab, pane=other)
+                    claim(phone, narrow)
+                    state = phone.action("workspace_get")["workspace_state"]
+                    self.assertEqual(state["tabs"][str(tab)]["area"], wide)
+                    desktop.action("main_view", tab=tab, pane=focus)
+                    claim(phone, narrow)
+                    seen(phone, "self", narrow)
+                    claim(desktop, wide)
+                    seen(phone, "other", wide)
+                    wide_columns = seen(desktop, "self", wide)["panes"][0]["columns"]
                     desktop.socket.close()
                     after = seen(phone, "none", wide)
                     self.assertEqual(after["panes"][0]["columns"], wide_columns, "A departure leaves the area as it was")

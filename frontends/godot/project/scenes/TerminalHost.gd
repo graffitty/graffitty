@@ -1346,6 +1346,7 @@ func _sync_presentation_activity() -> void:
 	for pair in sessions.values():
 		preload("res://scenes/TerminalViewportUpdates.gd").set_enabled(pair.vp, active)
 	if active: _refresh_workspace_layout()
+	elif session_backend != null: session_backend.sync_window_area(self)
 	presentation_changed.emit()
 
 

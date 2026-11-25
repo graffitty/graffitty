@@ -232,7 +232,11 @@ func test_manager_claims_keep_each_servers_revision_and_acknowledgement_separate
 	federation.owners = {1: first.transport, 2: second.transport}
 	var backend := Backend.new(federation)
 	backend.sync_window_area(first.host)
-	expect(claims(first).size() == 1 and claims(second).size() == 1, "The server manager claims both independent owners")
+	expect(claims(first).size() == 1 and second.transport.sent.is_empty(), "Only the visible server receives an attach claim")
+	backend.note_activity(first.host)
+	expect(second.transport.sent.is_empty(), "Background connections receive no input claims")
+	first.host.workspace_layout.active = 2
+	backend.sync_window_area(first.host)
 	expect(claims(first)[0].expected_revision == 1 and claims(second)[0].expected_revision == 73, "Each claim uses its own server revision")
 	expect(claims(first)[0].edit.tab == 1 and claims(second)[0].edit.tab == 2, "Each claim targets only its owning tab")
 	expect(first.transport.sent.size() == 1 and second.transport.sent.size() == 1, "Area claims do not reorder or activate another server's tabs")
@@ -325,4 +329,17 @@ func test_newer_owner_settles_claim_without_a_geometry_refresh() -> void:
 	expect(f.backend.content_rect(f.host, SERVER) == PHONE, "A newer owner supersedes an acknowledged provisional claim immediately")
 	f.backend.commit_workspace(f.host)
 	expect(f.transport.sent.size() == 1, "An unrelated UI refresh cannot overwrite the newer owner's area")
+	release(f)
+
+func test_different_pane_blocks_fit_until_both_clients_show_the_same_pane() -> void:
+	var f := fixture("self")
+	f.transport.topology.tabs[0].other_main_panes = ["t2"]
+	f.backend.sync_window_area(f.host)
+	f.backend.note_activity(f.host)
+	f.backend.commit_workspace(f.host)
+	expect(f.transport.sent.is_empty(), "Different panes preserve the shared area even for its previous owner")
+	expect(f.backend.content_rect(f.host, FIT) == SERVER, "A different pane uses the stable area")
+	f.transport.topology.tabs[0].other_main_panes = ["t1"]
+	f.backend.sync_window_area(f.host)
+	expect(claims(f).size() == 1, "The same visible pane permits fitting again")
 	release(f)

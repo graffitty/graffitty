@@ -10,13 +10,20 @@ var _excluded: Array[Node] = []
 var _root: SubViewport
 
 
+static func _capture_size(source: Viewport) -> Vector2i:
+	# On iPad the root texture includes an extra Retina scale. Use the
+	# drawable window dimensions so the slide fits the device's render target.
+	if source is Window and OS.has_feature("ios"): return source.size
+	return Vector2i(source.get_texture().get_size())
+
+
 static func workspace(host: Node) -> SubViewport:
 	var capture := new()
 	capture._index(host)
 	capture._excluded = [host.workspace_view.tab_bar]
 	var source: Viewport = host.get_viewport()
 	var view := SubViewport.new()
-	view.size = Vector2i(source.get_texture().get_size())
+	view.size = _capture_size(source)
 	view.size_2d_override = Vector2i(source.get_visible_rect().size)
 	view.size_2d_override_stretch = true
 	view.transparent_bg = source.transparent_bg
@@ -38,7 +45,7 @@ static func page(source: Viewport, surfaces: Array[Node], dependencies: Array[No
 	for node in dependencies: capture._index(node)
 	for node in surfaces: capture._index(node)
 	var view := SubViewport.new()
-	view.size = Vector2i(source.get_texture().get_size())
+	view.size = _capture_size(source)
 	view.size_2d_override = Vector2i(source.get_visible_rect().size)
 	view.size_2d_override_stretch = true
 	view.transparent_bg = false

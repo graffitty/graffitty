@@ -254,6 +254,40 @@ func test_startup_attempts_all_saved_servers_and_back_cancels_pending_navigation
 	manager.free()
 
 
+func test_start_waits_for_discovery_fonts_and_host_and_preserves_restore() -> void:
+	var manager := remembered_manager()
+	manager.dialog.hide()
+	manager.touch_start = Manager.ServerStart.new()
+	var entry := settings()
+	var key: String = entry.url
+	var peer: Node = manager.open_connection(entry)
+	manager.view = View.new()
+	manager.open_when_ready = key
+	manager._restoring = true
+	peer.connected = true
+	manager._set_state(key, "connected", "Connected")
+	manager._workspace_empty()
+	expect(manager.open_when_ready == key and manager.restore_cover.visible and not manager.touch_start.available, "Discovery preserves restore and only shows Connecting")
+	peer.sessions_known = true
+	manager._restoring = false
+	manager._update_restore_cover()
+	expect(manager.touch_start.available, "An authenticated, confirmed empty server can create its first session")
+	peer.workspace = "$1"
+	peer.topology = {"workspace":"$1", "tabs":[{"id":10}], "panes":[]}
+	manager._try_auto_open(key, peer)
+	expect(not manager.touch_start.available, "The start prompt waits for the server font and the host")
+	peer.server_fonts.ready = true
+	manager._try_auto_open(key, peer)
+	expect(not manager.touch_start.available and manager.open_when_ready == key, "Waiting for the host keeps the selected server")
+	manager.view.host = Host.new()
+	manager._try_auto_open(key, peer)
+	expect(manager.navigation.current == manager.navigation.Space.WORKSPACE, "The pending workspace opens when the host is ready")
+	manager.view.host.free()
+	manager.view.free()
+	manager.touch_start.free()
+	manager.federation.free()
+	manager.free()
+
 func test_final_saved_server_connection_opens_once_per_transition() -> void:
 	var manager := remembered_manager()
 	manager.dialog.hide()

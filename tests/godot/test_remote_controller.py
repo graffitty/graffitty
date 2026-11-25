@@ -50,6 +50,7 @@ class RemoteControllerTests(unittest.TestCase):
                 cleanup.callback(phone.socket.close)
                 tab = phone.topology["tabs"][0]["id"]
                 state = phone.action("workspace_get")["workspace_state"]
+                phone.action("main_view", tab=tab, pane="t" + str(phone.topology["panes"][0]["id"]))
                 reply = phone.action("workspace_edit", expected_revision=state["revision"], claim=True,
                                     edit={"op": "tab", "tab": tab, "layout": state["layout"]["tabs"][str(tab)],
                                           "settings": {"area": [0, 35, 412, 290]}})

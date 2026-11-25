@@ -4,15 +4,17 @@ extends Node
 ## only hover hit-testing and press cancellation are owned here.
 var page: Control
 var scroll: ScrollContainer
+var gesture_area: Control
 var capture := preload("res://scenes/input/PointerHoverCapture.gd").new()
 var pointer := -1
 var start := Vector2.ZERO
 var dragging := false
 var generation := 0
 
-func _init(owner_page: Control, owner_scroll: ScrollContainer) -> void:
+func _init(owner_page: Control, owner_scroll: ScrollContainer, area: Control = null) -> void:
 	page = owner_page
 	scroll = owner_scroll
+	gesture_area = area if area != null else scroll
 	add_child(capture)
 
 func _ready() -> void:
@@ -34,7 +36,7 @@ func _allow_scroll_gestures(node: Node) -> void:
 
 func _input(event: InputEvent) -> void:
 	if event is InputEventScreenTouch:
-		if event.pressed and pointer == -1 and page.is_visible_in_tree() and scroll.get_global_rect().has_point(event.position):
+		if event.pressed and pointer == -1 and gesture_area.is_visible_in_tree() and gesture_area.get_global_rect().has_point(event.position):
 			pointer = event.index
 			start = event.position
 			dragging = false
@@ -59,9 +61,9 @@ func _move(point: Vector2) -> void:
 	dragging = true
 	# Cancel button activation as soon as the touch becomes a drag, independent
 	# of native scrolling, overflow, or the platform's mouse emulation.
-	scroll.propagate_notification(Control.NOTIFICATION_SCROLL_BEGIN)
+	gesture_area.propagate_notification(Control.NOTIFICATION_SCROLL_BEGIN)
 	var focus := get_viewport().gui_get_focus_owner()
-	if focus != null and scroll.is_ancestor_of(focus): focus.release_focus()
+	if focus != null and gesture_area.is_ancestor_of(focus): focus.release_focus()
 
 func cancel() -> void:
 	pointer = -1

@@ -3,6 +3,10 @@ const Background := preload("../../../../tests/llm-e2e/replay/background.gd")
 const Navigation := preload("res://scenes/remote/RemoteNavigation.gd")
 var failures := 0
 
+class LivePanel extends Control:
+	func _draw() -> void:
+		draw_rect(Rect2(Vector2.ZERO, size), Color.MAGENTA)
+
 class Host extends Node:
 	var layout_root := Control.new()
 class View extends Node:
@@ -36,6 +40,9 @@ func run() -> void:
 	content.color = Color("166534")
 	host.layout_root.add_child(content)
 	content.set_anchors_and_offsets_preset(Control.PRESET_FULL_RECT)
+	var panel := LivePanel.new()
+	host.layout_root.add_child(panel)
+	panel.size = Vector2(34, 34)
 	var tabs := Label.new()
 	tabs.text = "‹   ⌄    Terminal"
 	host.layout_root.add_child(tabs)
@@ -61,6 +68,7 @@ func run() -> void:
 		transition.set_process(false)
 		check(manager.chooser.visible == not entering, "Live destination changes immediately, independently of retained pages")
 		check(transition._workspace.position.x == (width if entering else 0.0), "Workspace starts on the correct side")
+		if entering: panel.set_deferred("position", Vector2(24, 100))
 		navigation.enter(navigation.current)
 		check(navigation.transition == transition, "Repeated topology navigation does not restart the animation")
 		await process_frame
@@ -69,6 +77,11 @@ func run() -> void:
 		check(transition._list.position.x < 0 and transition._list.position.x > -width * 0.3 - 0.01, "List moves beneath workspace with 30 percent parallax")
 		if DisplayServer.get_name() != "headless":
 			await RenderingServer.frame_post_draw
+			if entering:
+				var image := root.get_texture().get_image()
+				var sample_point := (transition._workspace.position + panel.position + panel.size * 0.5) as Vector2
+				var pixel := image.get_pixelv(Vector2i(sample_point * Vector2(image.get_size()) / root.get_visible_rect().size))
+				check(pixel.r > 0.8 and pixel.g < 0.2 and pixel.b > 0.8, "Slide renders live custom drawing at its settled layout position")
 			var evidence := OS.get_environment("GRAFFITTY_TEST_EVIDENCE")
 			if not evidence.is_empty(): root.get_texture().get_image().save_png(evidence.path_join("page-push.png" if entering else "page-pop.png"))
 		transition._apply(1.0)

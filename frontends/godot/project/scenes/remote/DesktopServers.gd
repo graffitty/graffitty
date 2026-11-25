@@ -38,6 +38,8 @@ func _ready() -> void:
 	title = "Servers"
 	preload("res://scenes/UIAccent.gd").install()
 	add_child(chooser)
+	size_changed.connect(_fit_page)
+	chooser.visibility_changed.connect(_fit_page)
 	connect_all.text = "Connect all"
 	connect_all.custom_minimum_size = Vector2(112, 48)
 	Page.style_button(connect_all)
@@ -48,13 +50,13 @@ func _ready() -> void:
 	local.custom_minimum_size.y = 48
 	Page.style_button(local)
 	local.pressed.connect(_return_local)
-	chooser.connections.add_child(local)
-	chooser.connections.move_child(local, 1)
+	chooser.list_items.add_child(local)
+	chooser.list_items.move_child(local, 0)
 	startup.text = "Show servers at startup"
 	startup.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
 	startup.button_pressed = application.show_servers_at_startup
 	startup.toggled.connect(application.set_show_servers_at_startup)
-	chooser.body.add_child(startup)
+	chooser.connections.add_child(startup)
 	chooser.back.text = "Done"
 	chooser.footer_actions.alignment = BoxContainer.ALIGNMENT_END
 	chooser.back.show()
@@ -85,6 +87,10 @@ func _ready() -> void:
 			confirmation.hide()
 			for row in cards: row.card.actions.hide())
 	get_node("/root/Localization").changed.connect(_refresh_status)
+
+func _fit_page() -> void:
+	if chooser.visible:
+		chooser.set_deferred("size", get_visible_rect().size)
 
 func present(source: Node) -> void:
 	if not is_embedded():

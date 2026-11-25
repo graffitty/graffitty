@@ -140,8 +140,33 @@ elif args.name == "rubber-band":
     css = "html,body{margin:0}#stage,#terminal{display:block;width:1920px;height:1080px;background:#15181e}#terminal{object-fit:contain}"
     body = video("terminal", "shell-gestures", 0, duration, 0)
 else:
-    encode("mobile", "touch-keyboard", fps=60)
-    duration = len(list(take.glob("mobile-*.jpg"))) / 60
+    recording = take / "mobile.mp4"
+    duration = float(
+        subprocess.check_output(
+            [
+                "ffprobe",
+                "-v",
+                "error",
+                "-show_entries",
+                "format=duration",
+                "-of",
+                "default=nw=1:nk=1",
+                str(recording),
+            ]
+        )
+    )
+    ffmpeg(
+        "-i",
+        str(recording),
+        "-an",
+        "-c:v",
+        "libx264",
+        "-crf",
+        "13",
+        "-pix_fmt",
+        "yuv420p",
+        str(assets / "touch-keyboard.mp4"),
+    )
     css = "*{box-sizing:border-box}html,body{margin:0}#stage,#android{width:1200px;height:1200px;background:#15181e;display:block}"
     body = video("android", "touch-keyboard", 0, duration, 0)
 size = (1200, 1200) if args.name == "adaptive-zoom-demo" else (1920, 1080)

@@ -29,6 +29,9 @@ func apply_workspace() -> void:
 	if not manager.is_inside_tree(): return
 	var window := manager.get_window()
 	window.set_meta(&"workspace_ui_active", shown)
+	if is_instance_valid(manager.view) and is_instance_valid(manager.view.host):
+		var host: Node = manager.view.host
+		if host.session_backend != null: host.session_backend.sync_window_area(host)
 	if window.has_meta(&"list_dock_space"):
 		window.get_meta(&"list_dock_space").set_workspace_active(shown)
 	for panel in manager.get_tree().get_nodes_in_group(&"workspace_tool_windows"):

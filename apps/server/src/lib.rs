@@ -1355,16 +1355,39 @@ impl Server {
         if matches!(kind, "chromium_gpu_offer" | "chromium_gpu_confirm" | "chromium_gpu_reject") {
             return chromium_gpu::Channels::handle(self, c, &value);
         }
+        if kind == "main_view" {
+            let view = if value["tab"].is_null() {
+                None
+            } else {
+                let tab = value["tab"].as_u64().ok_or("Expected tab")?;
+                let pane = value["pane"].as_str().ok_or("Expected pane")?;
+                let state = self.workspace_state.snapshot(&c.workspace);
+                state.layout.tabs.get(&tab).map(|layout| {
+                    let focused = if layout.window(pane).is_some() { pane } else { "" };
+                    (c.workspace.clone(), tab, focused.to_owned())
+                })
+            };
+            self.size_claims.present(c.frontend_client, view);
+            return send(c, json!({"type":"ack","request":value["request"]}));
+        }
         if matches!(kind, "workspace_get" | "workspace_edit") {
             let result = (|| -> Result<Value, Error> {
                 workspace::sync(self, &c.workspace)?;
                 let state = if kind == "workspace_edit" {
                     let revision = value["expected_revision"].as_u64().ok_or("Expected workspace revision")?;
-                    let edit = serde_json::from_value::<graffitty_workspace_core::state::Edit>(value["edit"].clone())?;
+                    let mut edit = serde_json::from_value::<graffitty_workspace_core::state::Edit>(value["edit"].clone())?;
                     // A frontend fitting the main view to its window claims the
                     // tab's area. The latest claim wins (see size_claims).
+                    // A queued fit can arrive after another window moved to a different pane.
+                    let mut fit_allowed = true;
+                    if let graffitty_workspace_core::state::Edit::Tab { tab, settings, .. } = &mut edit {
+                        fit_allowed = self.size_claims.can_fit(&c.workspace, *tab, c.frontend_client);
+                        if !fit_allowed && (value["claim"] == true || self.size_claims.owns(&c.workspace, *tab, c.frontend_client)) {
+                            *settings = None;
+                        }
+                    }
                     let claimed = match &edit {
-                        graffitty_workspace_core::state::Edit::Tab { tab, .. } if value["claim"] == true => Some(*tab),
+                        graffitty_workspace_core::state::Edit::Tab { tab, .. } if fit_allowed && value["claim"] == true => Some(*tab),
                         _ => None,
                     };
                     let state = self.workspace_state.edit(&c.workspace, revision, edit)?;

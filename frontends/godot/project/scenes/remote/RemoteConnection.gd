@@ -76,6 +76,7 @@ var _selecting_session := -1
 var session_restored := false
 var namespace_ids := false
 var _mapped_topology_parts := {}
+var _main_view: Dictionary = {}
 var _core: RefCounted = ClassDB.instantiate("RemoteClientCore")
 var local_ids: Dictionary[int, int]:
 	get: return _core.local_ids()
@@ -151,6 +152,7 @@ func connect_shared(options: Dictionary) -> void:
 
 func _open() -> void:
 	transport_generation += 1
+	_main_view.clear()
 	_subscribed.clear()
 	_core.controller_stop()
 	_stop_video_datagrams()
@@ -664,6 +666,7 @@ func _receive(message: Dictionary) -> void:
 			topology_received_revision = -1
 			# Keep the authenticated transport and its GPU/flow channels. The next
 			# topology replaces the presentation before subscribing to new panes.
+			_main_view.clear()
 			session_switched.emit()
 			if url == "shared://local":
 				frontend_generation += 1
@@ -765,6 +768,13 @@ func set_terminal_theme(id: int, theme: Dictionary) -> void:
 	if not connected or id not in _subscribed or terminal_themes.get(id) == theme: return
 	if send_action("terminal_theme", id, {"theme": theme}) >= 0:
 		terminal_themes[id] = theme.duplicate(true)
+
+
+func report_main_view(tab: int, pane: String) -> void:
+	if not connected: return
+	var view := {"tab": tab if tab >= 0 else null, "pane": pane}
+	if view == _main_view or (_main_view.is_empty() and tab < 0): return
+	if send_action("main_view", -1, view) >= 0: _main_view = view
 
 
 func send_action(kind: String, id: int, values: Dictionary = { }) -> int:
@@ -870,6 +880,7 @@ func _map_topology(message: Dictionary) -> Dictionary:
 		chromium.tab = local_id(int(chromium.tab))
 	for tab in message.tabs:
 		tab.id = local_id(int(tab.id))
+		if tab.has("other_main_panes"): tab.other_main_panes = preload("res://scenes/session/ServerWorkspace.gd").map_value(tab.other_main_panes, local_id)
 		tab.sessions = tab.sessions.map(
 			func(id):
 				return local_id(int(id)),
