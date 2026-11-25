@@ -513,6 +513,7 @@ fn main() -> ExitCode {
         WorkspaceCommand::NewSession(args) => integration::exit(live_sessions::new(args)),
         WorkspaceCommand::AttachSession(args) => integration::exit(live_sessions::attach(&args.target)),
         WorkspaceCommand::KillSession(args) => integration::exit(live_sessions::target("session.kill", &args.target)),
+        WorkspaceCommand::StopServer(args) => integration::exit(live_sessions::stop_server(args.kill_sessions)),
         WorkspaceCommand::RestartServer => integration::exit(live_sessions::restart_server(false)),
         WorkspaceCommand::HasSession(args) => integration::exit(live_sessions::target("session.has", &args.target)),
         WorkspaceCommand::RenameSession(args) => integration::exit(live_sessions::rename(&args.target, &args.new_name)),

@@ -15,6 +15,7 @@ pub fn handles(method: &str) -> bool {
             | "session.has"
             | "session.kill"
             | "session.checkpoint"
+            | "server.stop"
             | "server.restart"
             | "server.status"
     )
@@ -262,6 +263,14 @@ pub fn dispatch(server: &mut Server, request: &Value) -> Result<Value, Error> {
         ));
     }
     let method = request["method"].as_str().unwrap_or("");
+    if method == "server.stop" {
+        if !server.workspaces.is_empty() && params["kill_sessions"] != true {
+            return Err(api::error("sessions_running", "Sessions are still running. Use --kill-sessions to end them."));
+        }
+        close_all(server)?;
+        server.closing = true;
+        return Ok(json!({"stopping":true}));
+    }
     if method == "server.restart" {
         if server.holders.is_none() {
             return Err(api::error(

@@ -5,9 +5,10 @@ use std::collections::BTreeMap;
 /// empty server stays connected without creating or inventing a session.
 pub fn restore_session(sessions: &serde_json::Value, preferred: &str) -> Option<String> {
     let entries = sessions.as_array()?;
-    let ids: Vec<_> = entries.iter().filter_map(|entry| entry["id"].as_str()).collect();
-    ids.iter().copied().find(|id| *id == preferred)
-        .or_else(|| ids.first().copied()).map(str::to_owned)
+    let selected = entries.iter().find(|entry| entry["id"].as_str() == Some(preferred))
+        .or_else(|| entries.iter().find(|entry| !preferred.is_empty() && entry["name"].as_str() == Some(preferred)))
+        .or_else(|| entries.first())?;
+    selected["id"].as_str().map(str::to_owned)
 }
 
 /// The session `step` places from `current` in server order, wrapping at
@@ -217,7 +218,8 @@ mod tests {
     use super::*;
     #[test]
     fn view_restore_uses_only_live_sessions_and_does_not_create_one() {
-        let sessions = serde_json::json!([{"id":"$3"},{"id":"$8"}]);
+        let sessions = serde_json::json!([{"id":"$3"},{"id":"$8","name":"build"}]);
+        assert_eq!(restore_session(&sessions, "build").as_deref(), Some("$8"));
         assert_eq!(restore_session(&sessions, "$8").as_deref(), Some("$8"));
         assert_eq!(restore_session(&sessions, "$0").as_deref(), Some("$3"));
         assert_eq!(restore_session(&serde_json::json!([]), "$8"), None);

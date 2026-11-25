@@ -125,6 +125,25 @@ class LastSessionShutdownTests(unittest.TestCase):
                     self.assertEqual(observer.until(lambda m: m.get("type") == "session_closed")["workspace"], observer.workspace)
                     self.assert_stopped(owner, panes)
 
+    def test_explicit_stop_checks_sessions_before_ending_programs(self):
+        with self.owner() as owner:
+            peer = Peer(owner.local, "keep-running")
+            self.addCleanup(peer.socket.close)
+            panes = peer.topology["panes"]
+            self.watch_panes(owner, panes)
+            refused = subprocess.run([owner.binary, "server", "stop"], env=owner.env,
+                                     capture_output=True, text=True, timeout=10)
+            self.assertNotEqual(refused.returncode, 0)
+            self.assertIn("--kill-sessions", refused.stderr)
+            self.assertEqual(peer.sync()["panes"][0]["pid"], panes[0]["pid"])
+            self.cli(owner, "server", "stop", "--kill-sessions")
+            self.assert_stopped(owner, panes)
+
+    def test_stop_empty_server(self):
+        with self.owner() as owner:
+            self.cli(owner, "server", "stop")
+            self.assert_stopped(owner, [])
+
     def test_other_detached_session_survives_and_retains_its_shell(self):
         with self.owner() as owner, contextlib.ExitStack() as stack:
             first, second = Peer(owner.local, "A"), Peer(owner.local, "B")

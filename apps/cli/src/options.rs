@@ -184,6 +184,7 @@ impl Command {
             Self::Effects(a) => W::Effects(a),
             Self::Checkpoint(a) => W::Checkpoint(a),
             Self::Server(Server { command: Some(ServerCommand::Restart), .. }) => W::RestartServer,
+            Self::Server(Server { command: Some(ServerCommand::Stop(args)), .. }) => W::StopServer(args),
             Self::Server(a) => W::Server(a.options),
             Self::Remote(a) => W::Remote(a),
             Self::Integrate(a) => W::Integrate(a),
@@ -264,6 +265,7 @@ pub enum WorkspaceCommand {
     Server(graffitty_server::Options),
     /// Restart the local session server; its terminals keep running.
     RestartServer,
+    StopServer(StopServer),
     /// Display images using the Kitty graphics protocol (kitten icat compatible).
     Icat(crate::icat::Options),
     /// List live server sessions (not saved checkpoints).
@@ -640,6 +642,14 @@ pub struct Server {
 pub enum ServerCommand {
     /// Restart the local session server; its terminals keep running.
     Restart,
+    /// Stop the local server. Active sessions require --kill-sessions.
+    Stop(StopServer),
+}
+#[derive(Args)]
+pub struct StopServer {
+    /// End every session and its programs before stopping the server.
+    #[usage(long)]
+    pub kill_sessions: bool,
 }
 #[derive(Args)]
 pub struct Checkpoint {
@@ -1695,6 +1705,7 @@ impl WorkspaceCommand {
             | Self::Server(_)
             | Self::Gui(_)
             | Self::RestartServer
+            | Self::StopServer(_)
             | Self::Icat(_)
             | Self::ListSessions(_)
             | Self::NewSession(_)

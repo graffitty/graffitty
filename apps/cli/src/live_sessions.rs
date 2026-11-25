@@ -24,6 +24,23 @@ pub(crate) fn call(method: &str, params: Value) -> Result<Value> {
         .with_timeout(Duration::from_secs(10)).call(method, params)
 }
 
+/// Wait for the targeted owner to release its descriptor after graceful shutdown.
+pub fn stop_server(kill_sessions: bool) -> Result<()> {
+    use graffitty_graph_protocol::Rpc;
+    let (endpoint, token) = context()?;
+    let client = graffitty_graph_protocol::Client::new(endpoint, token.clone());
+    client.with_timeout(Duration::from_secs(10)).call("server.stop", json!({"kill_sessions":kill_sessions}))?;
+    let deadline = Instant::now() + Duration::from_secs(10);
+    while context().is_ok_and(|(_, current)| current == token) {
+        if Instant::now() >= deadline {
+            return Err("Timed out waiting for the session server to stop".into());
+        }
+        std::thread::sleep(Duration::from_millis(25));
+    }
+    println!("Server stopped");
+    Ok(())
+}
+
 /// Restarts the server without closing terminals. The holders keep every
 /// program and the new server adopts them. Returns when the new server
 /// answers.
