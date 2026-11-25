@@ -4069,32 +4069,6 @@
       "sv": "Målchatt-ID",
       "da": "Målchat-ID"
     },
-    "Manual password configured": {
-      "en-US": "Manual password configured",
-      "fr": "Mot de passe manuel configuré",
-      "pt-BR": "Senha manual configurada",
-      "es": "Contraseña manual configurada",
-      "it": "Password manuale configurata",
-      "ko": "비밀번호가 직접 설정됨",
-      "ja": "手動パスワード設定済み",
-      "de": "Manuelles Passwort konfiguriert",
-      "nb": "Manuelt passord konfigurert",
-      "sv": "Manuellt lösenord konfigurerat",
-      "da": "Manuel adgangskode konfigureret"
-    },
-    "Using a temporary password": {
-      "en-US": "Using a temporary password",
-      "fr": "Utilisation d’un mot de passe temporaire",
-      "pt-BR": "Usando senha temporária",
-      "es": "Usando contraseña temporal",
-      "it": "In uso una password temporanea",
-      "ko": "임시 비밀번호 사용 중",
-      "ja": "一時パスワードを使用中",
-      "de": "Temporäres Passwort wird verwendet",
-      "nb": "Bruker midlertidig passord",
-      "sv": "Använder tillfälligt lösenord",
-      "da": "Bruger midlertidig adgangskode"
-    },
     "New manual password (leave blank to keep)": {
       "en-US": "New manual password (leave blank to keep)",
       "fr": "Nouveau mot de passe manuel (laisser vide pour conserver)",
@@ -4120,19 +4094,6 @@
       "nb": "Angi manuelt passord (minst 8 tegn)",
       "sv": "Ange manuellt lösenord (minst 8 tecken)",
       "da": "Angiv manuel adgangskode (mindst 8 tegn)"
-    },
-    "Temporary passwords are disabled. Only your manual password will be accepted.": {
-      "en-US": "Temporary passwords are disabled. Only your manual password will be accepted.",
-      "fr": "Les mots de passe temporaires sont désactivés. Seul votre mot de passe manuel sera accepté.",
-      "pt-BR": "Senhas temporárias estão desativadas. Apenas sua senha manual será aceita.",
-      "es": "Las contraseñas temporales están desactivadas. Solo se aceptará tu contraseña manual.",
-      "it": "Le password temporanee sono disattivate. Sarà accettata solo la password manuale.",
-      "ko": "임시 비밀번호가 비활성화되었습니다. 직접 설정한 비밀번호만 사용할 수 있습니다.",
-      "ja": "一時パスワードは無効です。手動設定のパスワードのみ使用できます。",
-      "de": "Temporäre Passwörter sind deaktiviert. Nur dein manuelles Passwort wird akzeptiert.",
-      "nb": "Midlertidige passord er deaktivert. Kun det manuelle passordet godtas.",
-      "sv": "Tillfälliga lösenord är inaktiverade. Endast ditt manuella lösenord godtas.",
-      "da": "Midlertidige adgangskoder er deaktiveret. Kun din manuelle adgangskode accepteres."
     },
     "A new temporary password is generated when sharing restarts.": {
       "en-US": "A new temporary password is generated when sharing restarts.",
@@ -14137,7 +14098,7 @@
       "pt-BR": "Endereço IP de escuta",
       "es": "Dirección IP de escucha",
       "it": "Indirizzo IP di ascolto",
-      "ko": "수신 IP 주소",
+      "ko": "서버 수신 주소",
       "ja": "待ち受け IP アドレス",
       "de": "IP-Adresse zum Lauschen",
       "nb": "IP-adresse å lytte på",

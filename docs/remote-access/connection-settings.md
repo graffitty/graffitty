@@ -4,7 +4,7 @@ Configure these on the computer running your sessions.
 
 ## Listen on the right network
 
-Open **Sessions → Remote Access Settings…** on the host. Choose **Enable remote access**, enter the **Listen IP address** and **Listen port**, then select **Save**. The running server applies the changes immediately and saves them for its next launch. Open terminals keep running.
+Open **Sessions → Remote Access Settings…** on the host. Choose **Enable remote access**, enter the **Listen IP address** and **Listen port**, then select **Save**.
 
 You can also configure startup in `~/.config/graffitty/server.toml`.
 

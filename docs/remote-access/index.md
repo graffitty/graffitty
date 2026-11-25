@@ -11,7 +11,7 @@ On the computer that will run your sessions, install Graffitty and choose one of
 
 1. Open **Sessions → Remote Access Settings…** and turn on **Enable remote access**.
 2. Set **Listen IP address** to the host’s LAN or Tailscale IP and **Listen port** to `7183`.
-3. Choose **Temporary password** or **Manual password only**, then select **Save**. The running server applies the settings immediately and remembers them for its next launch.
+3. Choose **Temporary password** or **Manual password only**, then select **Save**.
 
 ### Edit server.toml
 

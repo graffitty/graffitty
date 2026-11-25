@@ -47,7 +47,9 @@ func run() -> void:
 	var window := await dialog(app)
 	check(window.path == OS.get_environment("GRAFFITTY_TEST_AUTH_PATH"), "Dialog uses the actual owner's private auth file")
 	var port := OS.get_environment("GRAFFITTY_TEST_LISTEN_PORT").to_int()
+	check(not window.sharing.button_pressed and not window.listen_ip.editable and not window.listen_port.editable and window.password_mode.disabled and window.temporary_length.disabled and window.telegram.disabled and window.temporary.toggle.disabled, "Sharing off locks listener, password, and Telegram controls")
 	window.sharing.button_pressed = true
+	check(window.listen_ip.editable and window.listen_port.editable and not window.password_mode.disabled and not window.temporary.toggle.disabled and not window.temporary.editable, "Enabling sharing unlocks settings and keeps the generated password read-only")
 	window.listen_ip.text = "127.0.0.1"
 	window.listen_port.value = port
 	window.password_mode.select(window.MANUAL_ONLY)
@@ -87,10 +89,16 @@ func run() -> void:
 	remote.connect_remote(url,"second test-only password")
 	check(await wait_for(func(): return remote.connected), "New password authenticates on the same owner")
 	window = await dialog(app)
+	check(not window.status.visible and not window.mode_help.visible, "Manual mode omits redundant password labels")
+	var saved_auth := FileAccess.get_file_as_string(window.path)
+	window.listen_ip.text = "unfinished"
+	window.password.text = "unfinished edit"
 	window.sharing.button_pressed = false
+	check(not window.password.editable and window.password.toggle.disabled and not window.get_ok_button().disabled, "Disabled password fields leave Save available")
 	await window._save()
 	await process_frame
 	check(not app.remote_control.enabled and local.connected, "Stopping sharing leaves the private client attached")
+	check(FileAccess.get_file_as_string(OS.get_environment("GRAFFITTY_TEST_AUTH_PATH")) == saved_auth, "Disabling sharing preserves the authentication settings")
 	local.disconnect_remote()
 	remote.disconnect_remote()
 	window = await dialog(app)
