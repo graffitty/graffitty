@@ -56,6 +56,6 @@ subprocess.run([str(app / "Contents/MacOS/GraffittyRuntime"), "--version"], chec
 subprocess.run([
     sys.executable,
     str(pathlib.Path(__file__).resolve().parents[2] / "tests/chromium/chromium_nested_bundle_e2e.py"),
-    str(host),
+    str(host), "--select-menu",
 ], check=True)
 print("GRAFFITTY_PACKAGE_PASS")
