@@ -5,41 +5,27 @@ Programs keep running there when you disconnect.
 
 ## Connect to a Graffitty server (recommended)
 
-On the computer that will run your sessions, install Graffitty and choose one of the three setup methods below. For a direct connection, use the host’s LAN address on trusted Wi-Fi or its Tailscale address. [Network settings](connection-settings.md#listen-on-the-right-network)
+On the computer that will run your sessions, choose **one** way to enable sharing.
 
-### Use the desktop GUI
+**Desktop GUI** — Open **Sessions → Remote Access Settings…** and turn on **Enable remote access**. Enter the host’s LAN or Tailscale IP, leave the port at `7183`, choose a password mode, and select **Save**.
 
-1. Open **Sessions → Remote Access Settings…** and turn on **Enable remote access**.
-2. Set **Listen IP address** to the host’s LAN or Tailscale IP and **Listen port** to `7183`.
-3. Choose **Temporary password** or **Manual password only**, then select **Save**.
-
-### Edit server.toml
-
-On the host, edit `~/.config/graffitty/server.toml` (or `$XDG_CONFIG_HOME/graffitty/server.toml`). Replace the example address with the host’s actual LAN or Tailscale IP.
+**Configuration file** — Edit `~/.config/graffitty/server.toml` (or `$XDG_CONFIG_HOME/graffitty/server.toml`). Replace the example IP with the host’s LAN or Tailscale address.
 
 ```toml
 [remote]
 enabled = true
-bind_address = "192.0.2.10" # Example address. Replace before starting the server.
+bind_address = "192.0.2.10"
 port = 7183
 ```
 
-To use a permanent password, run `gft server --set-password`. If the server is already running, reload the file while keeping terminals alive:
+For a permanent password, run `gft server --set-password`. If the server is already running, [reload its configuration](../customize/server-configuration.md#reload-server-configuration).
+
+**Command line** — Set a password and start the listener. Replace `192.0.2.10` with the host’s LAN or Tailscale IP.
 
 ```sh
-gft checkpoint save
-gft server restart
-```
-
-### Start the listener from the CLI
-
-```sh
-curl -fsSL https://graffitty.com/install.sh | sh
 gft server --set-password
-gft server --listen 0.0.0.0:7183
+gft server --listen 192.0.2.10:7183
 ```
-
-`0.0.0.0` listens on every IPv4 interface. To listen on just one network, substitute the host’s address on that network.
 
 ### Connect from the other device
 
@@ -49,7 +35,7 @@ gft server --listen 0.0.0.0:7183
 
 Sharing is off by default. Android requires a server and has no local terminal mode.
 
-### Or set it up over SSH
+## Connect over SSH instead
 
 ```sh
 gft remote connect user@remote-host
