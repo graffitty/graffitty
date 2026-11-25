@@ -564,7 +564,7 @@ pub struct RemoteConnect {
     /// Exact CLI server alias for targets such as build/t12 (one host only).
     #[usage(long)]
     pub alias: Option<String>,
-    /// Optional session name; omitted uses the server's automatic session selection.
+    /// Optional session name or stable $ID; omitted uses the server's automatic session selection.
     #[usage(long, default = "")]
     pub workspace: String,
     /// Unified gft executable built for the remote OS and CPU; uploaded atomically.
@@ -573,6 +573,9 @@ pub struct RemoteConnect {
     /// Prepare tunnels and print a connection file without launching the GUI.
     #[usage(long)]
     pub no_gui: bool,
+    /// Open an interactive terminal for SSH prompts and connection errors.
+    #[usage(long)]
+    pub terminal: bool,
 }
 
 #[derive(Args)]

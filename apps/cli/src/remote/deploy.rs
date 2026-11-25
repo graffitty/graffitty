@@ -18,7 +18,7 @@ pub(super) enum Resolved {
     Running(String),
 }
 
-fn sh_quote(value: &str) -> String {
+pub(super) fn sh_quote(value: &str) -> String {
     format!("'{}'", value.replace('\'', "'\\''"))
 }
 

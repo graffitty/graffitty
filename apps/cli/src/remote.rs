@@ -3,8 +3,10 @@
 mod deploy;
 mod recovery;
 mod release;
+mod terminal;
 
 use crate::options::{RemoteCommand, RemoteConnect};
+use graffitty_transport::client::{validate_ssh_destination, validate_ssh_session};
 use serde_json::{Value, json};
 use std::{
     fs::{self, File, OpenOptions},
@@ -56,17 +58,7 @@ fn output(host: &str, script: &str) -> Result<String, Error> {
     }
     Ok(String::from_utf8(result.stdout)?.trim().into())
 }
-fn validate_host(host: &str) -> Result<(), Error> {
-    if host.is_empty()
-        || host.starts_with('-')
-        || host.chars().any(|c| c.is_whitespace() || c.is_control())
-    {
-        return Err("Use an SSH hostname, user@host, or ~/.ssh/config alias".into());
-    }
-    Ok(())
-}
 fn prepare(host: &str, binary: Option<&Path>) -> Result<Value, Error> {
-    validate_host(host)?;
     let platform = deploy::Platform::detect(host)?;
     let result = match deploy::resolve(host, &platform, binary)? {
         deploy::Resolved::Running(descriptor) => descriptor,
@@ -360,33 +352,27 @@ fn launch_client(path: &Path) -> Result<Child, Error> {
     Ok(command.spawn()?)
 }
 pub fn run(command: RemoteCommand) -> Result<(), Error> {
-    let RemoteCommand::Connect(RemoteConnect {
-        hosts,
-        alias,
-        workspace,
-        server_binary,
-        no_gui,
-    }) = command;
-    let running = std::sync::Arc::new(std::sync::atomic::AtomicBool::new(true));
-    let stop = running.clone();
-    ctrlc::set_handler(move || stop.store(false, std::sync::atomic::Ordering::Relaxed))?;
+    let RemoteCommand::Connect(options) = command;
+    let RemoteConnect { hosts, alias, workspace, .. } = &options;
     if hosts.is_empty() {
         return Err("Specify one or more SSH hosts".into());
     }
-    if let Some(alias) = &alias {
+    if let Some(alias) = alias {
         if hosts.len() != 1 || !graffitty_protocol::controller::valid_alias(alias) {
             return Err("--alias requires one host and 1–64 letters, numbers, dots, underscores or hyphens, starting with a letter or number".into());
         }
     }
-    if workspace.len() > 64
-        || !workspace
-            .chars()
-            .all(|c| c.is_ascii_alphanumeric() || "-_.".contains(c))
-    {
-        return Err(
-            "Workspace must be empty or use 1–64 letters, numbers, dots, underscores or hyphens".into(),
-        );
+    validate_ssh_session(workspace)?;
+    for host in hosts {
+        validate_ssh_destination(host)?;
     }
+    if options.terminal {
+        return terminal::launch(&options);
+    }
+    let RemoteConnect { hosts, alias, workspace, server_binary, no_gui, .. } = options;
+    let running = std::sync::Arc::new(std::sync::atomic::AtomicBool::new(true));
+    let stop = running.clone();
+    ctrlc::set_handler(move || stop.store(false, std::sync::atomic::Ordering::Relaxed))?;
     let mut tunnels = Vec::new();
     let mut connections = vec![];
     let mut controller = None;
@@ -485,8 +471,8 @@ mod tests {
     #[test]
     fn destinations_cannot_inject_ssh_options() {
         for s in ["-oProxyCommand=evil", "bad\nname", ""] {
-            assert!(validate_host(s).is_err());
+            assert!(validate_ssh_destination(s).is_err());
         }
-        assert!(validate_host("user@build-server").is_ok());
+        assert!(validate_ssh_destination("user@build-server").is_ok());
     }
 }

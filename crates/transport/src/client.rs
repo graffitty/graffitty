@@ -361,8 +361,12 @@ pub fn validate_ssh_destination(destination: &str) -> Result<()> {
 }
 
 pub fn validate_ssh_session(session: &str) -> Result<()> {
-    ensure!(session.len() <= 64 && session.chars().all(|c| c.is_ascii_alphanumeric() || "-_.".contains(c)),
-        "Workspace must be empty or use 1–64 letters, numbers, dots, underscores or hyphens");
+    let valid = if let Some(id) = session.strip_prefix('$') {
+        !id.starts_with('0') && id.bytes().all(|b| b.is_ascii_digit()) && id.parse::<u64>().is_ok()
+    } else {
+        session.len() <= 64 && session.chars().all(|c| c.is_ascii_alphanumeric() || "-_.".contains(c))
+    };
+    ensure!(valid, "Use a session name or a stable session ID such as $1");
     Ok(())
 }
 
@@ -1230,12 +1234,12 @@ mod tests {
         let mut ssh: SavedConnection = serde_json::from_value(json!({"name":"SSH","url":"ssh://dev@Build-Alias"})).unwrap();
         assert!(ssh.initial_session.is_empty());
         save_connections(&path, &[direct.clone(), ssh.clone()]).unwrap();
-        ssh.initial_session = "dev-1".into();
+        ssh.initial_session = "$2".into();
         upsert_connection(&path, ssh.clone()).unwrap();
         reorder_connections(&path, &ssh.url, &direct.url, true).unwrap();
         assert_eq!(load_connections(&path).unwrap(), vec![ssh.clone(), direct]);
         let before = fs::read(&path).unwrap();
-        for session in ["a b", "name/new", &"x".repeat(65)] {
+        for session in ["a b", "name/new", "$", "$0", "$02", "$+2", "$18446744073709551616", &"x".repeat(65)] {
             ssh.initial_session = session.into();
             assert!(upsert_connection(&path, ssh.clone()).is_err());
         }
