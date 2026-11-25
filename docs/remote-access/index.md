@@ -5,29 +5,51 @@ Programs keep running there when you disconnect.
 
 ## Connect to a Graffitty server (recommended)
 
-Graffitty connects to its own server on the other computer. Set it up in either way.
+On the computer that will run your sessions, install Graffitty and choose one of the three setup methods below. For a direct connection, use the host’s LAN address on trusted Wi-Fi or its Tailscale address. [Network settings](connection-settings.md#listen-on-the-right-network)
 
-### Install it on the remote computer
+### Use the desktop GUI
+
+1. Open **Sessions → Remote Access Settings…** and turn on **Enable remote access**.
+2. Set **Listen IP address** to the host’s LAN or Tailscale IP and **Listen port** to `7183`.
+3. Choose **Temporary password** or **Manual password only**, then select **Save**. The running server applies the settings immediately and remembers them for its next launch.
+
+### Edit server.toml
+
+On the host, edit `~/.config/graffitty/server.toml` (or `$XDG_CONFIG_HOME/graffitty/server.toml`). Replace the example address with the host’s actual LAN or Tailscale IP.
+
+```toml
+[remote]
+enabled = true
+bind_address = "192.0.2.10" # Example address. Replace before starting the server.
+port = 7183
+```
+
+To use a permanent password, run `gft server --set-password`. If the server is already running, reload the file while keeping terminals alive:
+
+```sh
+gft checkpoint save
+gft server restart
+```
+
+### Start the listener from the CLI
 
 ```sh
 curl -fsSL https://graffitty.com/install.sh | sh
 gft server --set-password
-gft server --listen 0.0.0.0:7183   # or its Tailscale IP
+gft server --listen 0.0.0.0:7183
 ```
 
-Use a [trusted network or Tailscale](connection-settings.md#listen-on-the-right-network).
-On a desktop, open **Sessions → Remote Access Settings…** to enable sharing, set the listening address and port, and choose a password.
+`0.0.0.0` listens on every IPv4 interface. To listen on just one network, substitute the host’s address on that network.
 
-Then, on your other device:
+### Connect from the other device
 
 1. Open **Sessions → Servers… → Add server**, or **Add server** on Android.
-2. Enter the server address and password.
+2. Enter the host’s LAN or Tailscale address, port, and password.
 3. Leave the session name blank to resume the previous session.
 
-Sharing is off by default. Saving the settings also sets the startup preference.
-Android requires a server; it has no local terminal mode.
+Sharing is off by default. Android requires a server and has no local terminal mode.
 
-### Or set it up from your computer
+### Or set it up over SSH
 
 ```sh
 gft remote connect user@remote-host
