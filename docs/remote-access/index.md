@@ -42,7 +42,9 @@ If you have SSH access to the remote computer, run this on your **client compute
 gft remote connect user@remote-host
 ```
 
-Graffitty installs the server if needed, starts or reuses it on the remote computer, and connects your client to it through the tunnel. Only the SSH port needs to be reachable. [SSH setup details](connection-settings.md#set-up-the-server-over-ssh)
+**Which port?** Only the SSH port (usually `22`) needs to be reachable from your client. When this command starts a Graffitty server, it opens a port on the remote computer’s loopback address (`127.0.0.1`). SSH carries your client’s traffic to the remote computer and forwards it to that local port. You can leave port `7183` closed in the firewall.
+
+**Which password?** Sign in to SSH as usual with your SSH key or account password. In temporary-password mode, `gft` retrieves the Graffitty password over SSH and supplies it to the server for you. A manually configured Graffitty password or a required verification code still applies. [SSH setup details](connection-settings.md#set-up-the-server-over-ssh)
 
 ## Leave safely
 
