@@ -15,6 +15,16 @@ Layout changes affect grids; view-only operations do not.
 | Chromium viewport | Follows its content area; native visible windows keep their own bounds |
 | Terminal grid | Changes with content-area size or font settings |
 
+A fitting window publishes its visible tab and focused pane to that session’s server.
+Attachment, input and window resizing can fit that tab while all windows displaying
+it share the same focused pane in Main. Inspecting a different pane or using
+Overview keeps the tab’s current area. The server checks again when a queued edit arrives.
+
+The `main_view` message carries the wire tab ID and pane address. An empty pane
+marks an overview, and a null tab clears the presentation when the workspace
+is hidden. Each topology tab lists the other viewers’ distinct pane addresses
+in `other_main_panes`. Disconnecting or switching sessions clears the report.
+
 Focusing, raising, moving, or renaming a pane does not resize its terminal.
 Camera zoom changes the preview. World switches preserve shells, panes, and focus.
 

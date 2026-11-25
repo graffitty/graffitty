@@ -9,6 +9,16 @@ func _initialize() -> void:
 	root.unfocusable = true
 	root.add_child.call_deferred(preload("res://tests/client_scenarios/android_ui.gd").PointerGuard.new())
 	var scenario := preload("AdaptiveZoom.gd").new()
+	# Movie Maker can announce low disk space at startup. Dismiss only this
+	# advisory before filming; encoding and every other diagnostic remain checked.
+	node_added.connect(func(node):
+		if node.has_signal("diagnostics_shown"):
+			node.diagnostics_shown.connect(func(entries):
+				if entries.size() != 1: return
+				var entry: Dictionary = entries[0]
+				if entry.warning and str(entry.file).ends_with("movie_writer.cpp") and str(entry.message).begins_with("Current available space on disk is low"):
+					scenario.diagnostic_guard.allow(entry.message, entry.file, entry.line, true)
+					node.dismiss_messages.call_deferred()))
 	scenario.desktop_capture = true
 	scenario.settings = JSON.parse_string(FileAccess.get_file_as_string(OS.get_environment("GRAFFITTY_SERVER_DESCRIPTOR")))
 	scenario.output = OS.get_environment("TAKE").path_join("camera.json")

@@ -9,7 +9,7 @@ done
 
 # An executable uploaded for an earlier session can already be gone. Check
 # the same exclusive flock as gft server --status before touching an install.
-state="$HOME/.local/state/graffitty"
+state="${XDG_STATE_HOME:-$HOME/.local/state}/graffitty"
 [ -f "$state/server.json" ] && [ -f "$state/server.lock" ] || exit 0
 if command -v flock >/dev/null 2>&1; then
     flock -n -E 75 "$state/server.lock" true
@@ -24,4 +24,3 @@ else
     exit 0
 fi
 printf 'running\n'
-cat "$state/server.json"

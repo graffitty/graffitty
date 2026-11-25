@@ -12,9 +12,10 @@ use std::path::{Path, PathBuf};
 /// `*` matches any one name. World tables are remembered per world: their
 /// transitions, and settings chosen from `SetWorldSetting` menu entries.
 /// A world's `terminal` override is the user's alone.
-pub const KEYS: [&[&str]; 4] = [
+pub const KEYS: [&[&str]; 5] = [
     &["effects", "profile"],
     &["effects", "disabled"],
+    &["effects", "camera", "dof_blur_tint"],
     &["terminal", "effects"],
     &["worlds", "*", "*"],
 ];
@@ -135,6 +136,7 @@ mod tests {
     #[test]
     fn explicit_client_keys_win_and_the_rest_follow_the_last_choice() {
         let remembered = file("layer", "");
+        remember(&remembered, table("[effects.camera]\ndof_blur_tint = '#6684c7'")).unwrap();
         remember(&remembered, table("[effects]\nprofile = 'off'\ndisabled = ['camera.tilt']")).unwrap();
         remember(
             &remembered,
@@ -150,6 +152,8 @@ mod tests {
         let settings = load("");
         let effects = settings.effects.unwrap();
         assert_eq!(effects.profile.as_deref(), Some("off"));
+        let tint = effects.camera.unwrap().dof_blur_tint.unwrap();
+        assert_eq!(toml::Value::try_from(tint).unwrap().as_str(), Some("#6684c7"));
         assert_eq!(effects.disabled.unwrap(), ["camera.tilt"]);
         let trail = settings.terminal.unwrap().effects.unwrap().cursor_trail.unwrap();
         assert_eq!(trail.delay_ms, Some(0));

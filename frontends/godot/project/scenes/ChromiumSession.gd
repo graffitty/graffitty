@@ -393,7 +393,7 @@ func remote_input(event: InputEvent, extent: Vector2) -> void:
 					return
 				mouse_buttons = (mouse_buttons | bit) if event.pressed else (mouse_buttons & ~bit)
 				args.type = "mousePressed" if event.pressed else "mouseReleased"
-				if event.button_index == MOUSE_BUTTON_RIGHT and event.pressed:
+				if event.button_index in [MOUSE_BUTTON_LEFT, MOUSE_BUTTON_RIGHT] and event.pressed:
 					context_menu_request = Crypto.new().generate_random_bytes(12).hex_encode()
 					args["contextMenuRequest"] = context_menu_request
 				args.button = { MOUSE_BUTTON_LEFT: "left", MOUSE_BUTTON_RIGHT: "right", MOUSE_BUTTON_MIDDLE: "middle" }[event.button_index]

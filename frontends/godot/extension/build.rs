@@ -35,15 +35,17 @@ fn main() {
         println!("cargo:rerun-if-changed=src/trackpad.mm");
         println!("cargo:rerun-if-changed=src/process_signals.cpp");
     }
-    if target == "aarch64-apple-ios" {
+    if target == "aarch64-apple-ios" || target == "aarch64-apple-ios-sim" {
         cc::Build::new()
             .file("src/ios_renderer.m")
+            .file("src/ios_password_keyboard.m")
             .file("src/clipboard_ios.m")
             .flag("-fobjc-arc")
             .flag("-Werror=unguarded-availability-new")
             .compile("graffitty-ios-renderer");
         println!("cargo:rustc-link-lib=framework=Metal");
         println!("cargo:rerun-if-changed=src/ios_renderer.m");
+        println!("cargo:rerun-if-changed=src/ios_password_keyboard.m");
         println!("cargo:rustc-link-lib=framework=UIKit");
         println!("cargo:rerun-if-changed=src/clipboard_ios.m");
     }

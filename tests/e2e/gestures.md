@@ -265,6 +265,9 @@ notification history) selects like a terminal, and has no Copy button.
   triple click takes the line without surrounding blanks and dragging extends a
   line at a time. Cmd/Ctrl+C copies the selection (everything when nothing is
   selected in Messages); the context menu offers Copy and Select All.
+- On iPhone and iPad, hold a word in Messages, Open log or About. Drag to
+  extend the selection by whole words and lift for Copy or Select All. Start
+  dragging before the hold completes to scroll the text.
 - Android: the text is a native selectable view. A long press or double tap
   selects a word with the system's handles, and the system's floating toolbar
   offers Copy and Select all. The copied text is complete, including Unicode.

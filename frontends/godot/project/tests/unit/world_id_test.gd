@@ -20,7 +20,16 @@ func test_discovered_world_ids_resolve_to_their_path() -> void:
 	FileAccess.open(folder.path_join("test-id-world.json"), FileAccess.WRITE).store_string(
 		JSON.stringify({ "api": Host.API_VERSION, "id": "test-id-world", "name": "Test" }))
 	OS.set_environment("XDG_DATA_HOME", data)
+	var extra := folder.get_base_dir().path_join("aaa-pack")
+	DirAccess.make_dir_recursive_absolute(extra)
+	FileAccess.open(extra.path_join("aaa-pack.pck"), FileAccess.WRITE).store_string("")
+	FileAccess.open(extra.path_join("aaa-pack.json"), FileAccess.WRITE).store_string(
+		JSON.stringify({"api": Host.API_VERSION, "id": "aaa-pack", "name": "Zebra"}))
 	var host = Host.new()
+	var names: Array = host.available_worlds().map(func(world): return world.name)
+	expect(names == (["Flat 2D", "Flat 3D"] if OS.has_feature("mobile") else ["Flat 2D", "Flat 3D", "Test", "Zebra"]), "Built-in flat worlds come first, then installed display names in alphabetical order")
+	expect(Host.default_world() == "flat-2d", "An unconfigured workspace starts in Flat 2D")
+	expect(host.resolve_world("flat-3d") == "flat-3d", "Flat 3D can still be selected explicitly")
 	expect(host.resolve_world("test-id-world") == pack, "An id resolves to the discovered pack")
 	expect(host.resolve_world("flat-2d") == "flat-2d", "Built-in ids stay as they are")
 	expect(host.resolve_world(pack) == pack, "Paths stay as they are")
@@ -33,5 +42,7 @@ func test_discovered_world_ids_resolve_to_their_path() -> void:
 	OS.set_environment("XDG_DATA_HOME", previous)
 	for file in ["test-id-world.pck", "test-id-world.json"]:
 		DirAccess.remove_absolute(folder.path_join(file))
-	for directory in [folder, folder.get_base_dir(), data.path_join("graffitty"), data]:
+	for file in ["aaa-pack.pck", "aaa-pack.json"]:
+		DirAccess.remove_absolute(extra.path_join(file))
+	for directory in [extra, folder, folder.get_base_dir(), data.path_join("graffitty"), data]:
 		DirAccess.remove_absolute(directory)

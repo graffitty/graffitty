@@ -81,6 +81,7 @@ func run() -> void:
 	root.size = Vector2i(900, 700)
 	await check_text_selection()
 	await check_text_rubber_band()
+	await check_list_text_selection()
 	await check_list_touch()
 	await check_dictation_preview()
 	print("SELECTABLE_TEXT_PASS" if failures.is_empty() else "SELECTABLE_TEXT_FAIL")
@@ -186,6 +187,26 @@ func check_text_selection() -> void:
 	text.text = "cd ~/project/godot-ghostty; echo $HOME\n  Build 42 (debug)  \nlast line"
 	await frames(3)
 	var path := at_column(text, 0, 8)
+	touch(path, true)
+	await create_timer(0.6).timeout
+	check(text.get_selected_text() == "~/project/godot-ghostty", "Holding a finger selects the word")
+	var end := at_column(text, 0, 29)
+	drag(path, end)
+	check(text.get_selected_text() == "~/project/godot-ghostty; echo", "Dragging after a hold extends the selection")
+	touch(end, false)
+	check(text.menu != null and not text.menu.is_item_disabled(0), "Lifting the finger offers Copy")
+	if text.menu != null:
+		var touch_menu := preload("res://scenes/PopupChrome.gd").presentation(text.menu)
+		if touch_menu != null and touch_menu.has_method("dismiss"): touch_menu.dismiss()
+		else: text.menu.hide()
+	await frames()
+	text.deselect()
+	touch(path, true)
+	drag(path, path + Vector2(0, 25))
+	await create_timer(0.6).timeout
+	check(not text.has_selection(), "Moving before the hold scrolls without selecting")
+	touch(path + Vector2(0, 25), false)
+	await frames()
 	mouse(path)
 	mouse(path, MOUSE_BUTTON_LEFT, false)
 	mouse(path, MOUSE_BUTTON_LEFT, true, true)
@@ -227,12 +248,14 @@ func check_text_rubber_band() -> void:
 	for i in 200: lines.append("row %d" % i)
 	text.text = "\n".join(lines)
 	await frames(3)
+	var resting_track := text.view.get_v_scroll_bar().get_global_rect()
 	var inside := Vector2(200, 100)
 	pan(inside, 0, "began")
 	for i in 12: pan(inside, -20, "changed")
 	await frames()
 	check(text.view.scroll_vertical == 0.0 and text.elastic.get_stretch() < 0.0 and text.view.offset_top > 0.0, "Pulling down at the top stretches the text: %s" % text.elastic.get_stretch())
 	check(text._bar_skin != null and text._bar_skin.visible and text._bar_skin.stretch < 0.0, "The text's scrollbar thumb shortens while pulled")
+	check(text._bar_skin.get_global_rect().is_equal_approx(resting_track), "The scrollbar stays at its resting track while the text pulls down")
 	pan(inside, 0, "ended")
 	check(await settle(func(): return text.elastic.get_stretch() == 0.0 and text.view.offset_top == 0.0), "The pull springs back to rest")
 	check(not text._bar_skin.visible, "At rest the text's scrollbar draws itself again")
@@ -241,7 +264,50 @@ func check_text_rubber_band() -> void:
 	pan(inside, 0, "ended")
 	await frames()
 	check(is_equal_approx(text.view.scroll_vertical * text.view.get_line_height(), 300.0), "A pan scrolls by the distance travelled: %s rows" % text.view.scroll_vertical)
+	text.view.scroll_vertical = text.view.get_v_scroll_bar().max_value
+	var bottom := text.view.scroll_vertical
+	touch(inside, true)
+	drag(inside, inside - Vector2(0, 65))
+	await frames()
+	check(text.view.offset_top < 0.0 and text._bar_skin.stretch > 0.0, "A finger pulling past the bottom stretches the text and compresses the thumb")
+	check(text._bar_skin.get_global_rect().is_equal_approx(resting_track), "The bottom track stays pinned during touch overscroll")
+	touch(inside - Vector2(0, 65), false)
+	check(await settle(func(): return text.elastic.get_stretch() == 0.0 and not text._bar_skin.visible), "The bottom pull restores the native scrollbar")
+	check(is_equal_approx(text.view.scroll_vertical, bottom), "Releasing an overscroll preserves the final fractional row")
 	text.queue_free()
+	await frames()
+
+
+func check_list_text_selection() -> void:
+	var list := preload("res://scenes/ElasticScrollContainer.gd").new()
+	list.position = Vector2(20, 20)
+	list.size = Vector2(500, 260)
+	var message := preload("res://scenes/SelectableText.gd").new()
+	message.fit_content = true
+	message.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	message.text = "Held message body\n".repeat(100)
+	list.add_child(message)
+	root.add_child(list)
+	await frames(4)
+	var at := at_column(message, 1, 6)
+	touch(at, true)
+	await create_timer(0.6).timeout
+	check(message.get_selected_text() == "message", "Holding a history message selects its word in the scrolling list")
+	drag(at, at + Vector2(32, 40))
+	check(list.scroll_offset() == 0 and message.get_selected_text().length() > 7, "A held history selection extends without scrolling its list")
+	touch(at + Vector2(32, 40), false)
+	if message.menu != null:
+		var popup := preload("res://scenes/PopupChrome.gd").presentation(message.menu)
+		if popup != null and popup.has_method("dismiss"): popup.dismiss()
+		else: message.menu.hide()
+	message.deselect()
+	await frames()
+	touch(at + Vector2(0, 60), true)
+	drag(at + Vector2(0, 60), at)
+	await create_timer(0.6).timeout
+	check(list.scroll_offset() > 0 and not message.has_selection(), "Moving before the hold scrolls the history and cancels selection")
+	touch(at, false)
+	list.queue_free()
 	await frames()
 
 

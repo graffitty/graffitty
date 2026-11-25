@@ -165,7 +165,7 @@ func play() -> void:
 	# Real terminal paste: hold/release submits a word captured before setup,
 	# waits for final correction, inserts once, and never presses Enter.
 	var output := OS.get_environment("GRAFFITTY_DICTATION_TEST_OUTPUT")
-	await host.session_backend.connection.remote_call(source_id, "terminal.type", {"interval_ms":0, "text":"read -r line; printf '%s' \"$line\" > '" + output + "'\n"})
+	await host.session_backend.connection.remote_call(source_id, "pane.send", {"enter":true, "text":"read -r line; printf '%s' \"$line\" > '" + output + "'"})
 	await hold(.3)
 	dictation._press()
 	audio(dictation, 480)
@@ -176,7 +176,7 @@ func play() -> void:
 	check(not dictation.failed and not dictation.bar.visible, "Final short word auto-sends on hold release: " + dictation.status.text)
 	await dictation.send()
 	check(not FileAccess.file_exists(output), "Sending does not press Enter")
-	await host.session_backend.connection.remote_call(source_id, "terminal.type", {"text":"\n"})
+	await host.session_backend.connection.remote_call(source_id, "terminal.press", {"key":"Enter"})
 	await hold(.3)
 	check(FileAccess.get_file_as_string(output) == "안녕 final words", "Only the final corrected transcript is inserted once")
 	# Latched recording's square sends into the originally focused chromium field.

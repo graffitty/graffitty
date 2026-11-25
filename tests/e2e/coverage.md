@@ -72,6 +72,19 @@ outside Git. The iOS native-only build was queued behind another build's lock
 and canceled without compiling; no Android/iOS device run or installation was
 performed. UI-13 and the shared iOS control checks still require hardware evidence.
 
+## Flat session-flight framing
+
+2026-11-25: Flat 2D/3D retain each departing session's screen projection while
+the live camera restores the next session's zoom. The authored-world kit keeps
+world-space travel. Five terminal-presentation unit tests and the deferred 3D
+projection check passed. The existing private-server landing harness passed
+Fly away and Fly away and in in both Flat renderers with different saved zooms:
+all four cases retained departure framing, and 32 rendered landing/live frames
+met the 96% colored-marker overlap threshold. The Metal scatter-depth smoke
+also passed, including side faces, clipping, landing and interruption checks.
+The macOS background guards passed. These are rendered desktop tests; physical
+mobile acceptance remains pending.
+
 ## Session viewport retention and flight effects (UI-08)
 
 2026-11-14: Fly away and in now prepares the full destination terminal geometry
@@ -1576,6 +1589,17 @@ landing delay and feel. No app was installed and no server restarted.
 
 ## Workspace manager start controls (UI-09)
 
+2026-11-25: iOS and Android share the Rust server-list/workspace push/pop
+motion fitted to a stock UIKit probe on an iOS 26.3 simulator. Rust tests passed
+for native presentation samples, both directions and frame-rate independence.
+All 25 remote-manager unit tests passed. `remote_page_transition_smoke.gd`
+passed its 20 checks both headlessly and with the existing macOS background
+Metal harness, including repeated state delivery, resize/editor interruption,
+and retained-view cleanup. Rendered push/pop frames were inspected; the native
+background guard passed. These are simulated UI checks, not physical iOS or
+Android acceptance. No mobile package was installed.
+
+
 2026-11-13: headless server-home layout/navigation smoke passed across its
 French, German and English viewport cases; all 20 remote-manager unit tests
 passed, including connect-only card activation and Connect all navigation intent.
@@ -2001,3 +2025,45 @@ Not run on a device (2026-11-18). Supporting check that passed:
 `cargo test -p graffitty-scene-core touch` (a still contact lifted just before
 the long press clicks once; one held into the long press does not).
 
+
+## Upload progress notifications
+
+2026-11-25, macOS ARM64, development build:
+
+- `uv run tests/server/upload_notification_e2e.py` passed: a real CLI uploads
+  512 KiB + 7 bytes and an empty file to a disposable server; an attached
+  frontend observer receives stable transfer IDs, acknowledged byte counts,
+  completion and an interrupted-transfer error. Destination bytes match.
+- `cargo test -p graffitty-server file_transfer --lib`: two tests passed,
+  including expiry with one failure event and confirmed received bytes.
+- `tests/upload_notification_smoke.gd`: nine headless assertions passed for
+  progress, retained active cards, one history entry, full completion timeout,
+  dismissal, pane-scoped disconnection failure and empty-file completion.
+- Existing `tests/notifications_smoke.gd` passed; Godot editor import passed.
+
+These are private-server and headless UI checks. Physical mobile testing and
+installation of the upload-notification change remain outstanding.
+
+## Herdr-style file routing and agent selection framing
+
+2026-11-25, macOS ARM64 development build:
+
+- `android-bracketed-paste --simulated` passed all 14 assertions with a real
+  isolated server and PTY. A large PNG and two files arrive intact; the two
+  paths are delivered in one bracketed paste with a trailing space, followed
+  by queued typing. This run completed without the older shutdown leak error.
+- `tests/file_paste_smoke.gd` passed ten assertions: local paths avoid reads,
+  one unpaced input batch, POSIX/PowerShell quoting, remote path deferral,
+  multiple files, input ordering, failure discard and control rejection.
+  Local path encoding/queue draining measured 121 microseconds in this run;
+  this is not end-to-end display latency.
+- Two shared Rust clipboard/path tests passed. Native extension build and
+  Godot import passed.
+- Agents-filtered unit tests: 22 passed. Pane inspection: 12 passed. Navigator:
+  ten passed, covering Main framing, partially hidden panes and zoom retention.
+  Agent row selection calls the same camera reveal as prefix navigation.
+
+The shared scenario had a stale call to removed `ClientAuthentication._save`;
+it now uses the current per-connection save API. Physical desktop clipboard
+formats, macOS temporary screenshot grants and physical mobile input remain
+unverified. These changes have not been installed into the production app.

@@ -27,28 +27,28 @@ def main():
         identity = command("identify")["result"]
         foreign = command(
             "rpc",
-            "terminal.type",
+            "internal.terminal.demo_type",
             "--params",
             json.dumps({"text": "bad", "tab_id": identity["tab_id"] + 1000}),
         )
         assert foreign["error"]["code"] == "forbidden", foreign
         denied = command(
-            "terminal",
-            "type",
+            "internal", "terminal", "demo-type",
             "--text",
             "bad",
+            "--interval-ms", "0",
             env=dict(os.environ, GRAFFITTY_TOKEN="invalid-test-token"),
         )
         assert denied["error"]["code"] == "unauthorized", denied
         for key in ["Ctrl+e", "Ctrl+u"]:
-            response = command("terminal", "send-key", key)
+            response = command("terminal", "press", key)
             assert response.get("result", {}).get("keys_sent") == 1, response
         text = "printf '%s%s\\n' 'TERMINAL_' 'CLIENT_OK'"
-        assert command("terminal", "type", "--text", text, "--interval-ms", "5")[
+        assert command("internal", "terminal", "demo-type", "--text", text, "--interval-ms", "5")[
             "result"
         ]["keys_sent"] == len(text)
         assert (
-            command("terminal", "send-key", "Enter")["result"]["keys_sent"] == 1
+            command("terminal", "press", "Enter")["result"]["keys_sent"] == 1
         )
         target.write_text(json.dumps({"ok": True}))
     except Exception as exc:

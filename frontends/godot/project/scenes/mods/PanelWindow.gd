@@ -95,16 +95,34 @@ func set_panel_scale(value: float, remember := true) -> void:
 ## The panel under the pointer in the host's window, or null.
 static func under_pointer(terminal_host: Node) -> Window:
 	if not terminal_host.is_inside_tree(): return null
+	return at_point(terminal_host, terminal_host.get_window().get_mouse_position())
+
+
+## Window-viewport coordinates, independent of the workspace camera and scale.
+static func at_point(terminal_host: Node, point: Vector2) -> Window:
+	if not terminal_host.is_inside_tree(): return null
 	var owner_window := terminal_host.get_window()
-	var pointer := owner_window.get_mouse_position()
-	for child in owner_window.get_children():
+	var children := owner_window.get_children()
+	children.reverse()
+	for child in children:
 		if not (child is Window and child.is_in_group(&"panel_window")) or child.is_queued_for_deletion(): continue
 		var desktop: Control = child._desktop
 		if is_instance_valid(desktop) and not desktop.side.is_empty():
-			if desktop.is_visible_in_tree() and desktop.get_global_rect().has_point(pointer): return child
-		elif child.visible and not child.force_native and Rect2(Vector2(child.position), Vector2(child.size)).has_point(pointer):
+			if desktop.is_visible_in_tree() and Rect2(Vector2.ZERO, desktop.size).has_point(desktop.get_global_transform_with_canvas().affine_inverse() * point): return child
+		elif child.visible and not child.force_native and Rect2(Vector2(child.position), Vector2(child.size)).has_point(point):
 			return child
 	return null
+
+
+## Raw workspace input runs before GUI dispatch. Panels and embedded popups
+## own their pixels even when a projected graph wire crosses underneath them.
+static func blocks_workspace_pointer(terminal_host: Node, point: Vector2) -> bool:
+	if not terminal_host.is_inside_tree(): return false
+	if at_point(terminal_host, point) != null: return true
+	for window in terminal_host.get_window().get_embedded_subwindows():
+		if window.visible and not window.is_queued_for_deletion() and Rect2(Vector2(window.position), Vector2(window.size)).has_point(point):
+			return true
+	return false
 
 
 ## A floating panel has the keyboard itself; the same font-size keys magnify it.

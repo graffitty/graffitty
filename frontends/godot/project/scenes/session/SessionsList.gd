@@ -1,5 +1,6 @@
 extends RefCounted
 ## Presentation model only; server-provided named sessions remain authoritative.
+const Authentication := preload("res://scenes/remote/ClientAuthentication.gd")
 const Names := preload("res://scenes/remote/ConnectionName.gd")
 
 static func icon_path(group: Dictionary) -> String:
@@ -22,6 +23,7 @@ static func collect(hosts: Array, saved: Array, include_local := false, hidden: 
 		if not backend.is_remote or not "connection" in backend: continue
 		var connection: Node = backend.connection
 		if not is_instance_valid(connection): continue
+		var client: Node = host.get_parent()
 		var peers: Array = connection.connections if "connections" in connection else [connection]
 		# A window showing several servers views one of them: its active tab's.
 		var viewed: Node = connection
@@ -30,6 +32,8 @@ static func collect(hosts: Array, saved: Array, include_local := false, hidden: 
 		for peer in peers:
 			if not is_instance_valid(peer): continue
 			var key: String = peer.url
+			if client != null and "settings" in client and client.settings.get("transient", false) and connection == peer:
+				key = Authentication.profile_url(client.settings)
 			if key.is_empty(): continue
 			var local := key == "shared://local"
 			if not groups.has(key):
@@ -60,7 +64,7 @@ static func collect(hosts: Array, saved: Array, include_local := false, hidden: 
 					group.sessions[existing].viewing = not viewers.is_empty()
 	for settings in saved:
 		var key := str(settings.get("url", ""))
-		if key.is_empty(): continue
+		if key.is_empty() or (not include_local and key.begins_with("ssh://")): continue
 		if groups.has(key):
 			if str(groups[key].get("platform", "")).is_empty(): groups[key].platform = settings.get("platform", "")
 			continue

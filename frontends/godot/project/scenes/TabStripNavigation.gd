@@ -4,6 +4,7 @@ extends Node
 const ActionStyle := preload("res://scenes/TabActionStyle.gd")
 const ACTION_SIZE := 28.0
 const ACTION_GAP := 8.0
+var back: Button
 var previous_tabs := Button.new()
 var next_tabs := Button.new()
 var all_tabs := Button.new()
@@ -47,6 +48,20 @@ func configure(parent: Control, strip: Control, refresh: Callable) -> void:
 	all_tabs.pressed.connect(toggle)
 	tabs.get_h_scroll_bar().value_changed.connect(func(_value): update_scroll_buttons())
 
+## Owners opt into a leading navigation action; browser strips omit it.
+func add_back(action: Callable, label: String) -> void:
+	back = Button.new()
+	back.name = "BackToServers"
+	back.focus_mode = Control.FOCUS_NONE
+	back.accessibility_name = label
+	back.tooltip_text = label
+	ActionStyle.apply(back, "M10 4 6 8 10 12", 8)
+	back.pressed.connect(func():
+		menu.hide()
+		action.call())
+	group.add_child(back)
+
+
 func toggle() -> void:
 	if menu.visible:
 		menu.hide()
@@ -58,6 +73,8 @@ func toggle() -> void:
 
 func layout(left: float, right: float, top_inset: float) -> void:
 	var button_width := ACTION_SIZE + ACTION_GAP
+	var back_left := left
+	if back != null: left += button_width
 	group.custom_minimum_size.x = left + right + button_width * 2
 	var available := maxf(0.0, group.size.x - left - right - button_width * 2)
 	var count: int = tabs.tab_count + (1 if tabs.external_drop_hint >= 0 else 0) - (
@@ -93,6 +110,9 @@ func layout(left: float, right: float, top_inset: float) -> void:
 	group.custom_minimum_size.y = tab_height + top_inset
 	var tab_y := maxf(top_inset, group.size.y - tab_height)
 	var action_y := tab_y + (tab_height - ACTION_SIZE) * 0.5
+	if back != null:
+		back.position = Vector2(back_left, action_y)
+		back.size = Vector2.ONE * ACTION_SIZE
 	all_tabs.position = Vector2(left, action_y)
 	all_tabs.size = Vector2.ONE * ACTION_SIZE
 	tabs.position = Vector2(left + button_width, tab_y)

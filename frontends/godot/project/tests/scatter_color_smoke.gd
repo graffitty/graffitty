@@ -2,7 +2,9 @@ extends "scatter_visibility_smoke.gd"
 ## Compare the shipping live sheet and animation at the assembled pose. Include
 ## coloured, dim and antialiased ink: opaque white alone hides a colour-space bug.
 class CellGrid extends Node:
-	var cell_padding := 0
+	class Snapshot extends RefCounted:
+		func flight_grid() -> Rect2: return Rect2(0, 0, 16, 16)
+	func capture_render_state() -> RefCounted: return Snapshot.new()
 	func get_grid_size() -> Vector2i: return Vector2i(16, 16)
 	func get_cell_size() -> Vector2: return Vector2(16, 16)
 

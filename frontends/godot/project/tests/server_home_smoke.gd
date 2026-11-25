@@ -91,6 +91,7 @@ func run() -> void:
 			var area := Rect2(Vector2.ZERO, Vector2(extent))
 			var context := "%s %s: " % [language, extent]
 			check(home.chooser.size.x <= extent.x + 1, context + "page fits viewport")
+			check(home.chooser.row_scroll.size.y > 0 and area.encloses(home.connect_all.get_global_rect()) and area.encloses(home.chooser.add_server.get_global_rect()), context + "server actions and scrollable rows fit")
 			check(area.encloses(home.connection_tab.get_global_rect()) and area.encloses(home.settings_tab.get_global_rect()), context + "sticky navigation stays on-screen")
 			check(absf(home.brand.get_global_rect().get_center().x - extent.x * .5) < 1 and home.brand.size.y <= 60, context + "small logo is centered")
 			if preload("res://scenes/input/InteractionProfile.gd").touch_controls():
@@ -110,11 +111,20 @@ func run() -> void:
 				var font: Font = button.get_theme_font("font")
 				var text_width: float = font.get_string_size(button.tr(button.text), HORIZONTAL_ALIGNMENT_LEFT, -1, button.get_theme_font_size("font_size")).x
 				check(button.size.x >= text_width + button.icon.get_width() + button.get_theme_stylebox("normal").get_minimum_size().x + button.get_theme_constant("h_separation"), context + "navigation label never wraps")
-		var nav_y := home.connection_tab.get_global_rect().position.y
-		home.chooser.scroll.scroll_vertical = 500
+		root.size = Vector2i(360, 780)
+		root.content_scale_size = root.size
 		await settle()
+		var nav_y := home.connection_tab.get_global_rect().position.y
+		var connect_y := home.connect_all.global_position.y
+		var add_y := home.chooser.add_server.global_position.y
+		var row_y := card.global_position.y
+		home.chooser.row_scroll.scroll_vertical = 500
+		await settle()
+		check(card.global_position.y < row_y, language + ": server rows scroll")
+		check(home.connect_all.global_position.y == connect_y and home.chooser.add_server.global_position.y == add_y, language + ": both server actions stay fixed")
+		check(home.chooser.add_server.get_global_rect().end.y <= nav_y, language + ": Add server stays above navigation")
 		check(home.connection_tab.get_global_rect().position.y == nav_y, language + ": scrolling never moves navigation")
-		home.chooser.scroll.scroll_vertical = 0
+		home.chooser.row_scroll.scroll_vertical = 0
 	if preload("res://scenes/input/InteractionProfile.gd").touch_controls():
 		await click_at(home.brand.get_global_rect().get_center())
 		await click_at(home.touch_start.bubble.get_global_rect().get_center())

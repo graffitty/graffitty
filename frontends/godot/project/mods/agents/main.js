@@ -191,10 +191,8 @@ export default class Agents extends View {
         // Consecutive rows from the same server/session share one small caption.
         const next = context(a);
         if (next && next !== caption) {
-          // Natural text height, so descenders and tall scripts are not cropped;
-          // the negative bottom margin tucks it against its row's top padding.
-          // flex_none: the scrolling column must not shrink it once rows overflow.
-          rows.push(div().id(`ctx-${a.id}`).flex_none().pl(26).pr(4).mt(3).mb(-4).text_size(10).text_color(t.idle + "bf").truncate().tooltip_on_truncate().child(next));
+          // Reserve the full caption height above the selected or hovered row background.
+          rows.push(div().id(`ctx-${a.id}`).flex_none().pl(26).pr(4).mt(3).text_size(10).text_color(t.idle + "bf").truncate().tooltip_on_truncate().child(next));
         }
         caption = next;
         rows.push(this.row(t, a, now, a.id === selected));

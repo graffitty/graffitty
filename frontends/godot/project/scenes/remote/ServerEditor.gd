@@ -1,5 +1,7 @@
 extends VBoxContainer
 ## The same server fields on desktop and Android; persistence validates in Rust.
+signal submitted
+
 var endpoint := LineEdit.new()
 var token: LineEdit = preload("res://scenes/SecretInput.gd").new()
 var label := LineEdit.new()
@@ -8,6 +10,31 @@ var remember := CheckBox.new()
 var form_status := Label.new()
 var stream_options := {}
 
+var _password_url := ""
+
+func _init() -> void:
+	endpoint.focus_exited.connect(_discard_foreign_password)
+	token.focus_entered.connect(_discard_foreign_password)
+	token.text_changed.connect(func(_value): _password_url = _normalized_endpoint())
+
+func _normalized_endpoint() -> String:
+	var address := {"url": endpoint.text.strip_edges()}
+	var error := preload("res://scenes/remote/ClientAuthentication.gd").normalize_address(address)
+	return str(address.url) if error.is_empty() else ""
+
+func prefill_password(value: String) -> void:
+	token.text = value
+	_password_url = _normalized_endpoint() if not value.is_empty() else ""
+
+func _discard_foreign_password() -> void:
+	if not token.text.is_empty() and not _password_url.is_empty() and _password_url != _normalized_endpoint():
+		token.clear()
+		_password_url = ""
+
+func password_for_submission() -> String:
+	_discard_foreign_password()
+	return token.text
+
 func _caption(text: String) -> Label:
 	var result := Label.new()
 	result.text = text
@@ -15,11 +42,12 @@ func _caption(text: String) -> Label:
 	return result
 
 func _ready() -> void:
-	add_child(_caption("On the computer, open Sessions → Remote Access. Copy its server address and use the password shown there."))
+	add_child(_caption("Enable sharing on the computer under Sessions → Remote Access Settings. Enter its network address and password here."))
 	for field in [[label, "Server name (optional)", "Use server hostname"], [server_alias, "Server alias (CLI, optional)", "Automatic from hostname"], [endpoint, "Server address", "your-server.local (default port 7183)"], [token, "Password", "Password"]]:
 		add_child(_caption(field[1]))
 		field[0].placeholder_text = field[2]
 		field[0].custom_minimum_size.y = 48
+		field[0].text_submitted.connect(func(_text): submitted.emit())
 		add_child(field[0])
 	remember.text = "Remember password on this device"
 	remember.custom_minimum_size.y = 48
@@ -44,7 +72,7 @@ func load_settings(settings: Dictionary) -> void:
 	label.text = str(settings.get("name", ""))
 	server_alias.text = str(settings.get("alias", ""))
 	endpoint.text = str(settings.get("url", ""))
-	token.clear()
+	prefill_password("")
 	remember.button_pressed = bool(settings.get("remember", true))
 	form_status.text = ""
 	for key in stream_options:

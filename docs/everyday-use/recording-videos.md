@@ -38,7 +38,7 @@ func wait(seconds: float) -> void:
 
 func type(text: String) -> void:
 	for character in text:
-		await host.agent_api.dispatch(host.active_session_id, "terminal.type", {"text": character})
+		await host.agent_api.dispatch(host.active_session_id, "internal.terminal.demo_type", {"text": character, "interval_ms": 0})
 		await wait(0.06)
 
 

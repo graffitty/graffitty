@@ -7,7 +7,7 @@ mod models;
 mod node;
 mod session;
 
-pub use claim::{local_server, local_server_descriptor, tmux_context};
+pub use claim::{local_server, local_server_at, local_server_descriptor, tmux_context};
 pub use client::{Client, MAX_MESSAGE, MAX_REQUEST, Result, Rpc, read_message, response};
 pub use models::{
     Checkpoint, Event, Icon, InputPort, LineStyle, Manifest, Output, OutputPort, PortMode,

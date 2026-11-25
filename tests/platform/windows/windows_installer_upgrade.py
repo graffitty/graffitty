@@ -117,7 +117,7 @@ def main():
         wait(lambda: sessions()[0]["attached"], "the window to show its session")
         opened = wait(windows, "the app's window")
         server = json.loads(descriptor.read_text())["pid"]
-        gft("terminal", "type", "--text", "before\n", pane=pane)
+        gft("terminal", "send-text", "--text", "before", "--enter", pane=pane)
         wait(lambda: "got:before" in screen(pane), "the program's first reply")
         print("PASS the installed app runs a program in its terminal")
 
@@ -127,7 +127,7 @@ def main():
         assert alive(pane), "the terminal's program survived the upgrade"
         wait(lambda: json.loads(descriptor.read_text())["pid"] != server, "the installed version's server")
         assert not alive(server), "the replaced server left"
-        gft("terminal", "type", "--text", "after\n", pane=pane)
+        gft("terminal", "send-text", "--text", "after", "--enter", pane=pane)
         wait(lambda: "got:after" in screen(pane), "the program's reply after the upgrade")
         assert "got:before" in screen(pane), "the screen kept its output from before the upgrade"
         assert (root / f"{pane}.input").read_text().split() == ["before", "after"], "input reached the same program"

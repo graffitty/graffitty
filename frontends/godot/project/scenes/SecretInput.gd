@@ -26,6 +26,9 @@ func _init() -> void:
 	# `secret` only masks the text. The password keyboard also stops Android
 	# suggesting or learning it, and stays while the text is shown.
 	virtual_keyboard_type = KEYBOARD_TYPE_PASSWORD
+	if OS.has_feature("ios"):
+		focus_entered.connect(func(): ClassDB.class_call_static(&"IosPasswordKeyboard", &"set_focused", true))
+		focus_exited.connect(func(): ClassDB.class_call_static(&"IosPasswordKeyboard", &"set_focused", false))
 	# A blank right icon keeps typed text out from under the button.
 	if _spacer == null:
 		_spacer = ImageTexture.create_from_image(Image.create_empty(TOGGLE_WIDTH - 8, 1, false, Image.FORMAT_RGBA8))

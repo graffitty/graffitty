@@ -9,6 +9,10 @@ image validation, chunking and terminal delivery; it does not exercise an OS
 clipboard or establish that an agent recognized the image. Physical clipboard
 and keyboard acceptance is specified in `tests/e2e/input.md` (IN-09).
 
+The scenario also sends two files through the native file-drop entry point.
+Both files must arrive byte-for-byte before one combined path paste with a
+trailing space; typing queued during the batch follows that paste.
+
 Adapted from `terminal-input`. The shared implementation is `bracketed_paste` in `tests/client_scenarios/workspace.gd`; setup may use normal application commands while touch-specific interactions use Godot screen-touch events. A fresh standalone server owns every terminal, chromium and graph in this case.
 
 Run the actual APK:

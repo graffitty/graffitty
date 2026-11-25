@@ -26,6 +26,7 @@ var fit_main_view := true
 var claiming: Dictionary = {}
 var observed_fit := Rect2()
 var attach_claim := true
+var observed_tab := -1
 ## This client held the claim, so it takes back a claim its disconnection vacated.
 var held_claim := false
 ## A manager combines independent servers, whose revisions and request IDs
@@ -59,6 +60,7 @@ func _session_switched() -> void:
 	area_backends.clear()
 	tab_edit_retries = 0
 	attach_claim = true
+	observed_tab = -1
 	held_claim = false
 
 
@@ -150,7 +152,7 @@ func close_tab(_host: Node, id: int) -> void:
 
 
 func content_rect(host: Node, fallback: Rect2) -> Rect2:
-	if drives_area(host.workspace_layout.active): return fit_rect(host, fallback)
+	if _can_fit(host, host.workspace_layout.active) and drives_area(host.workspace_layout.active): return fit_rect(host, fallback)
 	var id: int = host.workspace_layout.active
 	var transport: Node = connection.owners.get(id) if "owners" in connection else connection
 	if transport == null: return fallback
@@ -213,6 +215,7 @@ func sync_window_area(host: Node) -> void:
 		return
 	if not authoritative() or host.layout_transaction or not connection.connected:
 		return
+	var tabs := _presented_tabs(host)
 	var view: Control = host.workspace_view
 	if not is_instance_valid(view) or view.size.x < 32 or view.size.y < 72: return
 	var rect := fit_rect(host, view.viewport_content_rect())
@@ -220,12 +223,17 @@ func sync_window_area(host: Node) -> void:
 	observed_fit = rect
 	_settle_claims()
 	if not fit_main_view: return
-	var tabs := _presented_tabs(host)
-	if tabs.is_empty(): return
+	if tabs.is_empty():
+		if observed_tab >= 0: attach_claim = true
+		observed_tab = -1
+		held_claim = false
+		return
+	var switched := observed_tab >= 0 and observed_tab != int(tabs[0])
+	observed_tab = int(tabs[0])
 	var roles: Array = tabs.map(size_owner)
 	if "self" in roles: held_claim = true
 	elif "other" in roles: held_claim = false
-	if attach_claim or resized:
+	if attach_claim or resized or switched:
 		# Attaching, resizing or rotating this window is the latest activity.
 		claim_area(host)
 		return
@@ -283,10 +291,12 @@ func claim_area(host: Node, tabs: Array = []) -> void:
 		return
 	var view: Control = host.workspace_view
 	if not is_instance_valid(view) or view.size.x < 32 or view.size.y < 72: return
+	var presented := _presented_tabs(host)
+	if presented.is_empty() or (not tabs.is_empty() and presented[0] not in tabs): return
 	attach_claim = false
 	held_claim = true
 	var rect := fit_rect(host, view.viewport_content_rect())
-	for id in (tabs if not tabs.is_empty() else _presented_tabs(host)):
+	for id in presented:
 		claiming[int(id)] = {"rect": rect, "revision": -1, "sent": false, "at": Time.get_ticks_msec()}
 	commit_workspace(host)
 
@@ -310,9 +320,40 @@ func _settle_claims() -> void:
 			claiming.erase(id)
 
 
+func _visible_tab(host: Node) -> int:
+	if "presentation_active" in host and not host.presentation_active: return -1
+	if host.is_inside_tree() and not host.get_window().get_meta(&"workspace_ui_active", true): return -1
+	return host.workspace_layout.active
+
+
+func _main_pane(host: Node) -> String:
+	if is_instance_valid(host.workspace_view) and "overview" in host.workspace_view and host.workspace_view.overview: return ""
+	if "pane_focus" in host: return host.pane_focus
+	for group in host.workspace_layout.tabs:
+		if int(group.id) == host.workspace_layout.active: return group.get("focused", "")
+	return ""
+
+
+func _can_fit(host: Node, id: int) -> bool:
+	if id < 0 or id != _visible_tab(host): return false
+	if "connections" in connection:
+		_area_backends()
+		var owner: Node = connection.owners.get(id)
+		return area_backends.has(owner) and area_backends[owner]._can_fit(host, id)
+	var pane := _main_pane(host)
+	if pane.is_empty(): return false
+	for tab in connection.topology.get("tabs", []):
+		if int(tab.id) == id:
+			return tab.get("other_main_panes", []).all(func(other): return other == pane)
+	return false
+
+
 func _presented_tabs(host: Node) -> Array:
-	var settings: Dictionary = connection.topology.get("workspace_state", {}).get("tabs", {})
-	return host.workspace_layout.tabs.map(func(group): return int(group.id)).filter(func(id): return settings.has(str(id)))
+	var id := _visible_tab(host)
+	var owned: bool = connection.topology.get("workspace_state", {}).get("tabs", {}).has(str(id))
+	if connection.has_method("report_main_view"):
+		connection.report_main_view(id if owned else -1, _main_pane(host) if owned else "")
+	return [id] if owned and _can_fit(host, id) else []
 
 
 ## The tab's area as this client last asked for it, otherwise the server's.
@@ -336,6 +377,7 @@ static func _same_rect(a: Rect2, b: Rect2) -> bool:
 
 
 func resize_pane(host: Node, key: String, rect: Rect2) -> void:
+	if host.workspace_layout.containing(key) != _visible_tab(host): return
 	if not host.is_terminal_pane(key) or not host.workspace_view.panes.has(key):
 		return
 	var id := PaneAddress.id(key)
@@ -354,7 +396,7 @@ func resize_pane(host: Node, key: String, rect: Rect2) -> void:
 func sync_pane_grid(host: Node, key: String) -> void:
 	# Shared layouts own logical pane dimensions. Local window size, camera zoom
 	# and raster density must never change the owner's terminal wrapping.
-	if host.layout_transaction:
+	if host.layout_transaction or not _can_fit(host, host.workspace_layout.active):
 		return
 	var view = host.workspace_view
 	if not view.pane_rects.has(key) or not view.panes.has(key):
@@ -442,11 +484,14 @@ func commit_workspace(host: Node) -> void:
 		if tools != null and tools.tab_id == id and not tools.before.is_empty():
 			layout.graph_visual = ServerWorkspace.encode_graph(tools.before.visual)
 		var settings := _layout_settings(snapshot, id)
-		if drives_area(id):
+		var can_fit := _can_fit(host, id)
+		if not can_fit and layout.get("windows", []).any(func(item): return item.key == canonical[str(id)].get("focused", "")):
+			layout.focused = canonical[str(id)].focused
+		if can_fit and drives_area(id):
 			var rect: Rect2 = claiming[id].rect if claiming.has(id) else fit_rect(host, host.workspace_view.viewport_content_rect())
 			settings.area = [rect.position.x, rect.position.y, rect.size.x, rect.size.y]
 		# A claim is sent even when the area already matches, to take ownership.
-		var claim: bool = claiming.has(id) and not claiming[id].sent
+		var claim: bool = can_fit and claiming.has(id) and not claiming[id].sent
 		var key := "tab:%d" % id
 		var before_settings := _layout_settings(snapshot, id)
 		var before_layout: Dictionary = canonical[str(id)].duplicate(true)
@@ -506,6 +551,15 @@ func _send_workspace_edit() -> void:
 			tab_edit_retries = 0
 			_send_workspace_edit()
 			return
+		var host: Node = editing_host.get_ref() if editing_host != null else null
+		if host != null and not _can_fit(host, int(edit.tab)):
+			claim = false
+			claiming.erase(int(edit.tab))
+			edit.settings = _layout_settings(snapshot, int(edit.tab))
+			before.settings = edit.settings.duplicate()
+			if edit.layout == before.layout:
+				_send_workspace_edit()
+				return
 		if claim:
 			# The latest activity takes the area, whatever another client set meanwhile.
 			before = {"layout": before.layout, "settings": _layout_settings(snapshot, int(edit.tab))}

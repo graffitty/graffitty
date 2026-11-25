@@ -2248,6 +2248,7 @@ func begin_session_transition(animate := true) -> void:
 		for i in windows.size():
 			layers.append_array(_window_layers(windows[i], origin, uv_du, uv_dv, shape, i))
 		for layer in layers:
+			if screen_space_session_flight(): _bind_transition_camera(layer, cam.global_transform)
 			layer.departing_lens = departing_lens
 			layer.aperture_end_phase = fade_end / CellShatterScript.BACKING_FLIGHT_FRACTION if layer.has_meta("panel") else fade_end
 			layer.hide()
@@ -4389,8 +4390,9 @@ func _start_tab_transition(
 
 func _await_arrival(wall: MeshInstance3D) -> void:
 	CellShatterScript.assign_release_ranks(tab_fx_out.filter(func(layer): return layer.get_meta("glyph_layer", false)))
-	if camera_relative_tab_fx or depth_effect():
-		for layer in tab_fx_out: _bind_transition_camera(layer, cam.global_transform)
+	if camera_relative_tab_fx or depth_effect() or screen_space_session_flight():
+		for layer in tab_fx_out:
+			if not layer.has_meta("transition_camera"): _bind_transition_camera(layer, cam.global_transform)
 	# Build the destination pieces after repainting its owner snapshot.
 	# Restored render resources or a new shell can take longer than a fixed delay.
 	#
@@ -4513,7 +4515,7 @@ func _discard_transition_arrival() -> void:
 func _build_transition_arrival() -> void:
 	_building_switch_arrival = true
 	_build_arriving_layers()
-	if camera_relative_tab_fx or depth_effect():
+	if camera_relative_tab_fx or depth_effect() or screen_space_session_flight():
 		var reference: Transform3D = camera_motion._target.get("transform", cam.global_transform)
 		for layer in tab_fx_in: _bind_transition_camera(layer, reference, true, camera_motion._target.get("rect", proj_rect))
 	_building_switch_arrival = false
@@ -4750,6 +4752,12 @@ static func tab_transition_duration() -> float:
 	# The departure (TAB_FX_LEAVE) retires over the live surface; only the
 	# camera flight and the arrival hold the handoff.
 	return maxf(FLY_TIME + TAB_FX_SETTLE, TAB_FX_ARRIVE)
+
+
+## Flat renderers compose session pieces after the saved camera framing.
+## Authored worlds retain world-space travel between their terminal surfaces.
+func screen_space_session_flight() -> bool:
+	return false
 
 
 func fly_away_effect() -> bool:
@@ -5118,6 +5126,7 @@ func _workspace_transition_layers(origin: Vector3, du: Vector3, dv: Vector3, sha
 func _bind_transition_camera(layer: Node3D, reference: Transform3D, arriving := false, reference_rect := Vector4.ZERO) -> void:
 	layer.set_meta("transition_arriving", arriving)
 	layer.set_meta("transition_camera", reference)
+	layer.set_meta("transition_screen_space", screen_space_session_flight())
 	layer.set_meta("transition_frustum", proj_rect if reference_rect == Vector4.ZERO else reference_rect)
 	layer._material().set_shader_parameter("camera_relative_flight", true)
 	_update_transition_camera(layer)
@@ -5140,6 +5149,11 @@ func _update_transition_camera(layer: Node3D) -> void:
 		var magnification := pow(DepthMotion.ZOOM_RATIO, direction * (-1.0 if arriving else 1.0) * phase)
 		transform = DepthMotion.presentation_transform(reference, cam.global_transform, captured, proj_rect, magnification)
 		material.set_shader_parameter("depth_transform", transform)
+	elif layer.get_meta("transition_screen_space", false):
+		# Projection compensation is applied after the piece's own flight.
+		# Changing the live session's pan/zoom must not resize the departure.
+		transform = DepthMotion.presentation_transform(reference, cam.global_transform,
+			layer.get_meta("transition_frustum"), proj_rect, 1.0)
 	elif layer.get_meta("transition_arriving", false):
 		# Follow the camera early, then settle onto the actual destination plane.
 		# Resting camera effects may differ from the flight's original target.
@@ -5150,6 +5164,10 @@ func _update_transition_camera(layer: Node3D) -> void:
 	layer.global_transform = transform
 	layer._material().set_shader_parameter("flight_camera_transform", transform)
 	layer._material().set_shader_parameter("flight_camera_eye", transform.affine_inverse() * cam.global_position)
+	# A projection-compensated transform includes scale/shear. Its transpose
+	# is not an inverse rotation and would distort the scatter's wind vectors.
+	var axes := reference.basis if layer.get_meta("transition_screen_space", false) else transform.basis.inverse() * cam.global_transform.basis
+	layer._material().set_shader_parameter("flight_camera_axes", axes)
 	layer.update_raster(cam)
 
 
@@ -5215,6 +5233,7 @@ func _prepare_transition_layer(layer: Node) -> void:
 
 
 func _update_transition_lens(layer: Node) -> void:
+	layer._material().set_shader_parameter("blur_limit", terminal_effects.blur_limit if effect_control.allows("camera.dof") else 0.0)
 	if layer.departing_lens.y > 0.0: return # set_fly owns this capture's lens
 	layer._material().set_shader_parameter("focus_depth", terminal_effects.focus_depth)
 	layer._material().set_shader_parameter(
@@ -5225,7 +5244,6 @@ func _update_transition_lens(layer: Node) -> void:
 			else terminal_effects.blur_radius / maxf(terminal_effects.depth_range, 0.0263)
 		),
 	)
-	layer._material().set_shader_parameter("blur_limit", terminal_effects.blur_limit)
 
 
 func _layer_fly(layer: Node, value: float, arriving := false) -> float:

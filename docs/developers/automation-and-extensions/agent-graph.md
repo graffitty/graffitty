@@ -8,6 +8,13 @@ Build nodes that exchange messages and session context through explicit connecti
 
 Use the SDK types and CLI help for individual fields and options.
 
+## Pointer priority
+
+Panels and popups receive clicks before the workspace graph. Graph picking checks
+window coordinates and the workspace's visible clip before testing projected wires,
+so pan, zoom and overview cannot put a wire's hit area above a Sessions panel.
+Releasing a wire-inspection click or a new connection over a panel cancels that action.
+
 ## Shared read receipts
 
 Agent unread state belongs to the session server. Graph nodes and session agent
@@ -117,3 +124,12 @@ gft pane run --agent codex --name implementation --wire send,turn-completed,wait
 Use `gft graph --help` for commands, and `gft mcp --help` for MCP setup.
 
 See [provider integration, delivery, retries, and node recovery](graph-delivery.md).
+
+### Transcript read activity
+
+A successful `gft graph read --node tN --offset N` that returns text records a
+metadata-only `transcript read` entry and pulses the granting Read wire from the
+source to the reader. An explicit Read wire takes precedence over an included
+Turn completed permission. Lookup-only calls, empty reads, denied reads, and
+self-reads do not pulse. Direct filesystem reads are not observable by the graph.
+This activity does not enqueue a message, spend a run budget, or mark an agent busy.

@@ -29,6 +29,7 @@ func until(predicate: Callable, seconds := 5.0) -> bool:
 
 func phone_claims(phone: Node) -> void:
 	var tab: int = host.workspace_layout.active
+	phone.report_main_view(tab, host.pane_focus)
 	var state: Dictionary = phone.topology.workspace_state
 	phone.send_action("workspace_edit", -1, {"expected_revision": int(phone.topology.workspace_revision), "claim": true,
 		"edit": {"op": "tab", "tab": tab, "layout": state.layout.tabs[str(tab)],

@@ -5,11 +5,12 @@ use godot::obj::Singleton;
 use std::collections::BTreeMap;
 use graffitty_client_core::clipboard_paste::Attachment;
 
-pub enum Paste { Text(String), File(Attachment), Empty }
+pub enum Paste { Text(String), Paths(Vec<String>), File(Attachment), NativeImage, Empty }
 
 /// Called only by an explicit paste action. File/text/image ordering follows
-/// Herdr; image data is staged on the terminal owner on every platform.
-pub fn paste() -> anyhow::Result<Paste> {
+/// Herdr; local desktop programs read their own clipboard images with Ctrl+V.
+pub fn paste(local: bool) -> anyhow::Result<Paste> {
+    let _ = local;
     #[cfg(target_os = "android")]
     {
         use godot::prelude::*;
@@ -49,18 +50,23 @@ pub fn paste() -> anyhow::Result<Paste> {
     #[cfg(target_os = "macos")]
     if let Some(paths) = crate::clipboard_macos::get("application/x-graffitty-file-paths") {
         let paths: Vec<String> = serde_json::from_slice(&paths)?;
-        if let Some(path) = paths.first() { return Ok(Paste::File(Attachment::file(std::path::Path::new(path))?)); }
+        if !paths.is_empty() { return Ok(Paste::Paths(paths)); }
     }
     #[cfg(not(target_os = "android"))]
     {
         let ds = DisplayServer::singleton();
         let text = ds.clipboard_get().to_string();
         if !text.is_empty() { return Ok(Paste::Text(text)); }
+        #[cfg(not(target_os = "ios"))]
+        if local && ds.clipboard_has_image() { return Ok(Paste::NativeImage); }
         #[cfg(target_os = "macos")]
         if let Some(bytes) = crate::clipboard_macos::get("image/png") {
+            if local { return Ok(Paste::NativeImage); }
             return Ok(Paste::File(Attachment::image(bytes)?));
         }
         if ds.clipboard_has_image() {
+            #[cfg(not(target_os = "ios"))]
+            if local { return Ok(Paste::NativeImage); }
             let image = ds.clipboard_get_image().ok_or_else(|| anyhow::anyhow!("Cannot read clipboard image"))?;
             let bytes = image.save_png_to_buffer().to_vec();
             return Ok(Paste::File(Attachment::image(bytes)?));

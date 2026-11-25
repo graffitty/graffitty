@@ -18,6 +18,8 @@ var about_dialog: AboutDialog
 var connect_all := Button.new()
 var touch_start: ServerStart
 var _open_all_when_ready := false
+var _start_empty_when_ready := false
+var _all_saved_connected := false
 
 var localization: Node:
 	get: return Engine.get_main_loop().root.get_node("Localization")
@@ -67,6 +69,7 @@ var open_when_ready := "":
 ## The list stays visible and usable beneath it. Anything that needs the user
 ## (a password, an unreachable server) removes the label.
 var restore_cover := PanelContainer.new()
+var restoring_label := Label.new()
 var _restoring := false
 var keyboard_insets: Node
 var terminal_ime: Node
@@ -183,7 +186,7 @@ func _ready() -> void:
 				follow.call()
 	)
 	view.host_ready.connect(_workspace_ready)
-	view.host_empty.connect(_show_chooser)
+	view.host_empty.connect(_workspace_empty)
 	view.detached.connect(_show_chooser)
 	add_child(view)
 	chooser.scroll_through_controls = true
@@ -194,6 +197,7 @@ func _ready() -> void:
 	dialog.ok_button_text = "Save and connect"
 	add_child(dialog)
 	_build_editor()
+	editor.submitted.connect(dialog.confirmed.emit)
 	dialog.confirmed.connect(_submit_connection)
 	dialog.canceled.connect(_cancel_editor)
 	dialog.hide()
@@ -208,7 +212,6 @@ func _ready() -> void:
 	restore_style.content_margin_bottom = 12
 	restore_cover.add_theme_stylebox_override("panel", restore_style)
 	restore_cover.mouse_filter = Control.MOUSE_FILTER_IGNORE
-	var restoring_label := Label.new()
 	restoring_label.mouse_filter = Control.MOUSE_FILTER_IGNORE
 	localization.text(restoring_label, "Connecting…")
 	restore_cover.add_child(restoring_label)
@@ -248,7 +251,9 @@ func _build_home() -> void:
 		touch_start.brand = brand
 		brand_row.add_child(touch_start)
 		touch_start.set_anchors_and_offsets_preset(Control.PRESET_FULL_RECT)
-		touch_start.pressed.connect(_start_connected_workspace)
+		touch_start.pressed.connect(func():
+			_start_empty_when_ready = true
+			_start_connected_workspace())
 	settings_section.add_theme_constant_override("separation", 14)
 	chooser.body.add_child(settings_section)
 	settings_section.add_child(_caption("Language"))
@@ -265,7 +270,8 @@ func _build_home() -> void:
 		dialog.close_requested.connect(dialog.queue_free)))
 	settings_section.add_child(_button("About Graffitty", _show_build_info))
 	save_hint.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
-	chooser.body.add_child(save_hint)
+	chooser.connections.add_child(save_hint)
+	save_hint.hide()
 	var center := CenterContainer.new()
 	center.size_flags_horizontal = Control.SIZE_EXPAND_FILL
 	chooser.footer_actions.add_child(center)
@@ -291,7 +297,9 @@ func _build_home() -> void:
 	_select_section(false)
 
 func _select_section(settings: bool) -> void:
+	chooser.list_margin.visible = not settings
 	connections_section.visible = not settings
+	chooser.scroll.visible = settings
 	settings_section.visible = settings
 	connection_tab.set_pressed_no_signal(not settings)
 	settings_tab.set_pressed_no_signal(settings)
@@ -340,7 +348,7 @@ func _load_connections() -> void:
 	for settings in Authentication.launch_connections(args): open_connection(settings)
 	if use_saved:
 		for settings in Authentication.saved_connections():
-			if settings is Dictionary and settings.get("url") is String:
+			if settings is Dictionary and settings.get("url") is String and not str(settings.url).begins_with("ssh://"):
 				var key := _connection_key(settings)
 				if not entries.has(key): _remember_entry(settings, "disconnected", "Ready to connect")
 		if preload("res://scenes/input/InteractionProfile.gd").touch_controls():
@@ -348,15 +356,35 @@ func _load_connections() -> void:
 
 func _restore_last_connection() -> void:
 	var key: String = view_state.last_connection
-	if key.is_empty() or not entries.has(key) or bool(entries[key].get("transient", false)): return
-	_restoring = true
-	open_when_ready = key
-	if transports.has(key):
-		_open_workspace(key)
-	else:
-		# Normal vault lookup/authentication applies; missing credentials stay
-		# on the manager rather than bypassing sign-in or opening an editor.
-		if open_connection(entries[key]) == null: open_when_ready = ""
+	if entries.has(key) and not entries[key].get("transient", false):
+		_restoring = true
+		open_when_ready = key
+	for saved in entries:
+		if entries[saved].get("transient", false): continue
+		if not transports.has(saved) and open_connection(entries[saved]) == null and open_when_ready == saved:
+			open_when_ready = ""
+	if not open_when_ready.is_empty(): _open_workspace(open_when_ready)
+
+
+func _connected_transition(key: String) -> void:
+	var saved := entries.keys().filter(func(id): return not entries[id].get("transient", false))
+	var all_connected := not saved.is_empty() and saved.all(func(id): return transports.has(id) and transports[id].connected)
+	if all_connected and not _all_saved_connected and key in saved and navigation.current == navigation.Space.MANAGER:
+		_open_all_when_ready = true
+		_open_after_all_connected.call_deferred()
+	_all_saved_connected = all_connected
+
+
+func _open_after_all_connected() -> void:
+	if _open_all_when_ready and _all_saved_connected: _start_connected_workspace()
+
+
+func _try_auto_open(key: String, transport: Node) -> void:
+	_update_start_action()
+	if transports.get(key) != transport or not transport.connected: return
+	if _open_all_when_ready: _start_connected_workspace()
+	elif open_when_ready == key: _open_workspace(key)
+
 
 func _connection_key(settings: Dictionary) -> String:
 	return str(settings.url)
@@ -366,6 +394,7 @@ func _remember_entry(settings: Dictionary, state: String, message: String) -> St
 	entries[key] = settings.duplicate(true)
 	entries[key].erase("token")
 	entries[key].erase("password_error")
+	_connected_transition("")
 	_set_state(key, state, message)
 	return key
 
@@ -378,6 +407,13 @@ func _update_restore_cover() -> void:
 	var state: String = states[open_when_ready].state if states.has(open_when_ready) else ""
 	_restoring = _restoring and state in ["disconnected", "connecting", "authenticating", "connected"] and navigation.current == navigation.Space.MANAGER
 	restore_cover.visible = _restoring
+	if _restoring:
+		var pending: ConnectionState = states[open_when_ready]
+		if pending.message.begins_with("Loading server fonts"):
+			localization.text(restoring_label, pending.message, pending.args)
+		else:
+			localization.text(restoring_label, "Connecting…")
+	_update_start_action()
 
 func saved_servers_reordered() -> void:
 	var order := Authentication.saved_connections().map(func(entry): return str(entry.url))
@@ -391,6 +427,11 @@ func saved_servers_reordered() -> void:
 
 func _server_order_error(_error: String) -> void:
 	localization.text(landing_status, "Could not reorder servers.")
+
+func _show_save_error(message: String) -> void:
+	localization.text(save_hint, message)
+	save_hint.visible = not message.is_empty()
+
 
 func _refresh_card(key: String) -> void:
 	if not cards.has(key):
@@ -416,17 +457,37 @@ func _update_landing_status() -> void:
 	empty_state.visible = entries.is_empty()
 	var connected_count := federation.connections.filter(func(connection): return connection.connected).size()
 	connect_all.disabled = entries.is_empty()
-	if is_instance_valid(touch_start): touch_start.available = connected_count > 0
+	_update_start_action()
 	landing_status.text = "Connect to a computer running Graffitty." if entries.is_empty() else tr("%d of %d servers connected") % [connected_count, entries.size()]
 
+func _update_start_action() -> void:
+	if not is_instance_valid(touch_start): return
+	touch_start.available = not _restoring and not states.values().any(func(state): return state.state in ["connecting", "authenticating"]) and not _start_target(true).is_empty()
+
+func _start_target(allow_empty: bool) -> String:
+	var candidates := transports.keys()
+	if open_when_ready in candidates:
+		candidates.erase(open_when_ready)
+		candidates.push_front(open_when_ready)
+	var empty := ""
+	for key in candidates:
+		var transport: Node = transports[key]
+		if not transport.connected: continue
+		if not transport.workspace.is_empty():
+			if is_instance_valid(view) and is_instance_valid(view.host) and transport.session_view_ready(transport.workspace) and not transport.topology.tabs.is_empty():
+				return key
+		elif allow_empty and empty.is_empty() and transport.sessions_known and transport.available_sessions.is_empty() and not transport.has_meta(&"manager_creating_session"):
+			empty = key
+	return empty
+
 func _start_connected_workspace() -> void:
-	for key in transports:
-		if transports[key].connected:
-			open_when_ready = key
-			_open_workspace(key)
-			return
+	var target := _start_target(_start_empty_when_ready)
+	if not target.is_empty():
+		open_when_ready = target
+		_open_workspace(target)
 
 func _connect_all() -> void:
+	_start_empty_when_ready = true
 	_open_all_when_ready = true
 	for key in entries:
 		if states[key].state not in ["connected", "connecting", "authenticating"]:
@@ -483,19 +544,25 @@ func open_connection(settings: Dictionary) -> Node:
 	var transport := federation.attach(connection)
 	var remember_session := func():
 		if transports.get(key) != transport: return
+		if transport.has_meta(&"manager_creating_session"): transport.remove_meta(&"manager_creating_session")
 		view_state.remember_session(transport)
 	transport.session_switched.connect(remember_session)
 	transports[key] = transport
 	transport.tree_exiting.connect(func():
 		if transports.get(key) == transport:
 			transports.erase(key)
+			_connected_transition("")
 			_set_state(key, "disconnected", "Disconnected · Server is still saved")
 	)
-	Authentication.bind(self, transport, settings, bool(settings.get("remember", false)))
+	Authentication.bind(self, transport, settings, bool(settings.get("remember", false)), _show_save_error)
 	transport.state_changed.connect(func(message):
 		if transports.get(key) != transport: return
+		if transport.connected and not transport.fonts_ready() and not transport.server_fonts.error.is_empty():
+			_connection_failed.call_deferred(transport.server_fonts.error, key, transport)
+			return
 		var state := "connected" if transport.connected else "offline" if str(message).begins_with("Offline") else "authenticating" if "Authenticat" in str(message) or "code" in str(message) else "connecting"
 		_set_state(key, state, transport.status_source, transport.status_args)
+		_connected_transition(key)
 		# Temporary network loss keeps the workspace and its selected pane.
 		# RemoteConnection retries automatically; status remains visibly offline
 		# and disconnected input is discarded, never replayed after recovery.
@@ -508,40 +575,29 @@ func open_connection(settings: Dictionary) -> Node:
 		for field in ["hostname", "platform", "username"]:
 			settings[field] = transport.get("server_" + field)
 			entries[key][field] = settings[field]
-		var save_error := Authentication.save_connection(settings)
-		if not save_error.is_empty(): save_hint.text = save_error
 		_refresh_card(key)
 		if settings.has("remember") and not bool(settings.remember):
 			var error := Authentication.clear_password(address, str(settings.get("credential_id", "")))
-			if not error.is_empty(): save_hint.text = error
+			if not error.is_empty(): _show_save_error(error)
 	)
 	transport.sessions_changed.connect(func():
 		if transports.get(key) != transport: return
-		if transport.available_sessions.is_empty():
+		if open_when_ready == key and transport.available_sessions.is_empty():
 			_restoring = false
-			if open_when_ready == key: open_when_ready = ""
 			_update_restore_cover()
 		_refresh_card(key)
 	)
-	transport.changed.connect(func():
-		if (open_when_ready == key or _open_all_when_ready) and transport.connected: _open_workspace(key)
-	, CONNECT_DEFERRED)
-	transport.authentication_failed.connect(func(message):
-		if transports.get(key) != transport: return
-		_stop_transport(key)
-		if "Telegram" in str(message):
-			_set_state(key, "verification", "Verification failed · %s\nTry signing in again to request a new code.", [str(message)])
-		else:
-			session_passwords.erase(key)
-			_set_state(key, "password", "Sign-in failed · %s\nThe temporary password may have changed. Enter the current password shown on the computer.", [str(message)])
-		if not dialog.visible: _show_chooser()
-	, CONNECT_DEFERRED)
+	var try_open := _try_auto_open.bind(key, transport)
+	transport.authenticated.connect(try_open, CONNECT_DEFERRED)
+	transport.sessions_changed.connect(try_open, CONNECT_DEFERRED)
+	transport.changed.connect(try_open, CONNECT_DEFERRED)
+	transport.authentication_failed.connect(_authentication_failed.bind(key, transport), CONNECT_DEFERRED)
 	transport.connection_failed.connect(_connection_failed.bind(key, transport), CONNECT_DEFERRED)
 	_update_landing_status()
 	return transport
 
 func _show_unavailable_transport(key: String, transport: Node) -> void:
-	if transports.get(key) != transport or transport.connected or dialog.visible: return
+	if navigation.current != navigation.Space.WORKSPACE or transports.get(key) != transport or transport.connected: return
 	var active: Node = federation.selected
 	if is_instance_valid(view) and is_instance_valid(view.host):
 		active = federation.owners.get(view.host.active_session_id, active)
@@ -552,20 +608,31 @@ func _show_unavailable_transport(key: String, transport: Node) -> void:
 func _session_closed(key: String, transport: Node) -> void:
 	if transports.get(key) != transport: return
 	_refresh_card(key)
-	if transport.available_sessions.is_empty(): _show_chooser()
+	if transport.available_sessions.is_empty() and federation.selected == transport: _show_chooser()
+
+func _authentication_failed(message: String, key: String, transport: Node) -> void:
+	if transports.get(key) != transport: return
+	_show_unavailable_transport(key, transport)
+	_stop_transport(key)
+	if "Telegram" in str(message):
+		_set_state(key, "verification", "Verification failed · %s\nTry signing in again to request a new code.", [str(message)])
+	else:
+		_set_state(key, "password", "Sign-in failed · %s\nThe temporary password may have changed. Enter the current password shown on the computer.", [str(message)])
+	if open_when_ready == key: open_when_ready = ""
 
 func _connection_failed(message: String, key: String, transport: Node) -> void:
 	if transports.get(key) != transport: return
+	_show_unavailable_transport(key, transport)
 	if open_when_ready == key: open_when_ready = ""
 	_stop_transport(key)
 	_set_state(key, "error", "Connection error · %s", [message])
-	_show_chooser()
 
 func _stop_transport(key: String) -> void:
 	if not transports.has(key): return
 	_remember_view()
 	var transport: Node = transports[key]
 	transports.erase(key)
+	_connected_transition(key)
 	transport.set_block_signals(true)
 	federation.remove(transport)
 
@@ -600,12 +667,13 @@ func _remove_server(key: String) -> void:
 	var settings: Dictionary = entries[key]
 	var error := Authentication.remove_connection(settings)
 	if not error.is_empty():
-		save_hint.text = error
+		_show_save_error(error)
 		return
 	if view_state.last_connection == key: view_state.remember_connection("")
 	_stop_transport(key)
 	session_passwords.erase(key)
 	entries.erase(key)
+	_connected_transition("")
 	states.erase(key)
 	cards[key].queue_free()
 	if open_when_ready == key: open_when_ready = ""
@@ -613,6 +681,7 @@ func _remove_server(key: String) -> void:
 	_update_landing_status()
 
 func _new_connection() -> void:
+	_open_all_when_ready = false
 	open_when_ready = ""
 	editing_key = ""
 	pending_settings = {}
@@ -620,13 +689,14 @@ func _new_connection() -> void:
 	label.clear()
 	editor.server_alias.clear()
 	endpoint.clear()
-	token.clear()
+	editor.prefill_password("")
 	remember.button_pressed = true
 	form_status.text = ""
 	dialog.title = "Add server"
 	_show_password_dialog()
 
 func _edit_connection(key: String) -> void:
+	_open_all_when_ready = false
 	open_when_ready = ""
 	editing_key = key
 	pending_settings = entries[key].duplicate(true)
@@ -634,7 +704,10 @@ func _edit_connection(key: String) -> void:
 	label.text = str(pending_settings.get("name", ""))
 	editor.server_alias.text = str(pending_settings.get("alias", ""))
 	endpoint.text = str(pending_settings.url)
-	token.clear()
+	var password: String = session_passwords.get(key, "")
+	if password.is_empty() and bool(pending_settings.get("remember", true)):
+		password = str(Authentication.password(endpoint.text, str(pending_settings.get("credential_id", ""))).get("password", ""))
+	editor.prefill_password(password)
 	remember.button_pressed = bool(pending_settings.get("remember", false))
 	form_status.text = "Enter the current password to reconnect. Your server address is already filled in."
 	dialog.title = "Edit server"
@@ -642,7 +715,8 @@ func _edit_connection(key: String) -> void:
 
 func _submit_connection() -> void:
 	var address := endpoint.text.strip_edges()
-	if token.text.is_empty():
+	var password: String = editor.password_for_submission()
+	if password.is_empty():
 		form_status.text = "Enter the current password shown on the computer."
 		dialog.scroll.ensure_control_visible.call_deferred(form_status)
 		return
@@ -670,7 +744,7 @@ func _submit_connection() -> void:
 	if not editing_key.is_empty() and editing_key != key:
 		_remove_server(editing_key)
 	_remember_entry(settings, "disconnected", "Ready to connect")
-	settings.token = token.text
+	settings.token = password
 	token.clear()
 	pending_settings = {}
 	editing_key = ""
@@ -711,9 +785,15 @@ func _show_password_dialog() -> void:
 	navigation.enter(navigation.Space.EDITOR)
 	dialog.scroll.scroll_vertical = 0
 
+func _workspace_empty() -> void:
+	# Discovery can publish an empty list before the selected session's layout.
+	# Only leave a workspace that was actually on screen.
+	if navigation.current == navigation.Space.WORKSPACE: _show_chooser()
+
 func _show_chooser() -> void:
 	if dialog.visible: return
-	# Explicit navigation cancels a pending automatic open, not the transport.
+	# Explicit navigation cancels pending automatic entry.
+	_start_empty_when_ready = false
 	_open_all_when_ready = false
 	open_when_ready = ""
 	if is_instance_valid(dictation): dictation.stop()
@@ -734,7 +814,17 @@ func _open_workspace(key: String, fly := true, pane := "") -> void:
 	federation.selected = transport
 	if transport.workspace.is_empty():
 		open_when_ready = key
-		if transport.available_sessions.is_empty(): transport.send_action("session_new", -1, {"if_empty": true})
+		if _start_empty_when_ready and transport.sessions_known and transport.available_sessions.is_empty() and not transport.has_meta(&"manager_creating_session"):
+			transport.set_meta(&"manager_creating_session", true)
+			_update_start_action()
+			var reply: Dictionary = await transport.request_action("session_new", {"if_empty": true})
+			if is_instance_valid(transport):
+				transport.remove_meta(&"manager_creating_session")
+				if reply.get("type") == "error" and transports.get(key) == transport:
+					if open_when_ready == key: open_when_ready = ""
+					_start_empty_when_ready = false
+					_open_all_when_ready = false
+					_set_state(key, "connected", "Connection error · %s", [str(reply.get("message", ""))])
 	elif transport.topology.tabs.is_empty() or not transport.session_view_ready(transport.workspace):
 		open_when_ready = key
 	elif view.host != null:
@@ -764,6 +854,7 @@ func _open_workspace(key: String, fly := true, pane := "") -> void:
 			host.session_switch_in_progress = false
 		open_when_ready = ""
 		_open_all_when_ready = false
+		_start_empty_when_ready = false
 		_set_workspace_visible(true)
 		_remember_active_connection()
 
@@ -795,7 +886,8 @@ func _workspace_ready() -> void:
 	_remember_selection()
 	navigation.apply_workspace()
 	_update_landing_status()
-	if not open_when_ready.is_empty(): _open_workspace(open_when_ready)
+	if _open_all_when_ready: _start_connected_workspace()
+	elif not open_when_ready.is_empty(): _open_workspace(open_when_ready)
 
 func _set_workspace_visible(shown: bool) -> void:
 	if not shown:
@@ -847,20 +939,24 @@ func _notification(what: int) -> void:
 	if what == NOTIFICATION_APPLICATION_PAUSED or what == NOTIFICATION_WM_CLOSE_REQUEST:
 		_remember_view()
 	elif what == NOTIFICATION_WM_GO_BACK_REQUEST:
-		# Back dismisses workspace menus, never both a menu and the workspace.
-		if is_instance_valid(view) and is_instance_valid(view.host):
-			if preload("res://scenes/input/WorkspaceMenus.gd").dismiss(view.host): return
-		if is_instance_valid(removal):
-			removal.hide()
-			removal.queue_free()
+		_go_back()
+
+func _go_back() -> void:
+	if navigation.is_transitioning(): return
+	# Back dismisses workspace menus, never both a menu and the workspace.
+	if is_instance_valid(view) and is_instance_valid(view.host):
+		if preload("res://scenes/input/WorkspaceMenus.gd").dismiss(view.host): return
+	if is_instance_valid(removal):
+		removal.hide()
+		removal.queue_free()
+		return
+	for card in cards.values():
+		if card.actions.visible:
+			card.actions.hide()
 			return
-		for card in cards.values():
-			if card.actions.visible:
-				card.actions.hide()
-				return
-		if dialog.visible: _cancel_editor()
-		elif not chooser.visible: _show_chooser()
-		elif view != null and view.host != null: _return_to_workspace()
+	if dialog.visible: _cancel_editor()
+	elif not chooser.visible: _show_chooser()
+	elif view != null and view.host != null: _return_to_workspace()
 
 func _refresh_font_cache(force := false) -> void:
 	if not is_instance_valid(font_cache_clear): return

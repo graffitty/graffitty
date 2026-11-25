@@ -3,14 +3,18 @@ var startup_enabled := false
 
 func toggle() -> void:
 	for entry in host.menu_entries:
-		if entry.label == "Sessions::Remote Access":
+		if entry.label == "Sessions::Remote Access Settings…":
 			entry.action.call(host)
-			await process_frame
+			var dialog: Node = host.get_children().back()
 			var deadline := Time.get_ticks_msec() + 10000
-			while app.remote_access_busy and Time.get_ticks_msec() < deadline:
+			while not is_instance_valid(dialog.sharing) and Time.get_ticks_msec() < deadline:
 				await process_frame
+			if not check(is_instance_valid(dialog.sharing), "Host sharing settings open"): return
+			dialog.sharing.button_pressed = not app.remote_access_enabled()
+			await dialog._save()
+			await process_frame
 			return
-	check(false, "Remote Access menu exists")
+	check(false, "Remote Access Settings menu exists")
 
 func play() -> void:
 	var startup_deadline := Time.get_ticks_msec() + 10000
@@ -20,7 +24,7 @@ func play() -> void:
 	var term: Control = host.sessions[host.active_session_id].term
 	var pid: int = term.get_shell_pid()
 	if not startup_enabled: await toggle()
-	if not check(app.remote_access_enabled(), "Menu enables sharing without restart"): return
+	if not check(app.remote_access_enabled(), "Settings enable sharing without restart"): return
 	var descriptor: String = app.remote_control.connection_file
 	var settings: Dictionary = await app.remote_control._request("auth_settings")
 	var owner_descriptor: String = settings.result.connection_file
@@ -33,7 +37,7 @@ func play() -> void:
 	check(client.get_status() == StreamPeerTCP.STATUS_CONNECTED, "Listener accepts client")
 	await toggle()
 	client.poll()
-	check(not app.remote_access_enabled(), "Menu closes listener immediately")
+	check(not app.remote_access_enabled(), "Settings close listener immediately")
 	check(client.get_status() != StreamPeerTCP.STATUS_CONNECTED, "Stopping sharing disconnects client")
 	check(FileAccess.file_exists(owner_descriptor), "Private server descriptor survives disabling network access")
 	var private_settings: Dictionary = JSON.parse_string(FileAccess.get_file_as_string(owner_descriptor))

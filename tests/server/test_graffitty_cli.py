@@ -16,7 +16,7 @@ import uuid
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[2]
-BIN = ROOT / "dist/bin/gft"
+BIN = Path(os.environ.get("GRAFFITTY_TEST_CLI", ROOT / "dist/bin/gft"))
 
 
 def copy_shell(destination):
@@ -204,8 +204,8 @@ class CliTests(unittest.TestCase):
             (["pane", "pid", "@7"], "terminal.pid", {"target": "@7", "details": False}),
             (["pane", "pid", ":2.1"], "terminal.pid", {"target": ":2.1", "details": False}),
             (["terminal", "get-text", "--target", "t3", "--json"], "terminal.get_text", {"target": "t3", "scrollback": False}),
-            (["terminal", "send-key", "--target", "t3", "Enter"], "terminal.press", {"target": "t3", "key": "Enter"}),
-            (["terminal", "send-key", "Ctrl+h", "--no-effects", "--target", "t3"], "terminal.press", {"target": "t3", "key": "Ctrl+h", "effects": False}),
+            (["terminal", "press", "--target", "t3", "Enter"], "terminal.press", {"target": "t3", "key": "Enter"}),
+            (["terminal", "press", "Ctrl+h", "--no-effects", "--target", "t3"], "terminal.press", {"target": "t3", "key": "Ctrl+h", "effects": False}),
             (["tab", "rename", "--target", "@7", "Build"], "tab.set_title", {"target": "@7", "title": "Build"}),
             (["chromium", "snapshot", "--target", "c8"], "chromium.snapshot", {"chromium": "c8"}),
             (["graph", "read", "--node", "t3"], "graph.read", {"node": "t3"}),
@@ -367,19 +367,27 @@ class CliTests(unittest.TestCase):
             self.assertEqual(uuid.UUID(request_id).version, 4)
             return result, received[0]
 
+    def test_removed_typing_and_required_demo_interval(self):
+        for args in [("terminal", "type", "--text", "hi"),
+                     ("terminal", "send-key", "Enter"),
+                     ("internal", "terminal", "demo-type", "--text", "hi")]:
+            self.assertNotEqual(run(*args).returncode, 0, args)
+
     def test_all_command_mappings(self):
         cases = [
+            (["terminal", "send-text", "--text", "한🙂\nline"], "pane.send", {"text":"한🙂\nline", "enter":False}),
+            (["terminal", "send-text", "-t", "t3", "--text", "echo ok", "--enter"], "pane.send", {"target":"t3", "text":"echo ok", "enter":True}),
             (["identify"], "identify", {}),
             (["pane", "list"], "pane.list", {}),
             (["chromium", "layout"], "workspace.layout", {"ratio": 0.55}),
             (["rpc", "identify", "--params", "{}"], "identify", {}),
             (
-                ["terminal", "type", "--text", "한🙂"],
-                "terminal.type",
+                ["internal", "terminal", "demo-type", "--text", "한🙂", "--interval-ms", "50"],
+                "internal.terminal.demo_type",
                 {"text": "한🙂", "interval_ms": 50},
             ),
             (
-                ["terminal", "send-key", "Ctrl+u"],
+                ["terminal", "press", "Ctrl+u"],
                 "terminal.press",
                 {"key": "Ctrl+u"},
             ),
@@ -476,7 +484,7 @@ class CliTests(unittest.TestCase):
         for args in [
             ["chromium", "fill", "--target", "c3"],
             ["chromium", "present", "--target", "c3", "--mode", "oops"],
-            ["terminal", "type", "--text", "hi", "--interval-ms", "abc"],
+            ["internal", "terminal", "demo-type", "--text", "hi", "--interval-ms", "abc"],
             ["not-a-command"],
             ["browser", "list"],
         ]:
@@ -486,7 +494,7 @@ class CliTests(unittest.TestCase):
             ["rpc", "identify", "--params", "[]"],
             ["rpc", "identify", "--params", "{"],
             ["chromium", "layout", "--ratio", "NaN"],
-            ["terminal", "type", "--text", "hi", "--interval-ms", "-1"],
+            ["internal", "terminal", "demo-type", "--text", "hi", "--interval-ms", "-1"],
             ["chromium", "wait", "--target", "c3", "--timeout-ms", "0"],
         ]:
             with self.subTest(args=args):

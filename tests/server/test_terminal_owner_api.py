@@ -105,6 +105,29 @@ class TerminalOwnerApiTests(unittest.TestCase):
         path = self.directory / f"{self.pane['pid']}.input"
         return path.read_bytes() if path.exists() else b""
 
+    def test_send_text_is_one_bracketed_paste_with_optional_enter(self):
+        self.output(b"\x1b[?2004h")
+        self.rpc("terminal.get_text")
+        text = "한🙂\n" + "x" * 5000
+        reply = self.cli("terminal", "send-text", "--text", text)
+        self.assertEqual(reply["bytes"], len(text.encode()))
+        expected = b"\x1b[200~" + text.encode() + b"\x1b[201~"
+        self.eventually(lambda: self.received() == expected)
+        self.cli("terminal", "send-text", "--text", "done", "--enter")
+        expected += b"\x1b[200~done\x1b[201~\r"
+        self.eventually(lambda: self.received() == expected)
+        control = lambda params: self.peer.action("controller_rpc",
+            call=dict(version=1, method="pane.send", params=params))
+        self.assertNotIn("error", control(dict(target=f"t{self.id}", text="remote", enter=False)))
+        expected += b"\x1b[200~remote\x1b[201~"
+        self.eventually(lambda: self.received() == expected)
+        for params in [{"text":"bad", "target":7}, {"text":"bad", "interval_ms":0},
+                       {"text":"bad", "enter":7}]:
+            self.assertIn("error", self.api("pane.send", params))
+        self.assertIn("error", self.api("terminal.type", {"text":"obsolete", "interval_ms":0}))
+        self.assertIn("error", self.api("internal.terminal.demo_type", {"text":"no pace"}))
+        self.assertEqual(self.received(), expected)
+
     def test_cli_and_rpc_ignore_frontend_presence_and_focus(self):
         self.assertIn("@@READY@@", self.cli("terminal", "get-text")["text"])
         # Another tab can be active; the token still names the original PTY.
@@ -114,11 +137,11 @@ class TerminalOwnerApiTests(unittest.TestCase):
                 self.assertTrue(self.peer.action("frontend_register", generation=1)["result"]["owner"])
             else:
                 self.peer.action("frontend_unregister")
-            self.assertEqual(self.api("terminal.type", {"text":"한🙂", "interval_ms":0})["result"]["keys_sent"], 2)
+            self.assertEqual(self.api("internal.terminal.demo_type", {"text":"한🙂", "interval_ms":0})["result"]["keys_sent"], 2)
             self.assertEqual(self.rpc("terminal.press", {"key":"Alt+b"})["result"]["keys_sent"], 1)
             self.assertIn("@@READY@@", self.api("terminal.get_text")["result"]["text"])
         self.eventually(lambda: self.received() == ("한🙂".encode() + b"\x1bb") * 3)
-        self.assertEqual(self.cli("terminal", "send-key", "Ctrl+u")["keys_sent"], 1)
+        self.assertEqual(self.cli("terminal", "press", "Ctrl+u")["keys_sent"], 1)
 
     def test_controller_resolves_across_sessions_without_changing_view_or_pane_scope(self):
         other = self.connect("project")
@@ -126,7 +149,7 @@ class TerminalOwnerApiTests(unittest.TestCase):
         original_workspace = self.peer.workspace
         def control(method, params):
             return self.peer.action("controller_rpc", call=dict(version=1, method=method, params=params))
-        self.assertEqual(control("terminal.type", dict(target="project:1.1", text="한🙂", interval_ms=0))["result"]["keys_sent"], 2)
+        self.assertEqual(control("internal.terminal.demo_type", dict(target="project:1.1", text="한🙂", interval_ms=0))["result"]["keys_sent"], 2)
         target_file = self.directory / f"{pane['pid']}.input"
         self.eventually(lambda: target_file.exists() and target_file.read_bytes() == "한🙂".encode())
         self.assertEqual(self.received(), b"")
@@ -136,15 +159,15 @@ class TerminalOwnerApiTests(unittest.TestCase):
         listed = control("pane.list", {"target": "project"})["result"]["panes"]
         self.assertEqual([p["id"] for p in listed], [f"t{pane['id']}"])
         # The same address on a pane capability still cannot cross its scope.
-        self.assertIn("error", self.api("terminal.type", {"target":f"t{pane['id']}", "text":"denied"}))
-        self.assertIn("error", control("terminal.type", {"target":":1.1", "text":"no implicit GUI focus"}))
+        self.assertIn("error", self.api("internal.terminal.demo_type", {"target":f"t{pane['id']}", "text":"denied"}))
+        self.assertIn("error", control("internal.terminal.demo_type", {"target":":1.1", "text":"no implicit GUI focus"}))
 
     def test_controller_rejects_versions_methods_and_invalid_targets_before_input(self):
         for version, method, params in [
-            (2, "terminal.type", {"target":f"t{self.id}", "text":"denied"}),
+            (2, "internal.terminal.demo_type", {"target":f"t{self.id}", "text":"denied"}),
             (1, "server.restart", {}),
-            (1, "terminal.type", {"target":"missing:1.1", "text":"denied"}),
-            (1, "terminal.type", {"target":f"t{self.id}", "text":"denied", "unknown":True}),
+            (1, "internal.terminal.demo_type", {"target":"missing:1.1", "text":"denied"}),
+            (1, "internal.terminal.demo_type", {"target":f"t{self.id}", "text":"denied", "unknown":True}),
         ]:
             reply = self.peer.action("controller_rpc", call=dict(version=version, method=method, params=params))
             self.assertEqual(reply["type"], "error", reply)
@@ -153,7 +176,7 @@ class TerminalOwnerApiTests(unittest.TestCase):
     def test_input_activity_is_observational_and_not_replayed_on_reconnect(self):
         self.peer.send(dict(type="subscribe", sessions=[self.id]))
         self.peer.sync()
-        self.assertEqual(self.api("terminal.type", {"text":"ab", "interval_ms":0})["result"]["keys_sent"], 2)
+        self.assertEqual(self.api("internal.terminal.demo_type", {"text":"ab", "interval_ms":0})["result"]["keys_sent"], 2)
         event = self.peer.until(lambda m: m.get("type") == "terminal_input")
         self.assertEqual([key["unicode"] for key in event["keys"]], [ord("a"), ord("b")])
         self.eventually(lambda: self.received() == b"ab")
@@ -167,9 +190,9 @@ class TerminalOwnerApiTests(unittest.TestCase):
     def test_send_key_can_suppress_effects_without_changing_input(self):
         self.peer.send(dict(type="subscribe", sessions=[self.id]))
         self.peer.sync()
-        self.assertEqual(self.cli("terminal", "send-key", "Ctrl+h", "--no-effects")["keys_sent"], 1)
+        self.assertEqual(self.cli("terminal", "press", "Ctrl+h", "--no-effects")["keys_sent"], 1)
         self.eventually(lambda: self.received() == b"\x08")
-        self.assertEqual(self.cli("terminal", "send-key", "b")["keys_sent"], 1)
+        self.assertEqual(self.cli("terminal", "press", "b")["keys_sent"], 1)
         event = self.peer.until(lambda m: m.get("type") == "terminal_input")
         self.assertEqual([key["unicode"] for key in event["keys"]], [ord("b")])
         self.eventually(lambda: self.received() == b"\x08b")
@@ -195,9 +218,9 @@ class TerminalOwnerApiTests(unittest.TestCase):
         sibling = self.peer.action("create", self.id, kind="pane")["created"]
         foreign = self.connect("foreign").topology["panes"][0]["id"]
         for method, params, code in [
-            ("terminal.type", {"text":"partial\x01"}, "invalid_params"),
+            ("internal.terminal.demo_type", {"text":"partial\x01", "interval_ms":0}, "invalid_params"),
             ("terminal.press", {"key":"Hyper+x"}, "invalid_key"),
-            ("terminal.type", {"text":"ab", "interval_ms":1001}, "invalid_params"),
+            ("internal.terminal.demo_type", {"text":"ab", "interval_ms":1001}, "invalid_params"),
             ("terminal.get_text", {"scrollback":1}, "invalid_params"),
             ("terminal.get_text", {"unknown":True}, "invalid_params"),
             ("terminal.get_text", {"target":f"t{sibling}"}, "forbidden"),
@@ -206,7 +229,7 @@ class TerminalOwnerApiTests(unittest.TestCase):
         ]:
             self.assertEqual(self.api(method, params)["error"]["code"], code)
         self.assertEqual(self.received(), b"")
-        self.assertEqual(self.api("terminal.type", {"text":"a"}, token="invalid")["error"]["code"], "unauthorized")
+        self.assertEqual(self.api("internal.terminal.demo_type", {"text":"a"}, token="invalid")["error"]["code"], "unauthorized")
         self.assertIn("@@READY@@", self.api("terminal.get_text", {"target":":1.1"})["result"]["text"])
         zero = self.api("terminal.get_text", {"target":":1.0"})["error"]
         self.assertEqual(zero["code"], "invalid_target")
@@ -225,7 +248,7 @@ class TerminalOwnerApiTests(unittest.TestCase):
         observer = self.connect()
         self.peer.sequence += 1
         request = self.peer.sequence
-        self.peer.send(dict(type="rpc", session=self.id, request=request, method="terminal.type", params={"text":"abcdef", "interval_ms":200}))
+        self.peer.send(dict(type="rpc", session=self.id, request=request, method="internal.terminal.demo_type", params={"text":"abcdef", "interval_ms":200}))
         self.eventually(lambda: len(self.received()) > 0)
         started = time.monotonic()
         self.assertIn("@@READY@@", self.rpc("terminal.get_text", peer=observer)["result"]["text"])
@@ -237,7 +260,7 @@ class TerminalOwnerApiTests(unittest.TestCase):
         sibling = observer.action("create", self.id, kind="pane")["created"]
         self.peer.sequence += 1
         request = self.peer.sequence
-        self.peer.send(dict(type="rpc", session=self.id, request=request, method="terminal.type", params={"text":"remaining", "interval_ms":200}))
+        self.peer.send(dict(type="rpc", session=self.id, request=request, method="internal.terminal.demo_type", params={"text":"remaining", "interval_ms":200}))
         self.eventually(lambda: len(self.received()) > 6)
         observer.action("close", self.id)
         done = self.peer.until(lambda m: m.get("request") == request)

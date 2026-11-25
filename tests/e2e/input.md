@@ -209,8 +209,13 @@ computer's server. Paste a screenshot with the desktop Paste shortcut, the
 Android/iOS touch Paste action, Android's native selection menu, and an Android
 keyboard that supplies an image through `InputConnection.commitContent`.
 
-- The complete image must exist on the terminal's server before one quoted
-  path is pasted. No Enter or Ctrl+V is synthesized. Text paste keeps Unicode,
+- Remote images and mobile native image content must exist on the terminal's
+  server before one quoted path is pasted. No Enter is synthesized. On a local
+  desktop, an image-only clipboard sends Ctrl+V so the program reads its own
+  clipboard, matching Herdr. Ordinary local file drops and copied files paste
+  their original paths without reading or copying file contents. Remote files
+  upload sequentially; successful paths form one paste with a trailing space.
+  Failed files do not prevent other files from uploading. Text paste keeps Unicode,
   newlines and bracketed-paste behavior. Typing/Enter immediately after an image
   waits behind its upload.
 - In Codex and each supported agent, verify the image becomes an attachment

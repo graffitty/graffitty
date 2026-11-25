@@ -84,8 +84,8 @@ func _run() -> void:
 	var interactive := mode in ["success", "early-stop", "cancel", "empty-commit", "failed-event", "disconnect", "final-timeout", "setup-timeout"]
 	var typed := OS.get_environment("GRAFFITTY_DICTATION_TYPED")
 	if interactive:
-		await connection.remote_call(pane, "terminal.type", {"interval_ms":0, "text":
-			"read -r line; printf '%s' \"$line\" > '" + OS.get_environment("GRAFFITTY_DICTATION_REMOTE_TYPED") + "'\n"})
+		await connection.remote_call(pane, "pane.send", {"enter":true, "text":
+			"read -r line; printf '%s' \"$line\" > '" + OS.get_environment("GRAFFITTY_DICTATION_REMOTE_TYPED") + "'"})
 		await create_timer(.3).timeout
 	# Drive the floating touch handler Android uses, including release after failure.
 	var press := InputEventScreenTouch.new()
@@ -146,7 +146,7 @@ func _run() -> void:
 		check(mic.preview.text.is_empty(), "Finished UI cannot be reopened by late text")
 	if interactive:
 		check(not FileAccess.file_exists(typed), "Dictation never presses Enter")
-		await connection.remote_call(pane, "terminal.type", {"text":"\n"})
+		await connection.remote_call(pane, "terminal.press", {"key":"Enter"})
 		check(await until(func(): return FileAccess.file_exists(typed)), "Terminal completes the fixture read")
 		var expected := "안녕 final words" if mode in ["success", "early-stop"] else ""
 		check(FileAccess.get_file_as_string(typed) == expected, "Only the corrected final result is inserted, exactly once")

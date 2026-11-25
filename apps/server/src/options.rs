@@ -34,6 +34,12 @@ pub struct Options {
     /// Set temporary password length to 6, 8 or 10, then exit.
     #[usage(long)]
     pub temporary_password_length: Option<usize>,
+    /// Exit an SSH-created private owner after five idle minutes before its first session.
+    #[usage(long)]
+    pub ssh_owner: bool,
+    /// Request a loopback SSH endpoint from this running owner.
+    #[usage(long)]
+    pub ssh_attach: bool,
     /// Print the connection descriptor if its server is running, then exit.
     #[usage(long)]
     pub status: bool,

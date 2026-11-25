@@ -6,13 +6,45 @@ use godot::{classes::{RefCounted, IRefCounted}, prelude::*};
 struct TerminalFileUpload {
     base: Base<RefCounted>,
     upload: Option<graffitty_client_core::file_transfer::Upload>,
+    loading: Option<std::sync::mpsc::Receiver<anyhow::Result<graffitty_client_core::clipboard_paste::Attachment>>>,
 }
 #[godot_api]
 impl IRefCounted for TerminalFileUpload {
-    fn init(base: Base<RefCounted>) -> Self { Self { base, upload: None } }
+    fn init(base: Base<RefCounted>) -> Self { Self { base, upload: None, loading: None } }
 }
 #[godot_api]
 impl TerminalFileUpload {
+    #[func]
+    fn read_file(&mut self, path: GString) {
+        let path = std::path::PathBuf::from(path.to_string());
+        let (sender, receiver) = std::sync::mpsc::channel();
+        self.loading = Some(receiver);
+        std::thread::spawn(move || { let _ = sender.send(graffitty_client_core::clipboard_paste::Attachment::file(&path)); });
+    }
+    #[func]
+    fn read_result(&mut self) -> VarDictionary {
+        let mut result = VarDictionary::new();
+        let Some(receiver) = &self.loading else { return result; };
+        let value = match receiver.try_recv() {
+            Ok(value) => value,
+            Err(std::sync::mpsc::TryRecvError::Empty) => return result,
+            Err(error) => Err(error.into()),
+        };
+        self.loading = None;
+        match value {
+            Ok(file) => { result.set("name", file.name.as_str()); result.set("data", &PackedByteArray::from(file.bytes.as_slice())); }
+            Err(error) => { result.set("error", error.to_string()); }
+        }
+        result
+    }
+    #[func]
+    fn quote_paths(&self, paths: PackedStringArray, powershell: bool) -> VarDictionary {
+        let paths = paths.as_slice().iter().map(ToString::to_string).collect::<Vec<_>>();
+        crate::graph_client::to_variant(&match graffitty_client_core::clipboard_paste::quote_paths(&paths, powershell) {
+            Ok(text) => serde_json::json!({"text":text}),
+            Err(error) => serde_json::json!({"error":error.to_string()}),
+        }).to()
+    }
     #[func]
     fn write_local(&self, path: GString, bytes: PackedByteArray) -> GString {
         use std::{fs, io::Write, path::PathBuf};
@@ -36,7 +68,7 @@ impl TerminalFileUpload {
 
     #[func]
     fn start(&mut self, name: GString, bytes: PackedByteArray) -> GString {
-        match graffitty_client_core::file_transfer::Upload::new(name.to_string(), bytes.to_vec(), true) {
+        match graffitty_client_core::file_transfer::Upload::new(name.to_string(), bytes.to_vec(), false) {
             Ok(upload) => { self.upload = Some(upload); GString::new() },
             Err(error) => GString::from(&error.to_string()),
         }

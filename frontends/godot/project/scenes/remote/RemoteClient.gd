@@ -183,14 +183,18 @@ func _ready() -> void:
 		connection.authenticated.connect(func():
 			if settings.has("remember") and not settings.remember:
 				var error := Authentication.clear_password(str(settings.url), str(settings.get("credential_id", "")))
-				if not error.is_empty(): connection._set_state(error)
+				if not error.is_empty(): _show_save_error(error)
 		)
 	if host != null: _bind_host()
 	if not settings.is_empty():
 		connection.stream_quality = settings.get("chromium_stream", {}).duplicate()
 		connection.preferred_session = str(settings.get("initial_session", view_state.session(str(settings.get("url", "")))))
 		connection.namespace_ids = managed
-		endpoint.text = str(settings.get("url", ""))
+		endpoint.text = Authentication.profile_url(settings)
+		if _ssh_login():
+			endpoint.editable = false
+			dialog.dialog_hide_on_ok = false
+			secret.text_submitted.connect(func(_value): _connect())
 		secret.text = str(settings.get("token", ""))
 		_connect()
 		return
@@ -217,12 +221,13 @@ func _connect() -> void:
 				secret.text = str(settings.get("token", ""))
 			loaded_url = str(settings.get("url", ""))
 			loaded_secret = str(settings.get("token", ""))
-	if secret.text.is_empty() and not endpoint.text.is_empty():
-		var saved := Authentication.password(endpoint.text)
+	var address := str(settings.url) if _ssh_login() else endpoint.text
+	if secret.text.is_empty() and not address.is_empty() and not (_ssh_login() and auth_bound):
+		var saved := Authentication.password(address, str(settings.get("credential_id", "")))
 		if not saved.has("error"):
 			secret.text = saved.password
-	if endpoint.text.is_empty() or secret.text.is_empty():
-		status.text = "Enter the server URL and password"
+	if address.is_empty() or secret.text.is_empty():
+		status.text = tr("Enter the current password shown on the computer.") if _ssh_login() else tr("Enter the server URL and password")
 		_show_connection_ui()
 		return
 	if connection.connected and connection.workspace.is_empty():
@@ -231,24 +236,36 @@ func _connect() -> void:
 		connection.send_action("create", -1, { "kind": "tab" })
 	else:
 		if not auth_bound:
-			settings.url = endpoint.text
-			Authentication.bind(self, connection, settings, false)
+			settings.url = address
+			Authentication.bind(self, connection, settings, false, _show_save_error)
 			connection.authenticated.connect(func():
 				settings.alias = connection.server_alias
 				if settings.get("remember", false) or remember.button_pressed:
 					var error := Authentication.remember(settings.merged({"url": connection.url}, true), connection.token)
 					if not error.is_empty():
-						status.text = error
+						_show_save_error(error)
 			)
 			auth_bound = true
 		connection.server_alias = str(settings.get("alias", ""))
-		connection.controller_identity = str(settings.get("credential_id", endpoint.text))
-		connection.connect_remote(endpoint.text, secret.text)
+		connection.controller_identity = str(settings.get("credential_id", address))
+		if _ssh_login(): dialog.hide()
+		connection.connect_remote(address, secret.text)
 		secret.clear()
 
 
+func _show_save_error(message: String) -> void:
+	get_node("/root/Localization").text(status, message)
+
+
+func _ssh_login() -> bool:
+	return settings.get("transient", false) and Authentication.profile_url(settings).begins_with("ssh://")
+
+
 func _show_connection_ui() -> void:
-	if server_chooser.is_valid() and not settings.get("shared_local", false):
+	if _ssh_login() and not connection.connected:
+		if not dialog.visible: dialog.popup_centered()
+		secret.grab_focus.call_deferred()
+	elif server_chooser.is_valid() and not settings.get("shared_local", false):
 		server_chooser.call()
 	else:
 		dialog.popup_centered()
@@ -374,6 +391,11 @@ func _show_remote_unavailable() -> void:
 	_show_connection_ui()
 
 func _status(message: String) -> void:
+	if is_instance_valid(host):
+		for id in host.sessions:
+			var transport: Node = connection.owners.get(id) if federated else connection
+			if not is_instance_valid(transport) or not transport.connected:
+				host.application.notifications.fail_uploads(host, id)
 	if not connection.connected:
 		_empty_session_attempted = false
 		_reset_empty_session()
@@ -604,6 +626,10 @@ func _refresh_body() -> void:
 		pair.model.foreground_app = pane.get("app", {})
 		pair.model.effect_holds = pane.get("effect_holds", [])
 		pair.model.shell = str(pane.shell)
+		var transport: Node = connection.owners.get(id) if federated else connection
+		var local: bool = is_instance_valid(transport) and (transport.socket is SharedSessionPeer or str(transport.url).begins_with("ipc://"))
+		var shell := str(pane.shell).replace("\\", "/").get_file().to_lower().trim_suffix(".exe")
+		pair.term.set_attachment_context(local, shell in ["pwsh", "powershell"])
 		if pair.term.has_method("set_remote_shell_pid"):
 			pair.term.set_remote_shell_pid(int(pane.get("pid", -1)))
 		var font_size := int(pane.get("font_size", host.world.term_font_size))
@@ -918,7 +944,23 @@ func _subscribe() -> void:
 		for id in ids:
 			if id not in connection.subscriptions and host.sessions.has(id):
 				host.sessions[id].term.remote_expect_scene()
+		var arriving: Array = ids.filter(func(id): return id not in connection.subscriptions)
 		connection.subscribe(ids)
+		# Request incoming browser frames before the flight starts. Waiting for
+		# the 250 ms geometry poll sees the departure camera and can pause them.
+		var sizes := {}
+		for id in ids:
+			if not host.chromiums.has(id): continue
+			if not stream_sizes.has(id): stream_sizes[id] = {}
+			var state: Dictionary = stream_sizes[id]
+			if id in arriving and Layout.find(tab.get("tree", {}), PaneAddress.key(id)).get("shown", true):
+				warm_chromium_stream(state)
+				var chromium: Node = host.chromiums[id]
+				if chromium.stream_paused:
+					chromium.stream_paused = false
+					chromium.changed.emit()
+			sizes[id] = 0 if state.get("paused", true) else int(state.get("height", 720))
+		connection.set_chromium_viewports(sizes)
 	for id in ids: _sync_terminal_theme(int(id))
 
 
@@ -1007,12 +1049,23 @@ const PAUSE_HEIGHT := 96.0
 const RESUME_HEIGHT := 128.0
 
 
+## Start incoming streams before their transition geometry becomes readable.
+static func warm_chromium_stream(state: Dictionary) -> void:
+	state.paused = false
+	state.warming = true
+	state.erase("pause_since")
+	state.height = maxi(int(state.get("height", 0)), 720)
+
+
 ## Pause off-screen and tiny panes. A newly reported pane pauses at once; a
 ## displayed one only after a stable half second, so a passing camera move
 ## does not restart its stream.
 ##
 ## Panes resume as soon as they are readable.
-static func chromium_stream_paused(state: Dictionary, height: float, now: int) -> bool:
+static func chromium_stream_paused(state: Dictionary, height: float, now: int, transitioning := false) -> bool:
+	if state.get("warming", false):
+		if transitioning: return false
+		state.erase("warming")
 	if not state.has("paused"):
 		state.paused = height < PAUSE_HEIGHT
 	elif state.paused:
@@ -1078,7 +1131,10 @@ func _process_body(_dt: float) -> void:
 			# height zero stops their frames, and they keep the last picture.
 			var chromium: Node = host.chromiums[id]
 			var extent := chromium_pause_extent(chromium_readable_extent(size, host.get_window().content_scale_factor), int(chromium.frames))
-			var paused := chromium_stream_paused(stream_sizes[id], extent, now)
+			var transitioning: bool = host.session_switch_in_progress or (is_instance_valid(host.world) and host.world.session_transition_active)
+			var paused := chromium_stream_paused(stream_sizes[id], extent, now, transitioning)
+			if transitioning and stream_sizes[id].get("warming", false):
+				height = maxf(height, float(stream_sizes[id].height))
 			sizes[id] = 0 if paused else chromium_stream_height(stream_sizes[id], height, now)
 			if chromium.stream_paused != paused:
 				chromium.stream_paused = paused
@@ -1128,7 +1184,6 @@ func _flush_terminal_input(id: int) -> void:
 
 
 func _paste_attachment(id: int, terminal: Node, attachment: Dictionary) -> void:
-	var failure: String = attachment.get("error", "")
 	var transport: Node = connection.owners.get(id) if federated else connection
 	if not is_instance_valid(transport):
 		terminal.file_paste_finished(false)
@@ -1138,35 +1193,65 @@ func _paste_attachment(id: int, terminal: Node, attachment: Dictionary) -> void:
 	var upload := TerminalFileUpload.new()
 	var current := func() -> bool:
 		return is_instance_valid(transport) and transport.connected and transport.socket == peer and transport.workspace == workspace and is_instance_valid(terminal) and is_instance_valid(host) and host.sessions.has(id) and host.sessions[id].term == terminal and (not federated or connection.owners.get(id) == transport)
-	if failure.is_empty() and peer is SharedSessionPeer:
-		var destination: Dictionary = await transport.request_action("local_attachment", {"session": id, "name": attachment.name})
-		if destination.get("type") != "ack" or not current.call():
-			failure = destination.get("message", "Attachment destination changed")
-		else:
-			failure = upload.write_local(destination.path, attachment.data)
-			if failure.is_empty():
-				var pasted: Dictionary = await transport.request_action("paste", {"session": id, "text": destination.text})
-				if pasted.get("type") != "ack": failure = pasted.get("message", "Attachment paste failed")
-	else:
-		if failure.is_empty(): failure = upload.start(str(attachment.name), attachment.data)
-		while failure.is_empty():
+	var files: Array = Array(attachment.paths) if attachment.has("paths") else [attachment]
+	var paths := PackedStringArray()
+	var failures := PackedStringArray()
+	for item in files:
+		if not current.call():
+			failures.append("Attachment destination disconnected or changed")
+			break
+		var file: Dictionary = item if item is Dictionary else {}
+		if item is String:
+			upload.read_file(item)
+			while file.is_empty() and current.call():
+				file = upload.read_result()
+				if file.is_empty(): await get_tree().process_frame
 			if not current.call():
-				failure = "Attachment destination disconnected or changed"
+				failures.append("Attachment destination disconnected or changed")
 				break
-			var params: Dictionary = upload.next_chunk()
-			if params.is_empty(): break
-			var reply: Dictionary = await transport.request_action("rpc", {"session": id, "method": "terminal.put", "params": params}, 30000)
-			var result: Dictionary = upload.accept(reply)
-			failure = result.get("error", "")
-			if result.get("done", false): break
-	if is_instance_valid(terminal): terminal.file_paste_finished(failure.is_empty())
-	if not failure.is_empty():
-		get_node("/root/TerminalApplication").notifications.post(tr("Paste"), tr("Could not paste image"), host, "error", 8.0, "", {"title": "Paste", "body": "Could not paste image"})
-		push_warning(failure)
+		var failure: String = file.get("error", "")
+		if failure.is_empty() and (peer is SharedSessionPeer or str(transport.url).begins_with("ipc://")):
+			var destination: Dictionary = await transport.request_action("local_attachment", {"session": id, "name": file.name})
+			if destination.get("type") != "ack" or not current.call():
+				failure = destination.get("message", "Attachment destination changed")
+			else:
+				failure = upload.write_local(destination.path, file.data)
+				if failure.is_empty(): paths.append(str(destination.path))
+		elif failure.is_empty():
+			failure = upload.start(str(file.name), file.data)
+			while failure.is_empty():
+				if not current.call():
+					failure = "Attachment destination disconnected or changed"
+					break
+				var params: Dictionary = upload.next_chunk()
+				if params.is_empty(): break
+				var reply: Dictionary = await transport.request_action("rpc", {"session": id, "method": "terminal.put", "params": params}, 30000)
+				var result: Dictionary = upload.accept(reply)
+				failure = result.get("error", "")
+				if result.get("done", false):
+					paths.append(str(result.path))
+					break
+		if not failure.is_empty(): failures.append(failure)
+	# Herdr batches successful paths into one paste after sequential uploads.
+	# Bind it to the original peer and pane; focus changes never redirect it.
+	if not paths.is_empty() and current.call():
+		var shell: String = host.session_model(id).shell.replace("\\", "/").get_file().to_lower().trim_suffix(".exe")
+		var quoted: Dictionary = upload.quote_paths(paths, shell in ["pwsh", "powershell"])
+		if quoted.has("error"): failures.append(str(quoted.error))
+		else:
+			var pasted: Dictionary = await transport.request_action("paste", {"session": id, "text": quoted.text})
+			if pasted.get("type") != "ack": failures.append(str(pasted.get("message", "Attachment paste failed")))
+	elif not paths.is_empty(): failures.append("Attachment destination disconnected or changed")
+	if is_instance_valid(terminal): terminal.file_paste_finished(failures.is_empty())
+	if not failures.is_empty():
+		if is_instance_valid(host):
+			get_node("/root/TerminalApplication").notifications.post(tr("Paste"), tr("Could not paste files"), host, "error", 8.0, "", {"title": "Paste", "body": "Could not paste files"})
+		push_warning("\n".join(failures))
 
 
 func _release_host() -> void:
 	if is_instance_valid(host):
+		host.application.notifications.fail_uploads(host)
 		settings.startup_world = host.current_plugin
 		for chromium in host.chromiums.values(): chromium.release_rendering()
 		host.world.set_video_layers([])
@@ -1262,7 +1347,16 @@ func _close_local_server() -> void:
 	detach()
 
 
+var ssh_tunnel: Node
+
+func close_ssh_tunnel() -> void:
+	if is_instance_valid(ssh_tunnel):
+		ssh_tunnel.close()
+		ssh_tunnel.queue_free()
+		ssh_tunnel = null
+
 func detach() -> void:
+	close_ssh_tunnel()
 	if local_return != null and local_return.parked and is_instance_valid(local_return.client):
 		var window := get_window()
 		connection.disconnect_remote()
@@ -1283,6 +1377,7 @@ func _exit_tree() -> void:
 	# Promoting a surviving window reparents this same live client. Keep its
 	# transport and signals connected while the host changes native windows.
 	if moving_presentation or (is_instance_valid(host) and host.moving_window): return
+	close_ssh_tunnel()
 	connection.set_block_signals(true)
 	connection.disconnect_remote()
 	# Startup validation can exit before _ready attaches these owned nodes.
@@ -1305,6 +1400,9 @@ func _input_activity(id: int, keys: Array) -> void:
 
 func _remote_notification(id: int, event: Dictionary) -> void:
 	if host == null or not host.sessions.has(id):
+		return
+	if event.has("upload"):
+		host.application.notifications.upload_progress(event.upload, host, id)
 		return
 	var terminal: Control = host.sessions[id].term
 	if event.get("bell", false):

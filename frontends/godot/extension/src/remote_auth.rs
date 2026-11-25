@@ -72,6 +72,20 @@ impl RemoteAuth {
     }
 
     #[func]
+    fn update_saved_session(&self, path: GString, url: GString, session: GString) -> GString {
+        reply(graffitty_client_core::transport::update_saved_session(
+            Path::new(&path.to_string()), &url.to_string(), &session.to_string(),
+        ).map(|changed| json!({"changed": changed})).map_err(|e| e.to_string()))
+    }
+
+    #[func]
+    fn remove_connection(&self, path: GString, url: GString) -> GString {
+        reply(graffitty_client_core::transport::remove_connection(
+            Path::new(&path.to_string()), &url.to_string(),
+        ).map(|changed| json!({"changed": changed})).map_err(|e| e.to_string()))
+    }
+
+    #[func]
     fn reorder_connections(&self, path: GString, source: GString, target: GString, before: bool) -> GString {
         reply(graffitty_client_core::transport::reorder_connections(
             Path::new(&path.to_string()), &source.to_string(), &target.to_string(), before,

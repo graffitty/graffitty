@@ -19,6 +19,7 @@ static func display(settings: Dictionary) -> String:
 ## canonical endpoint used by authentication or the credential store.
 static func address(settings: Dictionary) -> String:
 	var url := str(settings.get("url", ""))
+	if url.begins_with("ssh://"): return url
 	var text := url.trim_prefix("ws://").trim_prefix("wss://")
 	var authority := text.get_slice("/", 0)
 	var suffix := text.substr(authority.length())

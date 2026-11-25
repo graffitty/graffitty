@@ -166,6 +166,7 @@ fn client_video_quality(c: &Client, id: u64) -> chromium_video::Quality {
 
 struct Server {
     settings: settings::Settings,
+    config_path: PathBuf,
     fonts: fonts::Fonts,
     recent_font_size: Option<u16>,
     frontend: frontend::Broker,
@@ -173,6 +174,8 @@ struct Server {
     local_token: String,
     remote_token: String,
     remote_listener: Option<TcpListener>,
+    ssh_listener: Option<TcpListener>,
+    ssh_idle_since: Option<Instant>,
     /// Why configured remote access is off, when its address could not be bound.
     remote_error: Option<Value>,
     /// UDP beside the remote listener, for chromium video datagrams.
@@ -182,6 +185,7 @@ struct Server {
     descriptor: PathBuf,
     auth_path: PathBuf,
     auth: auth::Server,
+    auth_config: auth::Config,
     resources: Arc<terminal_resource_monitor::Service>,
     sessions: BTreeMap<u64, Session>,
     workspaces: session_registry::Registry,
@@ -1047,6 +1051,9 @@ impl Server {
                 if !graph.can_read(source, &pane_address(id)) {
                     return Err(Box::new(DispatchError(graph.read_denied(source, &pane_address(id)))));
                 }
+                if !bytes.is_empty() {
+                    self.graphs.get_mut(&workspace).unwrap().record_read(source, &pane_address(id));
+                }
                 return Ok(
                     json!({"sessions":sessions,"text":String::from_utf8_lossy(&bytes),"offset":offset,"next_offset":offset+bytes.len() as u64,"size":size}),
                 );
@@ -1348,16 +1355,39 @@ impl Server {
         if matches!(kind, "chromium_gpu_offer" | "chromium_gpu_confirm" | "chromium_gpu_reject") {
             return chromium_gpu::Channels::handle(self, c, &value);
         }
+        if kind == "main_view" {
+            let view = if value["tab"].is_null() {
+                None
+            } else {
+                let tab = value["tab"].as_u64().ok_or("Expected tab")?;
+                let pane = value["pane"].as_str().ok_or("Expected pane")?;
+                let state = self.workspace_state.snapshot(&c.workspace);
+                state.layout.tabs.get(&tab).map(|layout| {
+                    let focused = if layout.window(pane).is_some() { pane } else { "" };
+                    (c.workspace.clone(), tab, focused.to_owned())
+                })
+            };
+            self.size_claims.present(c.frontend_client, view);
+            return send(c, json!({"type":"ack","request":value["request"]}));
+        }
         if matches!(kind, "workspace_get" | "workspace_edit") {
             let result = (|| -> Result<Value, Error> {
                 workspace::sync(self, &c.workspace)?;
                 let state = if kind == "workspace_edit" {
                     let revision = value["expected_revision"].as_u64().ok_or("Expected workspace revision")?;
-                    let edit = serde_json::from_value::<graffitty_workspace_core::state::Edit>(value["edit"].clone())?;
+                    let mut edit = serde_json::from_value::<graffitty_workspace_core::state::Edit>(value["edit"].clone())?;
                     // A frontend fitting the main view to its window claims the
                     // tab's area. The latest claim wins (see size_claims).
+                    // A queued fit can arrive after another window moved to a different pane.
+                    let mut fit_allowed = true;
+                    if let graffitty_workspace_core::state::Edit::Tab { tab, settings, .. } = &mut edit {
+                        fit_allowed = self.size_claims.can_fit(&c.workspace, *tab, c.frontend_client);
+                        if !fit_allowed && (value["claim"] == true || self.size_claims.owns(&c.workspace, *tab, c.frontend_client)) {
+                            *settings = None;
+                        }
+                    }
                     let claimed = match &edit {
-                        graffitty_workspace_core::state::Edit::Tab { tab, .. } if value["claim"] == true => Some(*tab),
+                        graffitty_workspace_core::state::Edit::Tab { tab, .. } if fit_allowed && value["claim"] == true => Some(*tab),
                         _ => None,
                     };
                     let state = self.workspace_state.edit(&c.workspace, revision, edit)?;
@@ -1378,7 +1408,7 @@ impl Server {
             let result = if !c.socket.is_local() {
                 Err("Host authentication is controlled locally".into())
             } else if kind == "auth_reload" {
-                host_auth::reload(self, value["rotate"] == true)
+                host_auth::reload(self, value["rotate"] == true, value.get("remote"), value.get("auth"))
             } else {
                 host_auth::settings(self)
             };
@@ -2058,6 +2088,26 @@ fn new_client(socket: Connection, network_generation: u64) -> Client {
         datagram_key:None, datagram:None,
         notifications:HashMap::new(),input_sequences:HashMap::new(),resources_at:Instant::now(),resources_enabled:true }
 }
+/// Allow a launcher time to connect or retry. While any client is attached or
+/// authenticating, a never-opened SSH owner stays available indefinitely.
+fn ssh_startup_expired(since: &mut Option<Instant>, now: Instant, active: bool) -> bool {
+    let Some(start) = since else { return false };
+    if active { *start = now; }
+    now.duration_since(*start) >= Duration::from_secs(300)
+}
+
+#[cfg(test)]
+#[test]
+fn only_ssh_startups_expire_after_five_uninterrupted_idle_minutes() {
+    let start = Instant::now();
+    let later = |s| start + Duration::from_secs(s);
+    assert!(!ssh_startup_expired(&mut None, later(900), false));
+    let mut since = Some(start);
+    assert!(!ssh_startup_expired(&mut since, later(299), false));
+    assert!(!ssh_startup_expired(&mut since, later(900), true));
+    assert!(!ssh_startup_expired(&mut since, later(1199), false));
+    assert!(ssh_startup_expired(&mut since, later(1200), false));
+}
 /// Shell command used without `--shell`, `[terminal] shell` or `SHELL`. On Windows,
 /// PowerShell 7 when installed, otherwise the Windows PowerShell every system has,
 /// both without the startup banner a terminal has no use for.
@@ -2084,7 +2134,7 @@ pub fn run(options: Options, foreground_apps: fn(&Value) -> Value) -> Result<(),
     }
     wake::init()?;
     let Options { config, connection, shell, listen, auth_file, set_password,
-        clear_password, telegram_credential, telegram_chat_id, temporary_password_length, status, .. } = options;
+        clear_password, telegram_credential, telegram_chat_id, temporary_password_length, status, ssh_attach, ssh_owner, .. } = options;
     let home = std::env::var("HOME").or_else(|_| std::env::var("USERPROFILE"))?;
     // Without `--connection` this is the server the app looks for, so the app
     // attaches to a server started by hand instead of starting a second one.
@@ -2092,6 +2142,14 @@ pub fn run(options: Options, foreground_apps: fn(&Value) -> Value) -> Result<(),
         Some(path) => path,
         None => graffitty_protocol::default_server_descriptor().ok_or("Cannot resolve the server state directory")?,
     };
+    if ssh_attach {
+        use graffitty_graph_protocol::{Client, Rpc};
+        let (endpoint, token) = graffitty_graph_protocol::local_server_at(&descriptor)?;
+        let attachment = Client::new(endpoint, token).with_timeout(Duration::from_secs(10))
+            .call("server.ssh_attach", json!({}))?;
+        println!("{attachment}");
+        return Ok(());
+    }
     let config_root = std::env::var("XDG_CONFIG_HOME").unwrap_or(format!("{home}/.config"));
     let explicit_config = config.is_some();
     let config_path = config.unwrap_or_else(|| PathBuf::from(format!("{config_root}/graffitty/server.toml")));
@@ -2225,7 +2283,7 @@ pub fn run(options: Options, foreground_apps: fn(&Value) -> Value) -> Result<(),
     let running = Arc::new(AtomicBool::new(true));
     let stop = running.clone();
     ctrlc::set_handler(move || stop.store(false, Ordering::Relaxed))?;
-    let authentication = auth::Server::new(auth_config, &token)?;
+    let authentication = auth::Server::new(auth_config.clone(), &token)?;
     let epoch = previous.as_ref().map(|state| state.epoch.clone()).unwrap_or_else(|| uuid::Uuid::new_v4().to_string());
     let adopting_003 = previous.as_ref().is_some_and(|owner| owner.sessions.iter().any(|s| s.inherited_percent_id));
     let workspace_state = workspace::Store::new(&descriptor, &epoch, adopting_003)?;
@@ -2239,9 +2297,12 @@ pub fn run(options: Options, foreground_apps: fn(&Value) -> Value) -> Result<(),
         frontend: Default::default(),
         size_claims: Default::default(),
         auth: authentication,
+        auth_config,
         local_token,
         remote_token: token,
         remote_listener,
+        ssh_listener: None,
+        ssh_idle_since: ssh_owner.then(Instant::now),
         remote_error,
         datagrams: Default::default(),
         network_generation: 0,
@@ -2295,6 +2356,7 @@ pub fn run(options: Options, foreground_apps: fn(&Value) -> Value) -> Result<(),
         recent_font_size: None,
         fonts: fonts::Fonts::load(&settings.terminal.font, config_path.parent().unwrap_or(std::path::Path::new(".")))?,
         settings,
+        config_path,
         epoch,
         catalog_revision: 0,
         catalog_snapshot: Value::Null,
@@ -2323,10 +2385,10 @@ pub fn run(options: Options, foreground_apps: fn(&Value) -> Value) -> Result<(),
             let Ok(stream) = ipc::accept(&private_listener) else { break; };
             clients.push(new_client(Connection::Local(ipc::Peer::new(stream)),server.network_generation));
         }
-        if let Some(listener) = &server.remote_listener
-            && let Ok((stream, _)) = listener.accept()
-            && clients.len() + handshakes.load(Ordering::Relaxed) < 64
-        {
+        for (listener, allow_local) in [(&server.remote_listener, true), (&server.ssh_listener, false)] {
+            let Some(listener) = listener else { continue };
+            let Ok((stream, _)) = listener.accept() else { continue };
+            if clients.len() + handshakes.load(Ordering::Relaxed) >= 64 { continue; }
             let Ok(handshake_lease) = server.pending_handshakes.track(&stream) else { continue; };
             handshakes.fetch_add(1, Ordering::Relaxed);
             let count = handshakes.clone();
@@ -2342,7 +2404,7 @@ pub fn run(options: Options, foreground_apps: fn(&Value) -> Value) -> Result<(),
                 connection::limit_unsent(&stream);
                 // Only this machine may use the plaintext API or the local
                 // capability; everyone else must complete the encrypted login.
-                let loopback = stream.peer_addr().is_ok_and(|a| a.ip().to_canonical().is_loopback());
+                let loopback = allow_local && stream.peer_addr().is_ok_and(|a| a.ip().to_canonical().is_loopback());
                 let mut first = [0];
                 if stream.peek(&mut first).is_ok() && first[0] == b'{' {
                     if !loopback {
@@ -2494,7 +2556,11 @@ pub fn run(options: Options, foreground_apps: fn(&Value) -> Value) -> Result<(),
         pane_claim::poll(&mut server);
         filetree::poll(&mut server);
         server.dictation.poll();
-        server.uploads.expire();
+        for (pane, progress) in server.uploads.expire() {
+            if let Some(session) = server.sessions.get_mut(&pane) {
+                session.upload_progress(progress);
+            }
+        }
         // Shell exit has the same lifecycle as closing a pane, even when no
         // frontend is attached to notice its final terminal frame.
         let exited: Vec<_> = server.sessions.values().filter(|s| s.exited).map(|s| s.id).collect();
@@ -2693,7 +2759,9 @@ pub fn run(options: Options, foreground_apps: fn(&Value) -> Value) -> Result<(),
         // Remote-enabled servers remain discoverable with no sessions. A private
         // owner exits after its last session, draining acknowledgements and close
         // events first. Observers must not keep an empty private owner alive.
-        if server.closing || (server.stops_when_empty() && server.started_session && server.workspaces.is_empty()) {
+        let clients_active = !clients.is_empty() || handshakes.load(Ordering::Relaxed) > 0 || !api_waiting.is_empty();
+        let startup_expired = ssh_startup_expired(&mut server.ssh_idle_since, Instant::now(), clients_active);
+        if server.closing || (server.stops_when_empty() && (server.started_session || startup_expired) && server.workspaces.is_empty()) {
             let since = empty_since.get_or_insert_with(Instant::now);
             let pending = clients.iter().any(|c| c.socket.pending_bytes() > 0
                 || c.api_reply.is_some() || c.api_done
@@ -2709,7 +2777,7 @@ pub fn run(options: Options, foreground_apps: fn(&Value) -> Value) -> Result<(),
         #[cfg(unix)] {
             use std::os::fd::AsRawFd;
             let mut descriptors=vec![libc::pollfd { fd:ipc::listener_fd(&private_listener),events:libc::POLLIN,revents:0 }];
-            if let Some(listener)=&server.remote_listener { descriptors.push(libc::pollfd {fd:listener.as_raw_fd(),events:libc::POLLIN,revents:0}); }
+            for listener in [&server.remote_listener,&server.ssh_listener].into_iter().flatten() { descriptors.push(libc::pollfd {fd:listener.as_raw_fd(),events:libc::POLLIN,revents:0}); }
             if let Some(fd)=server.datagrams.raw_fd() { descriptors.push(libc::pollfd {fd,events:libc::POLLIN,revents:0}); }
             for client in &clients { descriptors.push(libc::pollfd {fd:client.socket.raw_fd(),events:libc::POLLIN | if client.socket.pending_bytes()>0 {libc::POLLOUT} else {0},revents:0}); }
             let pending=clients.iter().any(|c| c.socket.pending_bytes()<4*1024*1024 && c.scenes.pending());

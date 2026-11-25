@@ -32,3 +32,9 @@ Run `mise run android:test android-lifecycle --serial SERIAL`.
 On Flat 2D startup, restore the remembered pane before activating a terminal; selecting the first pane in tree order would overwrite the saved focus before the workspace opens. Cover a remembered pane with stable ID t1 appearing second in tree order.
 
 Use a short output marker that fits narrow phone terminal columns, constructed from separate printf arguments so echoed command text cannot satisfy the background-output assertion.
+
+Save two servers before relaunch. Verify both connect, including when one needs
+a corrected password, and verify the remembered workspace returns when ready.
+Press Back to return to Servers and wait through subsequent updates from both
+servers. The list stays open. Disconnect and reconnect one server. Once all
+saved servers are connected again, the workspace opens automatically.

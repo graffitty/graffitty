@@ -215,6 +215,177 @@ func test_saved_server_has_no_session_field() -> void:
 	manager.federation.free()
 	manager.free()
 
+func test_startup_attempts_all_saved_servers_and_back_cancels_pending_navigation() -> void:
+	var manager := remembered_manager()
+	manager.dialog.hide()
+	manager.view = View.new()
+	manager.view.host = Host.new()
+	var keys := []
+	for port in [1, 2, 3]:
+		var entry := settings()
+		entry.url = "ws://127.0.0.1:%d" % port
+		if port == 3: entry.erase("token")
+		var key: String = manager._remember_entry(entry, "disconnected", "")
+		if port != 3: manager.session_passwords[key] = entry.token
+		keys.append(key)
+	manager.view_state.remember_connection(keys[0])
+	manager._restore_last_connection()
+	expect(manager.transports.size() == 2 and manager.states[keys[2]].state == "password", "One missing password leaves both other connection attempts running")
+	var ready: Node = manager.transports[keys[0]]
+	ready.connected = true
+	ready.workspace = "$1"
+	ready.server_fonts.ready = true
+	ready.topology = {"workspace":"$1", "tabs":[{"id":10}], "panes":[]}
+	manager._connected_transition(keys[0])
+	manager._try_auto_open(keys[0], ready)
+	expect(manager.navigation.current == manager.navigation.Space.WORKSPACE, "A ready server opens while another is still connecting")
+	manager._go_back()
+	var later: Node = manager.transports[keys[1]]
+	later.connected = true
+	later.workspace = ready.workspace
+	later.server_fonts.ready = true
+	later.topology = ready.topology.duplicate(true)
+	manager._try_auto_open(keys[1], later)
+	manager._try_auto_open(keys[0], ready)
+	expect(manager.navigation.current == manager.navigation.Space.MANAGER, "Back keeps Servers open after another connection or topology update")
+	manager.view.host.free()
+	manager.view.free()
+	manager.federation.free()
+	manager.free()
+
+
+func test_start_waits_for_discovery_fonts_and_host_and_preserves_restore() -> void:
+	var manager := remembered_manager()
+	manager.dialog.hide()
+	manager.touch_start = Manager.ServerStart.new()
+	var entry := settings()
+	var key: String = entry.url
+	var peer: Node = manager.open_connection(entry)
+	manager.view = View.new()
+	manager.open_when_ready = key
+	manager._restoring = true
+	peer.connected = true
+	manager._set_state(key, "connected", "Connected")
+	manager._workspace_empty()
+	expect(manager.open_when_ready == key and manager.restore_cover.visible and not manager.touch_start.available, "Discovery preserves restore and only shows Connecting")
+	peer.sessions_known = true
+	manager._restoring = false
+	manager._update_restore_cover()
+	expect(manager.touch_start.available, "An authenticated, confirmed empty server can create its first session")
+	peer.workspace = "$1"
+	peer.topology = {"workspace":"$1", "tabs":[{"id":10}], "panes":[]}
+	manager._try_auto_open(key, peer)
+	expect(not manager.touch_start.available, "The start prompt waits for the server font and the host")
+	peer.server_fonts.ready = true
+	manager._try_auto_open(key, peer)
+	expect(not manager.touch_start.available and manager.open_when_ready == key, "Waiting for the host keeps the selected server")
+	manager.view.host = Host.new()
+	manager._try_auto_open(key, peer)
+	expect(manager.navigation.current == manager.navigation.Space.WORKSPACE, "The pending workspace opens when the host is ready")
+	manager.view.host.free()
+	manager.view.free()
+	manager.touch_start.free()
+	manager.federation.free()
+	manager.free()
+
+func test_final_saved_server_connection_opens_once_per_transition() -> void:
+	var manager := remembered_manager()
+	manager.dialog.hide()
+	manager.view = View.new()
+	manager.view.host = Host.new()
+	var keys := []
+	for port in [1, 2]:
+		var entry := settings()
+		entry.url = "ws://127.0.0.1:%d" % port
+		var peer: Node = manager.open_connection(entry)
+		peer.workspace = "$1"
+		peer.server_fonts.ready = true
+		peer.topology = {"workspace":"$1", "tabs":[{"id":10}], "panes":[]}
+		keys.append(manager._connection_key(entry))
+	for key in keys:
+		manager.transports[key].connected = true
+		manager._connected_transition(key)
+		manager._open_after_all_connected()
+		expect((manager.navigation.current == manager.navigation.Space.WORKSPACE) == (key == keys[1]), "Only the final saved connection triggers automatic entry")
+	manager._go_back()
+	manager._connected_transition(keys[1])
+	manager._open_after_all_connected()
+	manager._try_auto_open(keys[0], manager.transports[keys[0]])
+	expect(manager.navigation.current == manager.navigation.Space.MANAGER, "Already-connected status and topology updates keep Servers open after Back")
+	manager.transports[keys[0]].connected = false
+	manager._connected_transition(keys[0])
+	manager.transports[keys[0]].connected = true
+	manager._connected_transition(keys[0])
+	manager._open_after_all_connected()
+	expect(manager.navigation.current == manager.navigation.Space.WORKSPACE, "A fresh final-server reconnection opens the workspace again")
+	manager.view.host.free()
+	manager.view.free()
+	manager.federation.free()
+	manager.free()
+
+
+func test_auth_failure_retains_masked_password_for_editing() -> void:
+	var manager := remembered_manager()
+	var input := settings()
+	var key: String = manager._connection_key(input)
+	var peer: Node = manager.open_connection(input)
+	manager._authentication_failed("rejected", key, peer)
+	manager._edit_connection(key)
+	expect(manager.states[key].state == "password" and manager.token.text == input.token, "Rejected password is available for correction")
+	expect(not manager.entries[key].has("token"), "Connection metadata contains no password")
+	manager.federation.free()
+	manager.free()
+
+
+class RecordedDesktopConnection extends Node:
+	var attempted: Array[Dictionary] = []
+	func open_remote_server(_client: Node, entry: Dictionary, _new_window: bool) -> Node:
+		attempted.append(entry.duplicate())
+		return null
+
+
+func test_desktop_retry_and_shared_editor_bind_prefill_to_normalized_server() -> void:
+	var desktop := preload("res://scenes/remote/DesktopServers.gd").new()
+	var application := RecordedDesktopConnection.new()
+	desktop.application = application
+	Engine.get_main_loop().root.add_child(desktop)
+	var original := settings()
+	original.erase("token")
+	desktop._connect(original, "previous attempt", true)
+	desktop._load_editor(original)
+	expect(desktop.editor.token.secret and desktop.editor.token.text == "previous attempt", "Desktop retry reopens the attempted password masked")
+	desktop.editor.endpoint.text = "127.0.0.1:1"
+	expect(desktop.editor.password_for_submission() == "previous attempt", "Equivalent spelling preserves the password")
+	desktop.editor.endpoint.text = "127.0.0.1:2"
+	desktop._save(true)
+	expect(application.attempted.size() == 1 and desktop.editor.token.text.is_empty(), "Desktop rejects a prefilled password for a different normalized address")
+	desktop.editor.token.text = "replacement"
+	desktop.editor.token.text_changed.emit("replacement")
+	desktop._save(true)
+	expect(application.attempted.size() == 2 and application.attempted[1].url == "ws://127.0.0.1:2" and application.attempted[1].token == "replacement", "Desktop sends the newly typed password to the edited address")
+	desktop.free()
+	application.free()
+
+
+func test_mobile_changed_address_cannot_reuse_original_password() -> void:
+	var manager := remembered_manager()
+	var original := settings()
+	var key: String = manager._connection_key(original)
+	var first: Node = manager.open_connection(original)
+	manager._authentication_failed("rejected", key, first)
+	manager._edit_connection(key)
+	manager.endpoint.text = "127.0.0.1:2"
+	manager._submit_connection()
+	expect(manager.token.text.is_empty() and manager.transports.is_empty(), "Mobile submission clears a foreign prefill before connecting or replacing the entry")
+	manager.token.text = "replacement"
+	manager.token.text_changed.emit("replacement")
+	manager._submit_connection()
+	var renamed := "ws://127.0.0.1:2"
+	expect(manager.transports.has(renamed) and manager.transports[renamed].token == "replacement", "Mobile sends the replacement to the edited address")
+	manager.federation.free()
+	manager.free()
+
+
 func test_restore_without_remembered_password_requires_sign_in() -> void:
 	var manager := remembered_manager()
 	var input := settings()

@@ -821,6 +821,19 @@ impl Graph {
             edge["to"] != key || port(&self.nodes[key], false, string(edge, "to_port")).is_ok()
         });
     }
+    /// A completed content read is activity, not a queued message or agent turn.
+    pub fn record_read(&mut self, source: &str, target: &str) {
+        if source == target { return; }
+        let now = now();
+        let edge = self.edges.values().filter(|e| e["from"] == source && e["to"] == target
+            && e["read"] == true && e["muted"] != true && !expired(e, now))
+            .min_by_key(|e| (e["turn_completed"] == true, event_key(e))).cloned();
+        let Some(edge) = edge else { return };
+        let event = json!({"event_id":uuid(),"source":source,"target":target,
+            "source_port":edge["from_port"],"target_port":edge["to_port"],
+            "edge_revision":edge["revision"],"type":"transcript read","created":now});
+        self.record_delivery(&event, "transcript read", false);
+    }
     pub fn can_read(&self, source: &str, target: &str) -> bool {
         self.can_read_at(source, target, now())
     }

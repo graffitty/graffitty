@@ -74,6 +74,8 @@ func _setup_frame() -> void:
 
 
 func _connect_host() -> void:
+	if OS.has_feature("ios") and host.server_chooser.is_valid():
+		navigation.add_back(host.server_chooser, tr("Servers"))
 	var close_hint: String = host.shortcut_text("CloseTab")
 	var new_hint: String = host.shortcut_text("NewTab")
 	tabs.close_tooltip = tr("Close tab") + " (%s)" % close_hint if not close_hint.is_empty() else ""

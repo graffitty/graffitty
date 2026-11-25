@@ -147,7 +147,7 @@ func open_remote_server(source: Node, settings: Dictionary, in_new_window := fal
 	window.add_child(client)
 	window.show()
 	window.grab_focus()
-	if in_new_window:
+	if in_new_window and not client._ssh_login():
 		var manager := show_servers(client)
 		manager.open_when_ready = true
 	return client
@@ -419,10 +419,9 @@ func register_host(host: Node) -> void:
 	agent_attention.watch_host(host)
 	agent_attention.queue_refresh()
 	bind_window(host)
-	if not _remote_startup_applied:
+	if not _remote_startup_applied and _remote_controller().bind(self):
 		_remote_startup_applied = true
-		if _remote_controller().bind(self):
-			_sync_remote_access.call_deferred()
+		_sync_remote_access.call_deferred()
 
 
 
@@ -434,12 +433,13 @@ func _remote_controller() -> Node:
 	if not is_instance_valid(remote_control):
 		remote_control = preload("res://scenes/remote/RemoteAccessControl.gd").new()
 		add_child(remote_control)
-		remote_control.bind(self)
 	return remote_control
 
 
 func refresh_remote_access() -> Error:
-	return await _remote_controller().refresh()
+	var control := _remote_controller()
+	if not control.bind(self): return ERR_UNAVAILABLE
+	return await control.refresh()
 
 
 ## The owner may already share by configuration. Until it answers, the menu
@@ -454,24 +454,6 @@ func _sync_remote_access() -> void:
 	if not reason.is_empty() and not hosts.is_empty():
 		notifications.post(tr("Remote access is off"), reason, hosts[0], "warning", 20.0, "remote-access-off",
 			{"title": "Remote access is off"})
-
-
-func set_remote_access(enabled: bool) -> Error:
-	if remote_access_busy: return ERR_BUSY
-	remote_access_busy = true
-	var control := _remote_controller()
-	var error: Error
-	if enabled:
-		var path := preload("res://graffitty/paths.gd").stdpath("state").path_join("remote.json")
-		for option in OS.get_cmdline_user_args():
-			if option.begins_with("--remote-connection="): path = option.trim_prefix("--remote-connection=")
-		error = await control.start(self, "", 0, path)
-	else:
-		error = await control.stop()
-	remote_access_busy = false
-	if error != OK: push_error("Remote access: " + control.last_error)
-	for host in hosts: host.ui_changed.emit()
-	return error
 
 
 func bind_window(host: Node) -> void:

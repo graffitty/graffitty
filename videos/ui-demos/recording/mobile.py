@@ -42,6 +42,9 @@ env = {
 cli = root / "target/debug/gft"
 env.update(
     TAKE=str(take),
+    GRAFFITTY_MOVIE_PAUSED="1",
+    GRAFFITTY_FFMPEG=helpers["check_encoder"](),
+    GRAFFITTY_AV1_CRF="15",
     GRAFFITTY_BIN=str(cli),
     XDG_CONFIG_HOME=str(take / "config"),
     XDG_STATE_HOME=str(take / "state"),
@@ -49,12 +52,9 @@ env.update(
 )
 config = take / "config/graffitty/client.toml"
 config.parent.mkdir(parents=True)
-config.write_text(
-    (root / "videos/main-demo/recording/android/client.toml").read_text()
-    + "\n[effects.camera]\nadaptive_zoom_in_seconds = 0.65\n"
-)
+shutil.copyfile(root / "videos/main-demo/recording/android/client.toml", config)
 agents = [
-    ("workspace", "Review the layout", "Ready."),
+    ("workspace", "Review the layout and check the keyboard insets", "Ready."),
     (
         "tests",
         "Check the touch tests",
@@ -120,6 +120,8 @@ try:
             project,
             "--language",
             "en",
+            "--write-movie",
+            str(take / "mobile.mp4"),
             "--fixed-fps",
             "60",
             "--quit-after",

@@ -4,7 +4,9 @@ Configure these on the computer running your sessions.
 
 ## Listen on the right network
 
-Edit `~/.config/graffitty/server.toml`:
+Open **Sessions → Remote Access Settings…** on the host. Choose **Enable remote access**, enter the **Listen IP address** and **Listen port**, then select **Save**.
+
+You can also configure startup in `~/.config/graffitty/server.toml`.
 
 ```toml
 [remote]
@@ -14,10 +16,11 @@ port = 7183
 ```
 
 - `127.0.0.1` accepts local connections and SSH tunnels only.
+- For a phone or tablet on the same Wi-Fi, use the host computer’s LAN IP for both the bind address and the server address on the mobile device.
 - For Tailscale, run `tailscale ip -4` and use that computer's address.
-- `enabled = true` starts sharing automatically; otherwise use the menu toggle.
+- `enabled = true` starts sharing automatically.
 
-Apply edits with a [server restart](../customize/server-configuration.md#reload-server-configuration).
+Apply direct file edits with a [server restart](../customize/server-configuration.md#reload-server-configuration).
 An unavailable address prevents sharing. Update the setting if its Tailscale address changes.
 
 ## Enter a server address
@@ -44,23 +47,29 @@ can still be observable.
 gft remote connect user@computer
 ```
 
-Graffitty checks the remote installation with `gft --version`. If it needs to
-install Graffitty, it runs the standard installer pinned to your client’s
-version. The installer selects the release for the remote OS and CPU. If that
-computer cannot download it, the client verifies the archive’s SHA-256 and
-uploads it with the installer over SSH.
+When you run this on your client computer, `gft` does the following:
 
-Graffitty starts or reuses the remote server and connects through an SSH tunnel.
-OpenSSH handles authentication, host-key checks, and SSH aliases. For a custom
-build, pass `--server-binary PATH` with a `gft` executable built for the
-destination. See [SSH server deployment](../developers/build-and-run/remote-server.md).
+1. **Log in over SSH.** OpenSSH checks the remote host key and authenticates your account using your usual SSH settings.
+2. **Find Graffitty on the remote computer.** `gft` detects the OS and CPU and checks the installation. If it needs to install Graffitty, it selects the release matching your client. If the host cannot download it, the client verifies the archive and uploads it over SSH.
+3. **Find or start the Graffitty server.** An existing server keeps its live sessions. Through its authenticated local socket, `gft` asks it to open a private loopback listener on a free port. If no server is running, `gft` starts one first. You do not need to enable network access or restart an existing server.
+4. **Read the connection details over SSH.** The remote server reports its listening port and, in temporary-password mode, its generated password. A manually configured password is omitted.
+5. **Open the tunnel.** `gft` picks a free port on your client and runs `ssh -N -T -L 127.0.0.1:CLIENT_PORT:127.0.0.1:SERVER_PORT user@computer` with the actual port numbers. SSH listens on the client port. For each connection there, the SSH service on the remote computer opens a connection to its own server port. Only the SSH port needs to be reachable across the network.
+6. **Launch the Graffitty client and sign in.** The app connects to `ws://127.0.0.1:CLIENT_PORT` and performs Graffitty login through the tunnel. It uses the temporary password from step 4 when available. A manual password or required verification code still applies.
 
-The client keeps the tunnel open and retries dropped connections. Closing it
-closes tunnels while remote shells continue. A remote reboot ends the programs;
-the server is not installed as a boot service.
+`gft` monitors the tunnel and retries if it drops. Closing the client closes the tunnel and leaves remote shells running. A remote reboot ends those programs.
+
+For a custom build, pass `--server-binary PATH` with a `gft` executable built for the destination. [SSH server deployment](../developers/build-and-run/remote-server.md)
 
 For several hosts, pass their SSH aliases together:
 
 ```sh
 gft remote connect build-server home-pc laptop
+```
+
+## Plain `ssh` from a Graffitty terminal
+
+If you run `ssh user@remote-host` inside a terminal pane, install the Ghostty terminfo once on that host so shell programs recognize the terminal. This command writes to `~/.terminfo` on the remote host:
+
+```sh
+infocmp -x xterm-ghostty | ssh user@remote-host -- tic -x -
 ```

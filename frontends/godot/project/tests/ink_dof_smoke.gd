@@ -186,7 +186,7 @@ func run() -> void:
 	await frame(view)
 	# On this plane the normalized depth offset is one. A uniform floor must
 	# produce the same kernel, both exactly on a band and between bands.
-	for radius: float in [6.0, 4.5]:
+	for radius: float in [6.0, 4.5, 12.0, 18.0, 24.0, 3.0]:
 		lens.set_lens(1, radius, .5, 24)
 		var variable := await frame(view)
 		lens.set_lens(1, 0, .5, 24, radius)

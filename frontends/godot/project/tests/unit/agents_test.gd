@@ -14,7 +14,12 @@ class Connection extends Node:
 	func wire_id(id: int) -> int: return 7 if id in [1, 999] else id
 	func local_id(id: int) -> int: return 1 if id == 7 else id
 
+class NavigationView extends RefCounted:
+	var revealed: Array[String] = []
+	func reveal_navigation_target(key: String) -> void: revealed.append(key)
+
 class Host extends Node:
+	var workspace_view := NavigationView.new()
 	var workspace_layout := preload("res://scenes/WorkspaceLayout.gd").new()
 	var presentation_active := true
 	var pane_focus := "t1"
@@ -649,6 +654,7 @@ class TreeSession extends RefCounted:
 	var foreground_app: Dictionary = {}
 
 class TreeHost extends Node:
+	var workspace_view := NavigationView.new()
 	var workspace_layout := preload("res://scenes/WorkspaceLayout.gd").new()
 	var pane_focus := "t1"
 	var sessions: Dictionary = {}
@@ -832,6 +838,7 @@ func test_connected_panes_form_a_tree_under_the_first_agent() -> void:
 	expect(not subs.any(func(s): return s.key == "t6"), "Filetree connections are hidden even when spawned by an agent")
 	controller.focus_key(subs[0].host_id, subs[0].key)
 	expect(host.focused == "t2" and host.revealed == "t2", "Clicking a connected pane reveals and focuses it")
+	expect(host.workspace_view.revealed == ["t2"], "Agent selection uses the same Main/pan reveal as prefix navigation")
 	controller.free()
 	connection.free()
 	host.free()

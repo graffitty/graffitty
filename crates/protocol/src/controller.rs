@@ -5,12 +5,13 @@ use serde_json::Value;
 
 pub const METHODS: &[&str] = &[
     "agent.seen",
-    "terminal.type",
+    "internal.terminal.demo_type",
     "terminal.press",
     "terminal.put",
     "terminal.get_text",
     "terminal.pid",
     "pane.list",
+    "pane.send",
 ];
 
 pub fn valid_alias(alias: &str) -> bool {

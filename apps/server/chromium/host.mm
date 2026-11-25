@@ -798,6 +798,7 @@ class Client final : public CefClient,
     void OnBeforeClose(CefRefPtr<CefBrowser> b) override {
         ViewScope scope(viewFor(b));
         chooseContext(contextSerial, -1);
+        [selectRequests removeObjectForKey:@(b->GetIdentifier())];
         [pageTitles removeObjectForKey:@(b->GetIdentifier())];
         pageEmulation.erase(b->GetIdentifier());
         alloyPaintStates.erase(b->GetIdentifier());
@@ -999,6 +1000,7 @@ int main(int argc, char **argv) {
             return 4;
         // Accept commands only after Chromium has initialized its CDP pipe.
         if (!connectServerControl()) return 6;
+        installSelectMenuBridge();
         startControlSources();
         CefWindowInfo info;
         info.bounds = CefRect(100, 100, 1280, 800);

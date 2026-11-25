@@ -2136,12 +2136,14 @@ func _forward_pointer(event: InputEvent, replay_click := false) -> void:
 	var sheet_point := canvas_point_at(local)
 	if event is InputEventMouse and not event.get_meta("direct_touch", false):
 		_update_header_hover(sheet_point)
-	if event is InputEventMouseButton and event.button_index == MOUSE_BUTTON_RIGHT and event.pressed:
+	if event is InputEventMouseButton and event.button_index in [MOUSE_BUTTON_LEFT, MOUSE_BUTTON_RIGHT] and event.pressed:
 		var pointed := window_at(sheet_point)
 		if host.is_chromium_pane(pointed):
 			var chromium: Node = host.chromiums.get(PaneAddress.id(pointed))
 			if chromium != null:
 				chromium.context_menu_screen = preload("res://scenes/ScreenSpace.gd").of(pointer, event.position)
+	if event is InputEventMouseButton and event.button_index == MOUSE_BUTTON_RIGHT and event.pressed:
+		var pointed := window_at(sheet_point)
 		if panes.has(pointed) and panes[pointed].secondary_split_at(sheet_point):
 			return
 		var title_key := _compact_header_at(local)
@@ -2232,6 +2234,14 @@ func _pointer_left() -> void:
 	if _pointer_in_canvas:
 		_pointer_in_canvas = false
 		canvas.notify_mouse_exited()
+
+
+## Match visible GUI stacking before raw graph handlers can consume a click.
+func graph_pointer_allowed(point: Vector2) -> bool:
+	if not is_visible_in_tree() or not foreground_clip.is_visible_in_tree(): return false
+	var local := foreground_clip.get_global_transform_with_canvas().affine_inverse() * point
+	if not Rect2(Vector2.ZERO, foreground_clip.size).has_point(local): return false
+	return not preload("res://scenes/mods/PanelWindow.gd").blocks_workspace_pointer(host, point)
 
 
 func _input(event: InputEvent) -> void:

@@ -371,6 +371,12 @@ disposable network fixture. B restores its session and list rows without changin
 A's active tab, focused pane, camera, or starting/canceling a session transition.
 Repeat with B's first automatic attachment. Explicitly choosing B must still
 switch normally. Repeat through app background/resume with several servers.
+
+With two clients, rotate or type on the phone while the desktop shows a different
+server, session, tab, or focused pane. Verify the desktop keeps its tab, focus,
+main area and terminal grid. Repeat with both clients in Main on the same pane
+and verify the active fitting client can resize it.
+
 Agents' elapsed times use the server-recorded status transition, including agents
 in unshown sessions. Reconnect after an agent completed while this client was
 away: its age must include that gap, and opening the row must not reset it.
@@ -802,12 +808,22 @@ Device-level configuration and microphone checks for this mode remain pending.
 
 ### UI-09 — Workspace manager connections and mobile start
 
-Tapping a saved server connects it without leaving the manager. Tapping an
-already connected or connecting server keeps the manager open and its transport
-intact. Connect multiple servers individually, including password entry, then
-verify that their connections remain active. Connect all sits beside the connected
-count, skips existing attempts, and opens the terminal when a server is ready.
-Failures must remain visible without dropping successful connections.
+On mobile startup, attempt every saved server and restore the last workspace
+when it is ready. A server needing a corrected password leaves the other
+attempts running. With two saved servers and the manager open, connect the first
+and verify the list stays open. Connect the second and verify automatic entry.
+Android Back or the iOS **‹** immediately left of the tab-strip **⌄** menu returns to Servers. Further status
+and topology updates leave it open. Disconnect and reconnect one server; the
+transition back to all connected opens the workspace again. After a failed
+sign-in, Edit server retains the masked password for correction. An equivalent
+address spelling keeps the password. Changing to a different server requires a
+password entered for that address on mobile and desktop. Connect all
+skips active transports; Touch to start explicitly opens a connected workspace.
+
+With one server, **Add server** sits directly below its row. With enough servers
+to overflow, scroll to the last row and back. Only server rows move. **Connect
+all** stays visible above the list and **Add server** stays above the bottom
+navigation. Repeat after rotating the device.
 
 A saved connection contains server identity and authentication preferences only.
 After sign-in, the server lists live sessions and the client restores its own
@@ -816,9 +832,10 @@ selects another live session without a password error. An empty server remains
 connected and creates a session only after an explicit start/new-session action.
 Closing its last session clears dead panes while preserving the connection.
 
-On mobile, the Graffitty logo stays horizontally centered in the header. While at
-least one server is connected, a compact Touch to start speech bubble points to
-the logo. The logo and bubble are one start action; both must respond to a tap.
+On mobile, the Graffitty logo stays horizontally centered in the header. Show **Touch to start** once a connected workspace can open, or once
+session discovery confirms that the user can create the first session. Hide the
+prompt during connection and automatic restore. Disconnect and reconnect, then
+verify that the restored workspace accepts terminal input. The logo and bubble are one start action; both must respond to a tap.
 The bubble sits entirely beside the logo on its right, vertically centered with
 a left-pointing tail, a minimum 48-logical-pixel height and expanded touch bounds.
 On narrow screens the centered logo shrinks to leave room for the translated
@@ -827,6 +844,17 @@ translated text stays readable on phone and tablet in portrait and landscape. Di
 the last server removes the bubble and disables the start action while keeping
 the logo centered. Starting opens a connected workspace. Desktop has no start
 button; closing the manager returns to the terminal.
+
+On both iOS and Android, entering the workspace slides the entire workspace,
+including its tab strip and touch controls, in from the right. Keep Servers
+visible while the destination lays out. The first moving workspace frame uses
+the live workspace layout, and its controls retain their positions at landing. The server list
+moves left by 30% of the viewport width beneath it. Returning reverses those
+roles with the same measured UIKit spring (about 467 ms including its tail).
+There is no new edge-swipe gesture. Repeated taps/Back during the transition
+must not navigate twice or type into a terminal. Connection updates must not
+restart it. Rotation, backgrounding, and opening the editor must remove the
+transition surfaces and leave the destination usable. Sessions stay alive.
 
 Physical-device acceptance remains pending.
 

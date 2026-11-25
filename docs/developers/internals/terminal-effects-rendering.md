@@ -90,6 +90,13 @@ own phase-driven 0–6 px blur. The shared typing lens resumes once the retained
 pieces retire.
 
 
+In Flat 2D and Flat 3D, session-flight pieces retain their captured screen
+framing while the live camera moves to the destination's saved pan and zoom.
+Projection compensation follows the piece's own flight, so the outgoing screen
+does not shrink to the destination's scale before departing. Incoming pieces
+use the destination framing. Retiring pieces keep this rule after handoff.
+The scenery-world kit keeps camera-driven travel between world surfaces.
+
 ## Tests
 
 The fast rules in `tests/unit/` run with

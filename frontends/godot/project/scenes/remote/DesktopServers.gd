@@ -22,7 +22,9 @@ var connect_all := Button.new()
 var keep_manager_open := false
 var _pending_connections: Array[Dictionary] = []
 var _connecting_queue := false
+var _attempted_passwords: Dictionary[String, String] = {}
 var cards: Array[Dictionary] = []
+var _ssh_launches := {}
 
 func _init() -> void:
 	visible = false
@@ -36,6 +38,8 @@ func _ready() -> void:
 	title = "Servers"
 	preload("res://scenes/UIAccent.gd").install()
 	add_child(chooser)
+	size_changed.connect(_fit_page)
+	chooser.visibility_changed.connect(_fit_page)
 	connect_all.text = "Connect all"
 	connect_all.custom_minimum_size = Vector2(112, 48)
 	Page.style_button(connect_all)
@@ -46,13 +50,13 @@ func _ready() -> void:
 	local.custom_minimum_size.y = 48
 	Page.style_button(local)
 	local.pressed.connect(_return_local)
-	chooser.connections.add_child(local)
-	chooser.connections.move_child(local, 1)
+	chooser.list_items.add_child(local)
+	chooser.list_items.move_child(local, 0)
 	startup.text = "Show servers at startup"
 	startup.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
 	startup.button_pressed = application.show_servers_at_startup
 	startup.toggled.connect(application.set_show_servers_at_startup)
-	chooser.body.add_child(startup)
+	chooser.connections.add_child(startup)
 	chooser.back.text = "Done"
 	chooser.footer_actions.alignment = BoxContainer.ALIGNMENT_END
 	chooser.back.show()
@@ -66,6 +70,7 @@ func _ready() -> void:
 	Page.style_button(new_window)
 	new_window.pressed.connect(_save.bind(true))
 	form.body.add_child(new_window)
+	editor.submitted.connect(form.confirmed.emit)
 	form.confirmed.connect(_save.bind(false))
 	form.canceled.connect(_cancel_edit)
 	form.hide()
@@ -82,6 +87,10 @@ func _ready() -> void:
 			confirmation.hide()
 			for row in cards: row.card.actions.hide())
 	get_node("/root/Localization").changed.connect(_refresh_status)
+
+func _fit_page() -> void:
+	if chooser.visible:
+		chooser.set_deferred("size", get_visible_rect().size)
 
 func present(source: Node) -> void:
 	if not is_embedded():
@@ -129,8 +138,11 @@ func _refresh_list() -> void:
 	entries = loaded.get("connections", [])
 	# Unsaved active connections remain visible without persisting credentials.
 	if is_instance_valid(client) and not client.settings.get("shared_local", false):
-		if not entries.any(func(entry): return entry.url == client.settings.url):
-			entries.append(client.settings.duplicate(true))
+		var active_url := Authentication.profile_url(client.settings)
+		if not entries.any(func(entry): return entry.url == active_url):
+			var row: Dictionary = client.settings.duplicate(true)
+			row.url = active_url
+			entries.append(row)
 	for entry in entries:
 		var settings: Dictionary = entry.duplicate(true)
 		settings.erase("token")
@@ -139,7 +151,11 @@ func _refresh_list() -> void:
 		cards.append({"settings": settings, "card": card})
 		card.update_identity(settings)
 		card.activated.connect(func(): _queue_connection(settings))
-		card.edited.connect(func(): _edit(settings))
+		if str(settings.url).begins_with("ssh://"):
+			card.edit.text = "Save SSH host"
+			card.edited.connect(func(): _save_ssh(settings))
+		else:
+			card.edited.connect(func(): _edit(settings))
 		card.disconnected.connect(func(): selected = settings; _disconnect())
 		card.remove_requested.connect(func(): selected = settings; confirmation.popup_centered())
 		var open_new := Button.new()
@@ -155,45 +171,75 @@ func _refresh_list() -> void:
 	if loaded.has("error"): status.text = str(loaded.error)
 
 func _is_current() -> bool:
-	return is_instance_valid(client) and not client.settings.get("shared_local", false) and client.settings.get("url") == selected.get("url")
+	return is_instance_valid(client) and not client.settings.get("shared_local", false) and Authentication.profile_url(client.settings) == selected.get("url")
 
 func _connected_client(settings: Dictionary) -> Node:
 	for candidate in get_tree().get_nodes_in_group("shared_presentations"):
-		if not candidate.is_queued_for_deletion() and not candidate.federated and candidate.settings.get("url") == settings.get("url") and candidate.connection.connected:
+		if not candidate.is_queued_for_deletion() and not candidate.federated and Authentication.profile_url(candidate.settings) == settings.get("url") and candidate.connection.connected:
 			return candidate
 	return null
 
 func _refresh_status() -> void:
 	if not is_instance_valid(client): return
+	var saved := Authentication.saved_connections()
 	var connected_count := entries.filter(func(entry): return _connected_client(entry) != null).size()
 	status.text = tr("%d of %d servers connected") % [connected_count, entries.size()]
 	connect_all.disabled = entries.is_empty()
 	local.disabled = not client.settings.get("shared_local", false) and (client.local_return == null or not is_instance_valid(client.local_return.client))
 	for row in cards:
 		var connected := _connected_client(row.settings)
-		var current: bool = not client.settings.get("shared_local", false) and client.settings.get("url") == row.settings.url
+		var current: bool = not client.settings.get("shared_local", false) and Authentication.profile_url(client.settings) == row.settings.url
 		var card: Card = row.card
 		var state := "connected" if connected != null else "disconnected"
 		if current:
 			state = "connected" if client.connection.connected else ("connecting" if client.connection.enabled else "error")
 		card.update_state(state, current or connected != null)
+		if str(row.settings.url).begins_with("ssh://"):
+			card.edit.visible = connected != null
+			if connected != null:
+				var source := client if current and client.connection.connected else connected
+				card.edit.disabled = saved.any(func(entry): return entry.url == row.settings.url and str(entry.get("initial_session", "")) == source.connection.workspace)
+			card.select.disabled = card.select.disabled or _ssh_launches.has(row.settings.url)
+			card.action.disabled = card.select.disabled
 		if current:
 			get_node("/root/Localization").text(card.status, client.connection.status_source, client.connection.status_args, &"text", true)
 		else:
 			card.status.text = tr("Connected") if connected != null else tr("Ready to connect")
 		# Disconnect belongs to this window; another window's connection is not ours.
 		card.disconnect_button.disabled = not current
-		card.remove.disabled = not Authentication.saved_connections().any(func(saved): return saved.url == row.settings.url)
+		card.remove.disabled = not saved.any(func(entry): return entry.url == row.settings.url)
+
+## Save only the destination and the session currently attached to this SSH client.
+func _save_ssh(row: Dictionary) -> void:
+	var source := _connected_client(row)
+	if is_instance_valid(client) and Authentication.profile_url(client.settings) == row.url and client.connection.connected:
+		source = client
+	if source == null or not source.settings.get("transient", false): return
+	var profile := {"url": row.url, "initial_session": source.connection.workspace}
+	for field in ["name", "alias", "hostname", "platform", "username"]:
+		profile[field] = source.settings.get(field, "")
+	var error := Authentication.save_connection(profile)
+	if not error.is_empty():
+		status.text = error
+		return
+	_refresh_list()
 
 func _edit(entry: Dictionary) -> void:
 	if not visible: popup_centered_clamped(Vector2i(Vector2(840, 620) * content_scale_factor), 0.9)
-	editing = entry.duplicate(true)
+	_load_editor(entry)
 	open_when_ready = false
 	chooser.hide()
 	form.title = "Add server" if editing.is_empty() else "Edit server / password"
 	form.show()
-	editor.load_settings(editing)
 	editor.endpoint.grab_focus()
+
+func _load_editor(entry: Dictionary) -> void:
+	editing = entry.duplicate(true)
+	editor.load_settings(editing)
+	if not editing.is_empty():
+		var url: String = editing.url
+		var retry: String = _attempted_passwords[url] if _attempted_passwords.has(url) else _password(editing)
+		editor.prefill_password(retry)
 
 func _cancel_edit() -> void:
 	editor.token.clear()
@@ -212,8 +258,11 @@ func _input(event: InputEvent) -> void:
 func _password(settings: Dictionary) -> String:
 	var connected := _connected_client(settings)
 	if connected != null: return str(connected.connection.token)
+	if _attempted_passwords.has(settings.url): return _attempted_passwords[settings.url]
+	if is_instance_valid(client) and client.settings.get("url") == settings.url and not client.connection.token.is_empty():
+		return str(client.connection.token)
 	if settings.get("remember", false):
-		var result := Authentication.password(settings.url)
+		var result := Authentication.password(settings.url, str(settings.get("credential_id", "")))
 		if result.has("error"): status.text = str(result.error)
 		return str(result.get("password", ""))
 	return ""
@@ -224,8 +273,7 @@ func _save(in_new_window: bool) -> void:
 	if not address_error.is_empty():
 		editor.form_status.text = address_error
 		return
-	var password: String = editor.token.text
-	if password.is_empty(): password = _password(settings)
+	var password: String = editor.password_for_submission()
 	if password.is_empty():
 		editor.form_status.text = "Enter the current password shown on the computer."
 		return
@@ -238,6 +286,7 @@ func _save(in_new_window: bool) -> void:
 		if not error.is_empty():
 			editor.form_status.text = error
 			return
+	if not editing.is_empty() and editing.url != settings.url: _attempted_passwords.erase(editing.url)
 	selected = settings.duplicate(true)
 	_cancel_edit()
 	_refresh_list()
@@ -261,7 +310,7 @@ func _drain_connections() -> void:
 			await get_tree().process_frame
 		selected = _pending_connections.pop_front()
 		keep_manager_open = true
-		_open(false)
+		await _open(false)
 	_connecting_queue = false
 
 func _connect_all() -> void:
@@ -271,7 +320,7 @@ func _connect_all() -> void:
 	if chooser.visible: hide()
 
 func _open(in_new_window: bool) -> void:
-	if keep_manager_open and _connected_client(selected) != null: return
+	if keep_manager_open and not in_new_window and _connected_client(selected) != null: return
 	if _is_current() and client.connection.connected and not in_new_window:
 		hide()
 		client._remote_sessions_changed(true)
@@ -283,11 +332,75 @@ func _open(in_new_window: bool) -> void:
 		hide()
 		connected._remote_sessions_changed(true)
 		return
+	if str(selected.url).begins_with("ssh://"):
+		await _connect_ssh(selected.duplicate(true), in_new_window)
+		return
 	var password := _password(selected)
 	if password.is_empty():
 		_edit(selected)
 		return
 	_connect(selected, password, in_new_window)
+
+static func _ssh_arguments(profile: Dictionary, interactive := false) -> PackedStringArray:
+	var args := PackedStringArray(["remote", "connect", "--terminal" if interactive else "--stdio"])
+	for option in [["initial_session", "--workspace"], ["alias", "--alias"]]:
+		var value := str(profile.get(option[0], ""))
+		if not value.is_empty(): args.append_array([option[1], value])
+	args.append(str(profile.url).trim_prefix("ssh://"))
+	return args
+
+func _connect_ssh(profile: Dictionary, in_new_window: bool) -> void:
+	var url := str(profile.url)
+	if _ssh_launches.has(url): return
+	_ssh_launches[url] = true
+	_refresh_status()
+	var args := _ssh_arguments(profile)
+	var tunnel := preload("res://scenes/remote/SshTunnel.gd").new()
+	add_child(tunnel)
+	tunnel.start(args)
+	var response: Array = await tunnel.prepared
+	_ssh_launches.erase(url)
+	var settings: Dictionary = response[0]
+	if settings.is_empty() or Authentication.profile_url(settings) != url:
+		tunnel.queue_free()
+		_refresh_status()
+		if response[2] == 77:
+			_launch_ssh(profile)
+		else:
+			if not visible: present(client)
+			status.text = tr("SSH connection failed.") + " " + str(response[1])
+		return
+	settings.merge({"name":profile.name, "remember":profile.get("remember", false)}, true)
+	var next: Node = application.open_remote_server(client, settings, in_new_window)
+	tunnel.reparent(next)
+	next.ssh_tunnel = tunnel
+	if not in_new_window:
+		bind_client(next)
+		open_when_ready = not keep_manager_open
+		_refresh_list()
+
+func _launch_ssh(profile: Dictionary) -> void:
+	var url := str(profile.url)
+	if _ssh_launches.has(url): return
+	_ssh_launches[url] = true
+	_refresh_status()
+	var process := OS.execute_with_pipe(preload("res://graffitty/executables.gd").cli(), _ssh_arguments(profile, true), false)
+	var code := -1
+	var errors := PackedByteArray()
+	if not process.is_empty():
+		while true:
+			var running := OS.is_process_running(process.pid)
+			var output: PackedByteArray = process.stdio.get_buffer(8192)
+			var chunk: PackedByteArray = process.stderr.get_buffer(8192)
+			errors.append_array(chunk)
+			if not running and output.is_empty() and chunk.is_empty(): break
+			await get_tree().create_timer(0.1).timeout
+		code = OS.get_process_exit_code(process.pid)
+	_ssh_launches.erase(url)
+	_refresh_status()
+	if code != 0:
+		if not visible: present(client)
+		status.text = tr("Could not open SSH terminal.") + " " + errors.get_string_from_utf8().strip_edges()
 
 ## Connect a saved server from the Sessions panel. This window appears only
 ## when the server is unknown or has no usable password.
@@ -301,8 +414,8 @@ func connect_server(source: Node, url: String) -> void:
 		if _connected_client(selected) == null:
 			for candidate in get_tree().get_nodes_in_group("shared_presentations"):
 				# An attempt already under way keeps running.
-				if not candidate.is_queued_for_deletion() and not candidate.federated and candidate.settings.get("url") == url and candidate.connection.enabled: return
-			if _password(selected).is_empty():
+				if not candidate.is_queued_for_deletion() and not candidate.federated and Authentication.profile_url(candidate.settings) == url and candidate.connection.enabled: return
+			if not url.begins_with("ssh://") and _password(selected).is_empty():
 				present(source)
 				_edit(selected)
 				return
@@ -311,6 +424,7 @@ func connect_server(source: Node, url: String) -> void:
 	present(source)
 
 func _connect(settings: Dictionary, password: String, in_new_window: bool) -> void:
+	_attempted_passwords[settings.url] = password
 	var connection_settings := settings.duplicate(true)
 	connection_settings.token = password
 	var next: Node = application.open_remote_server(client, connection_settings, in_new_window)
@@ -337,6 +451,7 @@ func _disconnect() -> void:
 		bind_client(saved)
 		hide()
 	else:
+		client.close_ssh_tunnel()
 		client.connection.disconnect_remote()
 		client._release_host()
 		open_when_ready = false
@@ -347,6 +462,7 @@ func _forget() -> void:
 	if not error.is_empty():
 		status.text = error
 		return
+	_attempted_passwords.erase(selected.url)
 	for candidate in get_tree().get_nodes_in_group("shared_presentations"):
 		if not candidate.federated and candidate.settings.get("url") == selected.url:
 			candidate.settings.transient = true

@@ -2,6 +2,7 @@
 mod camera;
 mod geometry;
 mod navigation;
+mod page_transition;
 mod physics;
 mod touch;
 use godot::prelude::*;

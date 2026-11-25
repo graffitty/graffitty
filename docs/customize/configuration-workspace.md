@@ -68,8 +68,7 @@ Set `path` in `client.toml` to the world Graffitty opens with, then restart:
 path = "flat-2d"
 ```
 
-Hardware-rendered desktops default to `flat-3d`, which adds depth effects;
-Android, iOS, and software rendering default to `flat-2d`.
+Graffitty opens in Flat 2D by default on every platform. Choose **View → World → Flat 3D** for depth effects, or set `path = "flat-3d"` to start there each time.
 
 For an installed world, use its id. For example, to start in Bistro:
 

@@ -39,6 +39,20 @@ pub struct Receipt {
     pub path: Option<String>,
 }
 
+/// Server-confirmed attachment progress, carried by the pane notification stream.
+#[derive(Clone, Debug, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct Progress {
+    pub id: String,
+    pub name: String,
+    pub received: usize,
+    pub total: usize,
+    pub state: TransferState,
+}
+#[derive(Clone, Copy, Debug, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum TransferState { Receiving, Complete, Failed }
+
 #[cfg(test)]
 mod tests {
     use super::*;

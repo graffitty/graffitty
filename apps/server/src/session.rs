@@ -163,6 +163,12 @@ struct Parts {
 }
 
 impl Session {
+    pub fn upload_progress(&mut self, progress: graffitty_protocol::file_transfer::Progress) {
+        self.notification_sequence += 1;
+        self.notifications.push_back((self.notification_sequence, serde_json::json!({"upload":progress})));
+        if self.notifications.len() > 256 { self.notifications.pop_front(); }
+    }
+
     pub fn cwd_report(&self) -> String { self.pwd_report().into() }
     pub fn home_directory(&self) -> Option<&std::path::Path> { self.home_directory.as_deref() }
     /// libghostty keeps OSC 2/7 payloads as bytes; non-UTF-8 reports read as unset.

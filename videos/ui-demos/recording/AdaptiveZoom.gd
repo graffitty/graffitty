@@ -7,19 +7,9 @@ class DemoInsets extends "res://scenes/input/AndroidKeyboardInsets.gd":
 	func queue_update() -> void:
 		pass # There is no native Android IME to poll on macOS.
 
-var capture_frame := 0
-
-func demo_ticks_msec() -> int:
-	return roundi(capture_frame * 1000.0 / 60.0)
-
-func capture_surface() -> void:
-	RenderingServer.force_draw()
-	root.get_texture().get_image().save_jpg(output.get_base_dir().path_join("mobile-%04d.jpg" % capture_frame), .97)
-	capture_frame += 1
-
 func navigate() -> void:
 	var center: Vector2 = view.get_global_transform_with_canvas() * view.viewport_content_rect().get_center()
-	var shift := Vector2(view.size.x * .20, view.size.y * .10)
+	var shift := Vector2(view.size.x * .375, view.size.y * .10)
 	var radius := minf(170.0, view.size.x * .24)
 	emit_touch(0, true, center - Vector2(radius, 0))
 	emit_touch(1, true, center + Vector2(radius, 0))
@@ -32,15 +22,15 @@ func navigate() -> void:
 		var pinch := smoothstep(0, .38, elapsed)
 		var pan := smoothstep(.32, .92, elapsed)
 		var at := center + shift * pan
-		var dx := Vector2(lerpf(radius, radius * .32, pinch), 0)
+		var dx := Vector2(lerpf(radius, radius * .255, pinch), 0)
 		emit_drag(0, at - dx)
 		emit_drag(1, at + dx)
 		Input.flush_buffered_events()
 		await get_tree().process_frame
 		if elapsed >= .92: break
 	await wait(.06)
-	emit_touch(0, false, center + shift - Vector2(radius * .32, 0))
-	emit_touch(1, false, center + shift + Vector2(radius * .32, 0))
+	emit_touch(0, false, center + shift - Vector2(radius * .255, 0))
+	emit_touch(1, false, center + shift + Vector2(radius * .255, 0))
 
 func arrange_agents(pane: String) -> void:
 	var main: Rect2 = view.content_rect()
@@ -53,21 +43,20 @@ func arrange_agents(pane: String) -> void:
 		agents.append(added)
 		await host.set_pane_title(added, names[i])
 		terminal(added).send_text(prompts[i] + "\r")
-	if current_tree().get("tiling", false): await toggle_tiling()
-	var grid := [Vector2.ZERO, Vector2(-.95, .10), Vector2(-.95, -.80), Vector2(.14, -.80)]
-	for i in agents.size():
-		var rect := Rect2(main.position + grid[i] * main.size * 1.20, main.size * .95)
-		if i == 0:
-			rect.size = main.size * Vector2(.90, .46)
-			rect.position = main.get_center() - rect.size * .5
+	if not current_tree().get("tiling", false): await toggle_tiling()
+	var grid := [Vector2.ZERO, Vector2(-1.85, .06), Vector2(-1.85, -1.24), Vector2(-.18, -1.24)]
+	for i in range(1, agents.size()):
+		var rect := Rect2(main.position + grid[i] * main.size, main.size * Vector2(1.50 if i < 3 else 1.0, 1.12))
 		var item := Layout.find(current_tree(), agents[i])
 		item.rect = rect
-		item.stashed = i != 0
+		item.stashed = true
 		host.session_backend.resize_pane(host, agents[i], rect)
 	view.refresh()
 	host.session_backend.commit_workspace(host)
 	await wait(1)
-	view.inspect_pane(pane)
+	host.focus_pane(pane)
+	view.show_main()
+	expect(current_tree().tiling and Layout.main_keys(current_tree()) == [pane], "Claude occupies Main View")
 	expect(view.pane_rects.size() == 4, "Four agent panes share the workspace")
 
 func demo() -> void:
@@ -88,10 +77,18 @@ func demo() -> void:
 	await host.set_pane_title(pane, "Claude")
 	await arrange_agents(pane)
 	await wait(2)
-	get_tree().process_frame.connect(capture_surface)
+	var writer := Engine.get_singleton("GraffittyMovieWriter")
+	terminal(pane).grab_focus()
+	expect(terminal(pane).has_focus(), "Claude owns control focus when capture starts")
+	writer.set_recording(true)
 	await wait(.7)
 	await navigate()
 	await wait(.85)
+	var bounds: Rect2 = view.pane_rects[pane]
+	var left: float = view.view_point(bounds.position).x
+	var right: float = view.view_point(bounds.end).x
+	var clipped: float = (right - view.viewport_content_rect().end.x) / (right - left)
+	expect(clipped > .015 and clipped < .30, "Pan leaves %.1f percent of Claude past the right edge" % (100 * clipped))
 	var keyboard := preload("DemoKeyboard.gd").new()
 	overlay.add_child(keyboard)
 	overlay.move_child(contacts,-1)
@@ -106,7 +103,7 @@ func demo() -> void:
 	host.focus_pane(pane)
 	terminal(pane).grab_focus()
 	var before: float = view._displayed_camera_zoom(1)
-	for character in "Review the layout":
+	for character in "Review the layout and check the keyboard insets":
 		var cap := character.to_lower()
 		keyboard.pressed = cap
 		contacts.positions[0] = keyboard.position + keyboard.centers[cap]
@@ -121,7 +118,7 @@ func demo() -> void:
 		contacts.positions.erase(0)
 		contacts.queue_redraw()
 		await wait(.035)
-	expect("Review the layout" in text_in(pane), "Keystrokes reach the focused Claude prompt")
+	expect("Review the layout and check the keyboard insets" in text_in(pane), "Keystrokes reach the focused Claude prompt")
 	var during: float = view._displayed_camera_zoom(1)
 	await wait(3.5)
 	var rest: float = view._displayed_camera_zoom(1)
@@ -129,4 +126,4 @@ func demo() -> void:
 	insets.update_inset(0)
 	keyboard.hide()
 	await wait(.5)
-	get_tree().process_frame.disconnect(capture_surface)
+	writer.set_recording(false)

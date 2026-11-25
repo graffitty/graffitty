@@ -1,12 +1,12 @@
 set -eu
 umask 077
-state="$HOME/.local/state/graffitty"
+state="${XDG_STATE_HOME:-$HOME/.local/state}/graffitty"
 mkdir -p "$state"
-if [ -s "$state/server.json" ] && "$server" server --connection "$state/server.json" --status 2>/dev/null; then exit 0; fi
-nohup "$server" server --listen 127.0.0.1:0 --connection "$state/server.json" >"$state/server.log" 2>&1 </dev/null &
+if [ -s "$state/server.json" ] && "$server" server --connection "$state/server.json" --status >/dev/null 2>&1; then exec "$server" server --connection "$state/server.json" --ssh-attach; fi
+nohup "$server" server --ssh-owner --connection "$state/server.json" >"$state/server.log" 2>&1 </dev/null &
 i=0
 while [ "$i" -lt 100 ]; do
-    if [ -s "$state/server.json" ] && "$server" server --connection "$state/server.json" --status 2>/dev/null; then exit 0; fi
+    if [ -s "$state/server.json" ] && "$server" server --connection "$state/server.json" --status >/dev/null 2>&1; then exec "$server" server --connection "$state/server.json" --ssh-attach; fi
     i=$((i+1))
     sleep 0.1
 done

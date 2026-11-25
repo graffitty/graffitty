@@ -7,7 +7,7 @@ use serde_json::{Value, json};
 pub fn handles(method: &str) -> bool {
     matches!(
         method,
-        "terminal.get_text" | "terminal.pid" | "terminal.type" | "terminal.press" | "terminal.put"
+        "terminal.get_text" | "terminal.pid" | "internal.terminal.demo_type" | "terminal.press" | "terminal.put"
     )
 }
 
@@ -21,7 +21,7 @@ pub fn dispatch(
         "terminal.put" => &["target", "upload"],
         "terminal.get_text" => &["target", "tab_id", "scrollback"],
         "terminal.pid" => &["target", "tab_id", "details"],
-        "terminal.type" => &["target", "tab_id", "text", "interval_ms"],
+        "internal.terminal.demo_type" => &["target", "tab_id", "text", "interval_ms"],
         "terminal.press" => &["target", "tab_id", "key", "interval_ms", "effects"],
         _ => return Err(api::error("method_not_found", "Unknown terminal method")),
     };
@@ -74,11 +74,25 @@ pub fn dispatch(
         if server.sessions[&caller].exited { return Err(api::error("workspace_closed", "Terminal has exited")); }
         let chunk = serde_json::from_value::<graffitty_protocol::file_transfer::Chunk>(params["upload"].clone())
             .map_err(|e| api::error("invalid_params", &e.to_string()))?;
-        let (receipt, paste) = server.uploads.receive(&server.owner_runtime.join("files"), caller, chunk)?;
-        if paste {
-            server.sessions[&caller].paste(&crate::file_transfer::quoted_path(receipt.path.as_deref().unwrap()))?;
+        use graffitty_protocol::file_transfer::{Progress, TransferState};
+        let mut progress = server.uploads.progress(caller, &chunk.id).unwrap_or_else(|| Progress {
+            id: chunk.id.clone(), name: chunk.name.clone(), received: 0,
+            total: chunk.size, state: TransferState::Failed });
+        let result = server.uploads.receive(&server.owner_runtime.join("files"), caller, chunk)
+            .and_then(|(receipt, paste)| {
+                progress.received = receipt.received;
+                if paste {
+                    server.sessions[&caller].paste(&crate::file_transfer::quoted_path(receipt.path.as_deref().unwrap()))?;
+                }
+                progress.state = if receipt.path.is_some() { TransferState::Complete } else { TransferState::Receiving };
+                Ok(receipt)
+            });
+        if result.is_err() { server.uploads.abort(caller, &progress.id); }
+        // Invalid input must not become an arbitrarily large notification.
+        if progress.id.len() == 36 && progress.name.len() <= 255 && progress.total <= graffitty_protocol::file_transfer::MAX_BYTES {
+            server.sessions.get_mut(&caller).unwrap().upload_progress(progress);
         }
-        return Ok(api::Reply::Ready(json!({"result":receipt})));
+        return Ok(api::Reply::Ready(json!({"result":result?})));
     }
     let session = server.sessions.get_mut(&caller).unwrap();
     if method == "terminal.get_text" {

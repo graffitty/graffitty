@@ -1585,6 +1585,36 @@ finally:
 	await until(func(): return "INPUT_ORDER_MATCH" in text_in(), "Typing during upload follows the completed image")
 	expect(not "PASTE_WRONG" in text_in(),"Paste does not duplicate or execute intermediate lines")
 	terminal().send_text("\u0003")
+	await wait(.3)
+	var files := PackedStringArray()
+	for i in 2:
+		var path := OS.get_cache_dir().path_join("gft-paste-%d-%d.txt" % [OS.get_process_id(), i])
+		var file := FileAccess.open(path, FileAccess.WRITE)
+		file.store_string("file-%d 한글" % i)
+		file.close()
+		files.append(path)
+	run_python("""import os,tty,termios,shlex,pathlib
+old=termios.tcgetattr(0)
+try:
+ tty.setraw(0)
+ os.write(1,b'\\x1b[?2004hFILES_READY\\r\\n')
+ data=b''
+ while b'AFTER_FILES' not in data: data+=os.read(0,4096)
+ body=data.split(b'\\x1b[200~',1)[-1].split(b'\\x1b[201~',1)[0]
+ paths=shlex.split(body.decode())
+ ok=len(paths)==2 and [pathlib.Path(p).read_text() for p in paths]==['file-0 한글','file-1 한글']
+ ok=ok and data==b'\\x1b[200~'+body+b'\\x1b[201~AFTER_FILES' and body.endswith(b' ')
+ os.write(1,b'FILES_MATCH\\r\\n' if ok else b'FILES_WRONG\\r\\n')
+finally:
+ os.write(1,b'\\x1b[?2004l')
+ termios.tcsetattr(0,termios.TCSANOW,old)
+""")
+	if await until(func(): return "FILES_READY" in text_in(), "Batch receiver enables bracketed paste"):
+		terminal().paste_files(files)
+		terminal().send_text("AFTER_FILES")
+		await until(func(): return "FILES_MATCH" in text_in(), "Two remote files upload before one path paste and later typing", 30.0)
+		expect(not "FILES_WRONG" in text_in(), "Batch has exact bytes, one bracket pair and a trailing space")
+	for path in files: DirAccess.remove_absolute(path)
 
 func mouse_reporting() -> void:
 	run_python("""import os,tty,termios,re
@@ -2764,7 +2794,7 @@ func connections_scroll() -> void:
 	root.content_scale_factor = saved_factor
 	await wait(.3)
 	expect(root.get_visible_rect().has_point(point(manager.connection_tab)), "Navigation remains visible when the connection list exceeds viewport")
-	var scroll: ScrollContainer = manager.chooser.find_children("*","ScrollContainer",true,false)[0]
+	var scroll: ScrollContainer = manager.chooser.row_scroll
 	expect(scroll.get_v_scroll_bar().max_value>scroll.size.y,"Large list exposes scrolling rather than growing dialog off-screen")
 	scroll.scroll_vertical = int(scroll.get_v_scroll_bar().max_value)
 	await wait(.2)
@@ -2779,7 +2809,7 @@ func connections_scroll() -> void:
 	# A card's tap is its connection action; the start control opens the workspace.
 	await tap(main_card.select)
 	expect(manager.chooser.visible and transport.connected,"Tapping a connected card keeps its connection and the server page")
-	manager.chooser.scroll.scroll_vertical = 0
+	manager.chooser.row_scroll.scroll_vertical = 0
 	await wait(.2)
 	await tap(manager.touch_start.brand)
 	expect(not manager.chooser.visible and transport.connected,"Touch to start opens the connected workspace")
@@ -2787,20 +2817,22 @@ func connections_scroll() -> void:
 		expect(host.menu_layer.visible, "Returning to workspace restores its menu")
 
 func auth_recovery() -> void:
+	manager._show_chooser()
+	await wait(.2)
 	var wrong := settings.duplicate()
 	wrong.url = str(settings.url).trim_suffix("/") + "/recovery"
 	wrong.token = "intentionally-incorrect"
 	manager.open_connection(wrong)
 	var key: String = manager._connection_key(wrong)
 	if not await until(func(): return manager.states[key].state == "password", "Wrong password produces a recoverable server card"): return
-	manager.chooser.scroll.ensure_control_visible(manager.cards[key])
+	manager.chooser.row_scroll.ensure_control_visible(manager.cards[key])
 	await wait()
 	await tap(manager.cards[key].more)
 	await wait(.2)
 	await tap(manager.cards[key].action)
 	expect(manager.dialog.visible, "Enter current password opens the editor for that server")
 	expect(transport.connected and host.sessions.has(initial_id),"Authentication failure does not disconnect existing workspace")
-	expect(manager.token.secret and manager.token.text.is_empty(),"Password field is masked and rejected secret is cleared")
+	expect(manager.token.secret and manager.token.text == wrong.token,"Password field keeps the rejected value masked for correction")
 	manager.endpoint.text = str(wrong.url).trim_prefix("ws://")
 	manager.token.text = str(settings.token)
 	manager.remember.button_pressed = false
@@ -2821,7 +2853,8 @@ func auth_recovery() -> void:
 	manager.open_connection(restored[0].merged({"token": settings.token}, true))
 	await until(func(): return manager.transports.has(key) and manager.transports[key].connected, "Reloaded connection authenticates again")
 	expect(manager.save_hint.text.is_empty(), "Hostname refresh resaves loaded quality without a numeric type error")
-	expect(authentication._save(authentication.saved_connections()).is_empty(), "Bulk connection saves accept the same loaded preferences")
+	for entry in authentication.saved_connections():
+		expect(authentication.save_connection(entry).is_empty(), "Saved connections accept the same loaded preferences")
 	expect(transport.connected, "Saved-settings round trip leaves the original workspace connected")
 
 func dominant_pixels(image: Image, channel: int) -> int:
@@ -3221,7 +3254,7 @@ func client_controls() -> void:
 	await tap(manager.cards[manager._connection_key(settings)].select)
 	expect(transport.connected, "Clearing font cache preserves the server connection")
 	# A connected card's tap stays on the server page; the start control returns.
-	manager.chooser.scroll.scroll_vertical = 0
+	manager.chooser.row_scroll.scroll_vertical = 0
 	await wait(.2)
 	await tap(manager.touch_start.brand)
 	expect(not manager.chooser.visible, "Touch to start returns to the workspace after clearing the cache")

@@ -14,7 +14,11 @@ use std::{fs, path::PathBuf, sync::OnceLock, time::Duration};
 /// The local server's endpoint and server-wide capability, from the private
 /// descriptor the session server publishes for this user.
 pub fn local_server() -> Result<(String, String)> {
-    let path = local_server_descriptor()?;
+    local_server_at(&local_server_descriptor()?)
+}
+
+/// Read the local capability from the specified private descriptor.
+pub fn local_server_at(path: &std::path::Path) -> Result<(String, String)> {
     let meta = path
         .symlink_metadata()
         .map_err(|e| format!("No session server at {}: {e}", path.display()))?;

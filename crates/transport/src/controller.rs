@@ -558,7 +558,7 @@ mod tests {
         assert_eq!(
             exchange(
                 &wrong,
-                "terminal.type",
+                "pane.send",
                 json!({"target":"t1","text":"wrong"}),
                 TIMEOUT
             )
@@ -575,7 +575,7 @@ mod tests {
             call(
                 &path,
                 "build",
-                "terminal.type",
+                "pane.send",
                 json!({"target":"t12","text":"한🙂"}),
             )
             .unwrap()

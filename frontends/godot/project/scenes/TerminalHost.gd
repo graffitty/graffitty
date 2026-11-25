@@ -9,7 +9,7 @@ const API_VERSION := 1
 const UserConfig := preload("res://config/UserConfig.gd")
 const Paths := preload("res://graffitty/paths.gd")
 const WorldConfig := preload("res://graffitty/world_config.gd")
-## Built-in world paths. Mobile defaults to Flat 2D; desktop to Flat 3D.
+## Built-in world paths. Flat 2D is the default on every platform.
 const FLAT_3D := "flat-3d"
 const FLAT_2D := "flat-2d"
 const SessionModel := preload("res://scenes/TerminalSession.gd")
@@ -1346,6 +1346,7 @@ func _sync_presentation_activity() -> void:
 	for pair in sessions.values():
 		preload("res://scenes/TerminalViewportUpdates.gd").set_enabled(pair.vp, active)
 	if active: _refresh_workspace_layout()
+	elif session_backend != null: session_backend.sync_window_area(self)
 	presentation_changed.emit()
 
 
@@ -1407,7 +1408,7 @@ func session_count() -> int:
 
 
 static func default_world() -> String:
-	return FLAT_2D if OS.has_feature("mobile") else FLAT_3D
+	return FLAT_2D
 
 
 ## A world value without a path separator or `.pck` suffix is a world id:
@@ -1497,8 +1498,8 @@ func switch_world(path: String) -> bool:
 
 func available_worlds() -> Array[Dictionary]:
 	var result: Array[Dictionary] = [
-		{ "name": "Flat 3D", "path": FLAT_3D, "id": FLAT_3D },
 		{ "name": "Flat 2D", "path": FLAT_2D, "id": FLAT_2D },
+		{ "name": "Flat 3D", "path": FLAT_3D, "id": FLAT_3D },
 	]
 	if OS.has_feature("mobile"):
 		return result
@@ -1511,6 +1512,7 @@ func available_worlds() -> Array[Dictionary]:
 			var pack := directory.path_join(subdir).path_join(subdir + ".pck")
 			if FileAccess.file_exists(pack):
 				candidates.append(pack)
+	var installed: Array[Dictionary] = []
 	var seen := { FLAT_3D: true, FLAT_2D: true }
 	for candidate in candidates:
 		var manifest_path := _plugin_manifest(candidate)
@@ -1527,7 +1529,7 @@ func available_worlds() -> Array[Dictionary]:
 		if manifest.get("api", 0) != API_VERSION or id.is_empty() or seen.has(id):
 			continue
 		seen[id] = true
-		result.append(
+		installed.append(
 			{
 				"name": str(manifest.get("name", id.capitalize())),
 				"path": candidate,
@@ -1535,6 +1537,8 @@ func available_worlds() -> Array[Dictionary]:
 				"menu": str(manifest.get("menu", "")),
 			}
 		)
+	installed.sort_custom(func(a, b): return str(a.name).naturalnocasecmp_to(str(b.name)) < 0)
+	result.append_array(installed)
 	return result
 
 
@@ -1651,20 +1655,13 @@ func _workspace_menu_entries() -> Array[Dictionary]:
 		"checked": func(h): return h.application.agents.sounds_enabled(),
 	})
 	if not preload("res://scenes/input/InteractionProfile.gd").touch_controls():
-		entries.append_array([
-			{
-				"label": "Sessions::Remote Access",
-				"action": func(h): h.application.set_remote_access(not h.application.remote_access_enabled()),
-				"checked": func(h): return h.application.remote_access_enabled(),
-			},
-			{
-				"label": "Sessions::Remote Access Settings…",
-				"action": func(h):
-					var settings := preload("res://scenes/remote/RemoteAccessSettings.gd").new()
-					settings.application = h.application
-					h.add_child(settings),
-			},
-		])
+		entries.append({
+			"label": "Sessions::Remote Access Settings…",
+			"action": func(h):
+				var settings := preload("res://scenes/remote/RemoteAccessSettings.gd").new()
+				settings.application = h.application
+				h.add_child(settings),
+		})
 	else:
 		for option in [["One Finger", 1], ["Three Fingers", 3]]:
 			var count: int = option[1]
@@ -2505,11 +2502,7 @@ func _files_dropped(files: PackedStringArray) -> void:
 	if target == null:
 		return
 	if not str(target.get_ui_state().get("modal", "")).is_empty(): return
-	var shell: String = session_model(active_session_id).shell.replace("\\", "/").get_file().to_lower().trim_suffix(".exe")
-	var quoted := PackedStringArray()
-	for path in files:
-		quoted.append("'" + path.replace("'", "''" if shell in ["pwsh", "powershell"] else "'\"'\"'") + "'")
-	target.paste_text(" ".join(quoted))
+	target.paste_files(files)
 
 
 func select_workspace(id: int, instant := false) -> void:

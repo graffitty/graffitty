@@ -399,6 +399,9 @@ func _input(event: InputEvent) -> void:
 		if event is InputEventMouseButton and event.button_index == MOUSE_BUTTON_LEFT and not event.pressed:
 			var source := dragging
 			dragging = ""
+			if tools.view != null and not tools.view.graph_pointer_allowed(event.position):
+				touch_drag = false
+				return
 			touch_drag = false
 			for key in sockets(false):
 				if Ports.node_id(key) != Ports.node_id(source) and cursor.distance_to(port_center(key, false)) < 24:

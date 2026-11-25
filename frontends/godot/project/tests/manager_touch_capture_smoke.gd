@@ -48,12 +48,13 @@ func run() -> void:
 	var home := Home.new()
 	root.add_child(home)
 	var key := home._remember_entry({"url": "ws://example.test:7183", "hostname": "Build", "platform": "macos", "workspace": "$1"}, "connected", "Connected")
-	var add: Button = home.connections_section.get_child(home.connections_section.get_child_count() - 1)
+	var add: Button = home.chooser.add_server
 	var card: Button = home.cards[key].select
 	var counter := {"hover": 0}
 	home.settings_tab.mouse_entered.connect(func(): counter.hover += 1)
 	await create_timer(.6).timeout
-	expect(not home.chooser.scroll.get_v_scroll_bar().visible, "Real manager fixture exercises a list without overflow")
+	expect(not home.chooser.row_scroll.get_v_scroll_bar().visible, "Real manager fixture exercises a list without overflow")
+	expect(absf(add.global_position.y - home.cards[key].get_global_rect().end.y - home.connections_section.get_theme_constant("separation")) < 2, "Add server follows the last row in a short list")
 	var policy: Node
 	for child in home.chooser.get_children():
 		if child.get_script() == preload("res://scenes/input/TouchScrollGesture.gd"): policy = child

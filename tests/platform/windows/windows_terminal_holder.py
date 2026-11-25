@@ -151,7 +151,7 @@ class Scenario:
     def assert_kept(self, pane, word):
         assert alive(pane), "the pane's program survived"
         self.wait(lambda: f"before-marker-{pane}" in self.screen(pane), "the earlier output on the adopted screen")
-        self.gft("terminal", "type", "--text", word + "\n", pane=pane)
+        self.gft("terminal", "send-text", "--text", word, "--enter", pane=pane)
         self.wait(lambda: f"got:{word}" in self.screen(pane), f"the program's reply to {word}")
         assert (self.root / f"{pane}.input").read_text().split()[-1] == word, "input reached the same program"
 
@@ -167,7 +167,7 @@ class Scenario:
         self.start_server()
         pane = self.new_pane("one")
         holder = self.wait(lambda: next(iter(self.holders()), None), "the terminal holder")
-        self.gft("terminal", "type", "--text", "before\n", pane=pane)
+        self.gft("terminal", "send-text", "--text", "before", "--enter", pane=pane)
         self.wait(lambda: "got:before" in self.screen(pane), "the first reply")
         print("PASS a holder, not the server, runs the pane's program")
 

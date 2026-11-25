@@ -131,10 +131,10 @@ pub struct TerminalGroup {
 pub enum TerminalGroupCommand {
     /// Read a terminal's visible text (plain text by default).
     GetText(GetText),
-    /// Type text into a terminal, one key at a time.
-    Type(TypeText),
+    /// Paste text in one batch, without simulated typing or delays.
+    SendText(SendText),
     /// Send one key: Enter, Backspace, ArrowLeft, Ctrl+c, etc.
-    SendKey(SendKey),
+    Press(SendKey),
     /// Upload a file to a terminal's machine; print its destination path.
     Put(crate::put::Options),
     /// Display images using the Kitty graphics protocol (kitten icat compatible).
@@ -169,8 +169,8 @@ impl Command {
             },
             Self::Terminal(group) => match group.command {
                 TerminalGroupCommand::GetText(a) => W::GetText(a),
-                TerminalGroupCommand::Type(a) => W::Terminal(Terminal { command: TerminalCommand::Type(a) }),
-                TerminalGroupCommand::SendKey(a) => W::Terminal(Terminal { command: TerminalCommand::SendKey(a) }),
+                TerminalGroupCommand::SendText(a) => W::Terminal(Terminal { command: TerminalCommand::SendText(a) }),
+                TerminalGroupCommand::Press(a) => W::Terminal(Terminal { command: TerminalCommand::Press(a) }),
                 TerminalGroupCommand::Put(a) => W::Put(a),
                 TerminalGroupCommand::Icat(a) => W::Icat(a),
             },
@@ -184,6 +184,7 @@ impl Command {
             Self::Effects(a) => W::Effects(a),
             Self::Checkpoint(a) => W::Checkpoint(a),
             Self::Server(Server { command: Some(ServerCommand::Restart), .. }) => W::RestartServer,
+            Self::Server(Server { command: Some(ServerCommand::Stop(args)), .. }) => W::StopServer(args),
             Self::Server(a) => W::Server(a.options),
             Self::Remote(a) => W::Remote(a),
             Self::Integrate(a) => W::Integrate(a),
@@ -194,6 +195,8 @@ impl Command {
             Self::SelfManage(a) => W::SelfManage(a),
             Self::World(a) => W::World(a),
             Self::Dev(a) => W::Dev(a),
+            Self::Internal(Internal { command: InternalCommand::Terminal(InternalTerminal { command: InternalTerminalCommand::DemoType(a) }) }) =>
+                W::Terminal(Terminal { command: TerminalCommand::DemoType(a) }),
             Self::Internal(a) => W::Internal(a),
         }
     }
@@ -264,6 +267,7 @@ pub enum WorkspaceCommand {
     Server(graffitty_server::Options),
     /// Restart the local session server; its terminals keep running.
     RestartServer,
+    StopServer(StopServer),
     /// Display images using the Kitty graphics protocol (kitten icat compatible).
     Icat(crate::icat::Options),
     /// List live server sessions (not saved checkpoints).
@@ -402,6 +406,8 @@ pub struct Internal {
 }
 #[derive(Subcommands)]
 pub enum InternalCommand {
+    /// Terminal input for recording demos.
+    Terminal(InternalTerminal),
     /// Forward a provider lifecycle event from stdin to the existing server.
     AgentHookIntegrate(IntegrationCallback),
     /// Run one native agent discovery or delivery request.
@@ -410,6 +416,16 @@ pub enum InternalCommand {
     Holder(Holder),
     /// Steps an installer runs so terminals keep running during an upgrade.
     Update(Update),
+}
+#[derive(Args)]
+pub struct InternalTerminal {
+    #[usage(subcommand)]
+    command: InternalTerminalCommand,
+}
+#[derive(Subcommands)]
+pub enum InternalTerminalCommand {
+    /// Simulate typing for demos, with an explicit delay between characters.
+    DemoType(DemoType),
 }
 #[derive(Args)]
 pub struct Holder {
@@ -562,7 +578,7 @@ pub struct RemoteConnect {
     /// Exact CLI server alias for targets such as build/t12 (one host only).
     #[usage(long)]
     pub alias: Option<String>,
-    /// Optional session name; omitted uses the server's automatic session selection.
+    /// Optional session name or stable $ID; omitted uses the server's automatic session selection.
     #[usage(long, default = "")]
     pub workspace: String,
     /// Unified gft executable built for the remote OS and CPU; uploaded atomically.
@@ -571,6 +587,12 @@ pub struct RemoteConnect {
     /// Prepare tunnels and print a connection file without launching the GUI.
     #[usage(long)]
     pub no_gui: bool,
+    /// Emit connection JSON to stdout and own tunnels until stdin closes (GUI helper).
+    #[usage(long)]
+    pub stdio: bool,
+    /// Open an interactive terminal for SSH prompts and connection errors.
+    #[usage(long)]
+    pub terminal: bool,
 }
 
 #[derive(Args)]
@@ -640,6 +662,14 @@ pub struct Server {
 pub enum ServerCommand {
     /// Restart the local session server; its terminals keep running.
     Restart,
+    /// Stop the local server. Active sessions require --kill-sessions.
+    Stop(StopServer),
+}
+#[derive(Args)]
+pub struct StopServer {
+    /// End every session and its programs before stopping the server.
+    #[usage(long)]
+    pub kill_sessions: bool,
 }
 #[derive(Args)]
 pub struct Checkpoint {
@@ -747,8 +777,9 @@ pub struct Terminal {
     command: TerminalCommand,
 }
 pub enum TerminalCommand {
-    Type(TypeText),
-    SendKey(SendKey),
+    DemoType(DemoType),
+    SendText(SendText),
+    Press(SendKey),
 }
 #[derive(Args)]
 pub struct Effects {
@@ -1217,14 +1248,26 @@ pub struct GraphRead {
     offset: Option<u64>,
 }
 #[derive(Args)]
-pub struct TypeText {
+pub struct DemoType {
     /// Pane target; prefix with server-alias/ for an attached remote server.
     #[usage(short = 't', long)]
     target: Option<String>,
     #[usage(long)]
     text: String,
-    #[usage(long, default = "50", allow_negative_numbers)]
+    #[usage(long, allow_negative_numbers)]
     interval_ms: f64,
+}
+#[derive(Args)]
+pub struct SendText {
+    /// Pane target; omit for this terminal, or prefix with an attached server alias/.
+    #[usage(short = 't', long)]
+    target: Option<String>,
+    /// Literal text to paste. Newlines remain inside the paste when bracketed paste is enabled.
+    #[usage(long)]
+    text: String,
+    /// Send Enter after the paste.
+    #[usage(long)]
+    enter: bool,
 }
 #[derive(Args)]
 pub struct SendKey {
@@ -1616,16 +1659,18 @@ impl WorkspaceCommand {
                 json!({"title":a.title.join(" "),"target":a.target}),
             ),
             Self::Terminal(a) => match a.command {
-                TerminalCommand::Type(a) => {
+                TerminalCommand::SendText(a) => ("pane.send".into(),
+                    json!({"text":a.text,"enter":a.enter,"target":a.target})),
+                TerminalCommand::DemoType(a) => {
                     if !a.interval_ms.is_finite() || !(0.0..=1000.0).contains(&a.interval_ms) {
                         return Err("interval-ms must be between 0 and 1000".into());
                     }
                     (
-                        "terminal.type".into(),
+                        "internal.terminal.demo_type".into(),
                         json!({"text":a.text,"interval_ms":a.interval_ms,"target":a.target}),
                     )
                 }
-                TerminalCommand::SendKey(a) => {
+                TerminalCommand::Press(a) => {
                     let mut params = json!({"key":a.key,"target":a.target});
                     if a.no_effects { params["effects"] = json!(false); }
                     ("terminal.press".into(), params)
@@ -1695,6 +1740,7 @@ impl WorkspaceCommand {
             | Self::Server(_)
             | Self::Gui(_)
             | Self::RestartServer
+            | Self::StopServer(_)
             | Self::Icat(_)
             | Self::ListSessions(_)
             | Self::NewSession(_)

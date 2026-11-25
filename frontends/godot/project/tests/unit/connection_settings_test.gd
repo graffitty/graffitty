@@ -32,13 +32,12 @@ func test_loaded_stream_preferences_can_be_saved_again() -> void:
 				expect(saved(workspace).chromium_stream[field] == stream[field], "Auto and explicit quality values remain unchanged")
 
 
-func test_bulk_save_preserves_other_loaded_connections() -> void:
+func test_remove_preserves_other_loaded_connections() -> void:
 	for workspace in ["keep-quality", "remove-quality"]:
 		var settings := {"url": address(workspace), "chromium_stream": {"max_height": 720, "fps": 60, "bitrate_kbps": 0}}
 		expect(Authentication.save_connection(settings).is_empty(), "Create saved workspace")
-	var remaining := Authentication.saved_connections().filter(func(entry): return entry.url != address("remove-quality"))
-	var error := Authentication._save(remaining)
-	expect(error.is_empty(), "Removing one workspace resaves the other loaded entries: " + error)
+	var result: Dictionary = JSON.parse_string(ClassDB.instantiate("RemoteAuth").remove_connection(Authentication.connection_path(), address("remove-quality")))
+	expect(not result.has("error"), "Removing one workspace preserves the other loaded entries")
 	expect(saved("remove-quality").is_empty(), "The removed workspace stays removed")
 	var kept := saved("keep-quality")
 	expect(not kept.is_empty() and kept.chromium_stream.max_height == 720 and kept.chromium_stream.fps == 60 and kept.chromium_stream.bitrate_kbps == 0, "Other workspaces retain their quality preferences")
@@ -56,7 +55,7 @@ func test_invalid_ui_numbers_never_overwrite_saved_connections() -> void:
 		expect(FileAccess.get_file_as_string(path) == before, "Failed single-entry saves leave the file unchanged")
 		var batch := Authentication.saved_connections()
 		batch.append(changed)
-		expect(not Authentication._save(batch).is_empty(), "Bulk saves enforce the same validation")
+		expect(JSON.parse_string(ClassDB.instantiate("RemoteAuth").save_connections(path, batch)).has("error"), "Bulk saves enforce the same validation")
 		expect(FileAccess.get_file_as_string(path) == before, "Failed bulk saves leave every connection unchanged")
 
 

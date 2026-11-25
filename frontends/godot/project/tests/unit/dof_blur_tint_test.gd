@@ -23,3 +23,19 @@ func test_removed_config_names_are_reported() -> void:
 	config.set_option("scene.lighting", "shadow_color", "#112233")
 	config.set_option("scene.camera", "dof_blur_radius", 16)
 	expect(config.warnings.size() == 2, "Removed names are unknown options")
+
+
+func test_blur_controls_keep_color_when_disabled() -> void:
+	var dialog := preload("res://scenes/TerminalEffectsSettings.gd").new()
+	var tint := Color("#6684c7")
+	dialog._add_blur_controls(false, tint)
+	expect(dialog.blur_color.disabled and dialog.blur_color.color == tint, "Opening with blur off keeps the color visible and disabled")
+	dialog.depth_blur.button_pressed = true
+	expect(not dialog.blur_color.disabled, "Enabling blur enables its color")
+	dialog.blur_color.color = Color.CORAL
+	dialog.depth_blur.button_pressed = false
+	dialog.depth_blur.button_pressed = true
+	expect(dialog.blur_color.color == Color.CORAL, "Toggling blur preserves the draft color")
+	for child in [dialog.grid, dialog.zoom_mode, dialog.trail, dialog.particles, dialog.status]:
+		child.free()
+	dialog.free()

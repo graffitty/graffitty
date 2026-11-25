@@ -51,7 +51,11 @@ Download the APK from [Releases](https://github.com/graffitty/graffitty/releases
 
 ### iOS
 
-Currently source build only. The working app already exists, but we're preparing a signed build. Coming soon!
+1. Download the unsigned IPA from [Releases](https://github.com/graffitty/graffitty/releases).
+2. Connect your iPhone or iPad by USB to a Mac, Linux PC or Windows PC. Trust the computer when prompted, then use [iLoader](https://iloader.app/) to sign and install the IPA with your Apple ID.
+3. On the device, enable **Settings → Privacy & Security → Developer Mode** and trust your Apple ID under **Settings → General → VPN & Device Management**.
+
+With a free Apple ID, re-sign and reinstall every **7 days**.
 
 ### Remote server
 

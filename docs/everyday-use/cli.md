@@ -36,12 +36,12 @@ gft skill chromium
 `graph` covers workspace and agent controls; `chromium` covers browser automation.
 `gft skill` lists all guides. These commands print instructions; they do not install skills.
 
-## Capture or type text
+## Capture or send text
 
 ```sh
 gft terminal get-text --scrollback > terminal.txt
-gft terminal type -t t3 --text 'hello'
-gft terminal send-key -t t3 Enter
+gft terminal send-text -t t3 --text 'hello'
+gft terminal press -t t3 Enter
 ```
 
 Typing does not press Enter. See [Terminal commands](terminal-commands.md)

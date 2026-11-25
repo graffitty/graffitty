@@ -68,6 +68,14 @@ CEF context menus preserve IDs/state/submenus and return selection/dismissal;
 remote request tokens route to the originating viewer, not the hidden host window.
 Website handlers can suppress the default menu.
 
+macOS HTML select menus redirect both `attachPopUpWithFrame:inView:` and
+`performClickWithFrame:inView:` for captured windows. Redirecting only the latter
+leaves an AppKit popup at the hidden host's coordinates and can prevent reopening.
+Visible native browser windows retain AppKit's normal behavior.
+`tests/chromium/chromium_nested_bundle_e2e.py <host.app> --select-menu` passed
+cancellation, repeated reopening, selection, disabled-action rejection and checked
+state on macOS. This host test does not verify the final Godot popup's screen position.
+
 ## Build and validation
 
 Build static pinned FFmpeg with `tools/build_chromium_video.py`, then the CEF host,
@@ -75,3 +83,8 @@ server, and extension. The low-delay patch waits for asynchronous no-B-frame out
 Recorded M1 Max HEVC/H.264, desktop/emulator HEVC, physical tablet decode/scroll,
 multi-client/resize/recovery/rejection/preview checks passed in their environments.
 Those runs did not exercise AV1 hardware or Windows/Linux hardware backends.
+
+Incoming tab/session Chromium streams request frames as soon as they are subscribed,
+before the transition's projected geometry is readable. They stay awake through the
+session flight, then return to normal offscreen/small-pane settling. Paused panes
+retain their last picture with a gray overlay, without a large status label.

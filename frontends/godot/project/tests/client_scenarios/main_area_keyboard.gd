@@ -105,6 +105,7 @@ func competing_client() -> void:
 	if await until(func(): return other.connected and not other.topology.tabs.is_empty(), "Second client connects to the same isolated workspace"):
 		var tab: int = other.topology.tabs[0].id
 		var snapshot: Dictionary = other.topology.workspace_state
+		other.report_main_view(tab, str(snapshot.layout.tabs[str(tab)].focused))
 		var other_area := Rect2(0, 34, 1200, 640)
 		var reply: Dictionary = await other.request_action("workspace_edit", {"expected_revision": int(other.topology.workspace_revision), "claim": true,
 			"edit": {"op": "tab", "tab": tab, "layout": snapshot.layout.tabs[str(tab)],

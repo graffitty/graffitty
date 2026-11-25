@@ -2,6 +2,9 @@ extends SceneTree
 const Browser := preload("res://scenes/remote/ServerBrowserPage.gd")
 const Desktop := preload("res://scenes/remote/DesktopServers.gd")
 const Card := preload("res://scenes/remote/ServerCard.gd")
+class RecordingDesktop extends Desktop:
+	var ssh_args := PackedStringArray()
+	func _connect_ssh(profile: Dictionary, _in_new_window: bool) -> void: ssh_args = _ssh_arguments(profile)
 class App extends Node:
 	var show_servers_at_startup := false
 	func set_show_servers_at_startup(value: bool) -> void: show_servers_at_startup = value
@@ -9,11 +12,15 @@ class Connection extends Node:
 	signal state_changed(message: String)
 	signal changed
 	signal authenticated
+	signal session_switched
+	signal code_required
+	var workspace := "$2"
 	var connected := true
 	var enabled := true
 	var status_source := "Connected"
 	var status_args: Array = []
 class Client extends Node:
+	var federated := false
 	var settings := {"shared_local": true}
 	var connection := Connection.new()
 	var local_return: RefCounted
@@ -39,7 +46,7 @@ func run() -> void:
 	root.add_child(app)
 	var client := Client.new()
 	root.add_child(client)
-	var desktop := Desktop.new()
+	var desktop := RecordingDesktop.new()
 	desktop.application = app
 	root.add_child(desktop)
 	desktop.present(client)
@@ -54,6 +61,17 @@ func run() -> void:
 		await settle()
 		check(desktop.form.visible and not desktop.chooser.visible, "Add uses separate Android-style editor page")
 		check(desktop.editor.is_visible_in_tree(), "Shared editor is visible")
+		desktop.editor.endpoint.text = "ws://example.invalid:7183"
+		for field in [desktop.editor.label, desktop.editor.server_alias, desktop.editor.endpoint, desktop.editor.token]:
+			desktop.editor.form_status.text = ""
+			field.grab_focus()
+			var enter := InputEventKey.new()
+			enter.keycode = KEY_ENTER
+			enter.pressed = true
+			desktop.push_input(enter, true)
+			enter.pressed = false
+			desktop.push_input(enter, true)
+			check(desktop.editor.form_status.text == "Enter the current password shown on the computer.", "Enter runs Save and connect validation from a text field")
 		desktop.editor.token.text = "unsubmitted-fixture"
 		var escape := InputEventKey.new()
 		escape.keycode = KEY_ESCAPE
@@ -65,6 +83,35 @@ func run() -> void:
 	card.update_identity({"url": "ws://example.invalid:7183", "name": "Fixture"})
 	await settle()
 	check(card.size.x <= desktop.chooser.available_content_width(), "Shared server card fits narrow layout")
+	var auth := preload("res://scenes/remote/ClientAuthentication.gd")
+	client.add_to_group("shared_presentations")
+	client.settings = {"url": "ws://127.0.0.1:39871", "credential_id": "ssh:dev@fixture",
+		"name": "Fixture", "alias": "build", "transient": true, "token": "fixture-secret", "initial_session": "$1"}
+	auth.bind(client, client.connection, client.settings, false, func(error): failures.append(str(error)))
+	client.connection.session_switched.emit()
+	desktop.present(client)
+	check(auth.saved_connections().is_empty(), "Opening an SSH tunnel offers a profile without saving it")
+	check(desktop.cards.size() == 1 and desktop.cards[0].card.address.text == "ssh://dev@fixture", "SSH card identifies the destination without its forwarded port")
+	desktop.cards[0].card.edited.emit()
+	var profiles: Array = auth.saved_connections()
+	check(profiles.size() == 1 and profiles[0].url == "ssh://dev@fixture" and profiles[0].get("initial_session") == "$2", "Explicit save records the attached session and stable destination")
+	check(not "39871" in JSON.stringify(profiles) and not "fixture-secret" in JSON.stringify(profiles), "Saved SSH profile excludes tunnel endpoint and token")
+	client.connection.workspace = "$3"
+	client.connection.session_switched.emit()
+	profiles = auth.saved_connections()
+	check(profiles.size() == 1 and profiles[0].get("initial_session") == "$3", "Session switches update only the saved SSH profile")
+	client.settings.url = "ws://127.0.0.1:39222"
+	desktop.present(client)
+	check(desktop.cards.size() == 1, "Replacement tunnel coalesces with the saved host")
+	client.connection.connected = false
+	client.connection.enabled = false
+	desktop.connect_server(client, "ssh://dev@fixture")
+	check(desktop.ssh_args == PackedStringArray(["remote", "connect", "--stdio", "--workspace", "$3", "--alias", "build", "dev@fixture"]), "Sessions reopens saved SSH host through an owned tunnel with its session and alias")
+	client.connection.connected = true
+	auth.remove_connection({"url": "ssh://dev@fixture"})
+	client.connection.workspace = "$4"
+	client.connection.session_switched.emit()
+	check(auth.saved_connections().is_empty(), "Session switching cannot recreate a forgotten profile")
 	var close := InputEventKey.new()
 	close.keycode = KEY_ESCAPE
 	close.pressed = true

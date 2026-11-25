@@ -201,7 +201,7 @@ class ServerCheckpoints(unittest.TestCase):
                     builtin = client.action("create", custom, kind="pane")["created"]
                     for pane, command in ((custom, f"PYTHONPATH={shlex.quote(str(sdk))} {shlex.quote(sys.executable)} {shlex.quote(str(node))}"),
                                           (builtin, f"{shlex.quote(str(CLI))} node payload-inspector")):
-                        for method, params in (("terminal.type", {"text": command, "interval_ms": 0}), ("terminal.press", {"key": "Enter"})):
+                        for method, params in (("pane.send", {"text": command}), ("terminal.press", {"key": "Enter"})):
                             reply = client.action("rpc", pane, method=method, params=params)
                             self.assertNotIn("error", reply, reply)
                 finally:

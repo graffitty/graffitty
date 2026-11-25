@@ -10,13 +10,20 @@ var _excluded: Array[Node] = []
 var _root: SubViewport
 
 
+static func _capture_size(source: Viewport) -> Vector2i:
+	# On iPad the root texture includes an extra Retina scale. Use the
+	# drawable window dimensions so the slide fits the device's render target.
+	if source is Window and OS.has_feature("ios"): return source.size
+	return Vector2i(source.get_texture().get_size())
+
+
 static func workspace(host: Node) -> SubViewport:
 	var capture := new()
 	capture._index(host)
 	capture._excluded = [host.workspace_view.tab_bar]
 	var source: Viewport = host.get_viewport()
 	var view := SubViewport.new()
-	view.size = Vector2i(source.get_texture().get_size())
+	view.size = _capture_size(source)
 	view.size_2d_override = Vector2i(source.get_visible_rect().size)
 	view.size_2d_override_stretch = true
 	view.transparent_bg = source.transparent_bg
@@ -28,6 +35,29 @@ static func workspace(host: Node) -> SubViewport:
 	# Fixed menus and overlays live outside the world/layout tree.
 	for child in host.get_children():
 		if child is CanvasLayer: view.add_child(capture._copy_node(child))
+	return view
+
+
+## Retain complete navigation pages, including their tab strip and touch chrome.
+## Render once on the GPU; there is no framebuffer readback during navigation.
+static func page(source: Viewport, surfaces: Array[Node], dependencies: Array[Node] = []) -> SubViewport:
+	var capture := new()
+	for node in dependencies: capture._index(node)
+	for node in surfaces: capture._index(node)
+	var view := SubViewport.new()
+	view.size = _capture_size(source)
+	view.size_2d_override = Vector2i(source.get_visible_rect().size)
+	view.size_2d_override_stretch = true
+	view.transparent_bg = false
+	view.use_hdr_2d = source.use_hdr_2d
+	view.disable_3d = true
+	view.gui_disable_input = true
+	view.render_target_update_mode = SubViewport.UPDATE_ONCE
+	capture._root = view
+	for node in surfaces:
+		var copy := capture._copy_node(node)
+		if copy is CanvasItem or copy is CanvasLayer: copy.show()
+		if copy.get_parent() == null: view.add_child(copy)
 	return view
 
 
