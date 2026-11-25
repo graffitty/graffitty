@@ -131,10 +131,10 @@ pub struct TerminalGroup {
 pub enum TerminalGroupCommand {
     /// Read a terminal's visible text (plain text by default).
     GetText(GetText),
-    /// Type text into a terminal, one key at a time.
-    Type(TypeText),
+    /// Paste text in one batch, without simulated typing or delays.
+    SendText(SendText),
     /// Send one key: Enter, Backspace, ArrowLeft, Ctrl+c, etc.
-    SendKey(SendKey),
+    Press(SendKey),
     /// Upload a file to a terminal's machine; print its destination path.
     Put(crate::put::Options),
     /// Display images using the Kitty graphics protocol (kitten icat compatible).
@@ -169,8 +169,8 @@ impl Command {
             },
             Self::Terminal(group) => match group.command {
                 TerminalGroupCommand::GetText(a) => W::GetText(a),
-                TerminalGroupCommand::Type(a) => W::Terminal(Terminal { command: TerminalCommand::Type(a) }),
-                TerminalGroupCommand::SendKey(a) => W::Terminal(Terminal { command: TerminalCommand::SendKey(a) }),
+                TerminalGroupCommand::SendText(a) => W::Terminal(Terminal { command: TerminalCommand::SendText(a) }),
+                TerminalGroupCommand::Press(a) => W::Terminal(Terminal { command: TerminalCommand::Press(a) }),
                 TerminalGroupCommand::Put(a) => W::Put(a),
                 TerminalGroupCommand::Icat(a) => W::Icat(a),
             },
@@ -195,6 +195,8 @@ impl Command {
             Self::SelfManage(a) => W::SelfManage(a),
             Self::World(a) => W::World(a),
             Self::Dev(a) => W::Dev(a),
+            Self::Internal(Internal { command: InternalCommand::Terminal(InternalTerminal { command: InternalTerminalCommand::DemoType(a) }) }) =>
+                W::Terminal(Terminal { command: TerminalCommand::DemoType(a) }),
             Self::Internal(a) => W::Internal(a),
         }
     }
@@ -404,6 +406,8 @@ pub struct Internal {
 }
 #[derive(Subcommands)]
 pub enum InternalCommand {
+    /// Terminal input for recording demos.
+    Terminal(InternalTerminal),
     /// Forward a provider lifecycle event from stdin to the existing server.
     AgentHookIntegrate(IntegrationCallback),
     /// Run one native agent discovery or delivery request.
@@ -412,6 +416,16 @@ pub enum InternalCommand {
     Holder(Holder),
     /// Steps an installer runs so terminals keep running during an upgrade.
     Update(Update),
+}
+#[derive(Args)]
+pub struct InternalTerminal {
+    #[usage(subcommand)]
+    command: InternalTerminalCommand,
+}
+#[derive(Subcommands)]
+pub enum InternalTerminalCommand {
+    /// Simulate typing for demos, with an explicit delay between characters.
+    DemoType(DemoType),
 }
 #[derive(Args)]
 pub struct Holder {
@@ -763,8 +777,9 @@ pub struct Terminal {
     command: TerminalCommand,
 }
 pub enum TerminalCommand {
-    Type(TypeText),
-    SendKey(SendKey),
+    DemoType(DemoType),
+    SendText(SendText),
+    Press(SendKey),
 }
 #[derive(Args)]
 pub struct Effects {
@@ -1233,14 +1248,26 @@ pub struct GraphRead {
     offset: Option<u64>,
 }
 #[derive(Args)]
-pub struct TypeText {
+pub struct DemoType {
     /// Pane target; prefix with server-alias/ for an attached remote server.
     #[usage(short = 't', long)]
     target: Option<String>,
     #[usage(long)]
     text: String,
-    #[usage(long, default = "50", allow_negative_numbers)]
+    #[usage(long, allow_negative_numbers)]
     interval_ms: f64,
+}
+#[derive(Args)]
+pub struct SendText {
+    /// Pane target; omit for this terminal, or prefix with an attached server alias/.
+    #[usage(short = 't', long)]
+    target: Option<String>,
+    /// Literal text to paste. Newlines remain inside the paste when bracketed paste is enabled.
+    #[usage(long)]
+    text: String,
+    /// Send Enter after the paste.
+    #[usage(long)]
+    enter: bool,
 }
 #[derive(Args)]
 pub struct SendKey {
@@ -1632,16 +1659,18 @@ impl WorkspaceCommand {
                 json!({"title":a.title.join(" "),"target":a.target}),
             ),
             Self::Terminal(a) => match a.command {
-                TerminalCommand::Type(a) => {
+                TerminalCommand::SendText(a) => ("pane.send".into(),
+                    json!({"text":a.text,"enter":a.enter,"target":a.target})),
+                TerminalCommand::DemoType(a) => {
                     if !a.interval_ms.is_finite() || !(0.0..=1000.0).contains(&a.interval_ms) {
                         return Err("interval-ms must be between 0 and 1000".into());
                     }
                     (
-                        "terminal.type".into(),
+                        "internal.terminal.demo_type".into(),
                         json!({"text":a.text,"interval_ms":a.interval_ms,"target":a.target}),
                     )
                 }
-                TerminalCommand::SendKey(a) => {
+                TerminalCommand::Press(a) => {
                     let mut params = json!({"key":a.key,"target":a.target});
                     if a.no_effects { params["effects"] = json!(false); }
                     ("terminal.press".into(), params)

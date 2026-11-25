@@ -109,8 +109,8 @@ class RemoteControllerTests(unittest.TestCase):
                     import os, sys, socket, threading, pathlib
                     if "-L" not in sys.argv:
                         if sys.argv[-1] == "uname -s; uname -m": print("Linux\\naarch64")
+                        elif "expected=" in sys.argv[-1]: print("installed\\n/usr/bin/gft")
                         else:
-                            print("running")
                             print(pathlib.Path(os.environ["CONTROLLER_TEST_DESCRIPTOR"]).read_text())
                         sys.exit(0)
                     host, port, remote_host, remote_port = sys.argv[sys.argv.index("-L") + 1].split(":")
@@ -157,7 +157,7 @@ class RemoteControllerTests(unittest.TestCase):
                             time.sleep(.05)
                         target = json.loads(listed.stdout)["result"]["panes"][0]["target"]
                         self.assertEqual(target, f"build/t{pane['id']}")
-                        sent = command("terminal", "type", "-t", target, "--text", "printf 'HEADLESS_MARKER\\n'\n", "--interval-ms", "0")
+                        sent = command("terminal", "send-text", "-t", target, "--text", "printf 'HEADLESS_MARKER\\n'", "--enter")
                         self.assertEqual(sent.returncode, 0, sent.stdout + sent.stderr)
                         read = command("terminal", "get-text", "-t", target, "--json")
                         self.assertEqual(read.returncode, 0, read.stdout + read.stderr)
@@ -166,8 +166,8 @@ class RemoteControllerTests(unittest.TestCase):
                         # process. A fresh login must never replay that mutation.
                         applied = directory / "applied"
                         (directory / "hold-replies").touch()
-                        mutation = subprocess.Popen([str(owner.binary), "terminal", "type", "-t", target,
-                            "--text", "echo applied >> " + shlex.quote(str(applied)) + "\n", "--interval-ms", "0"],
+                        mutation = subprocess.Popen([str(owner.binary), "terminal", "send-text", "-t", target,
+                            "--text", "echo applied >> " + shlex.quote(str(applied)), "--enter"],
                             env=env, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
                         try:
                             deadline = time.monotonic() + 10
@@ -237,7 +237,7 @@ class RemoteControllerTests(unittest.TestCase):
                             + " data=b''\n while b'\\x1b[201~' not in data: data+=os.read(0,4096)\n"
                             + " pathlib.Path(" + repr(str(capture)) + ").write_bytes(data)\n"
                             + "finally:\n os.write(1,b'\\x1b[?2004l')\n termios.tcsetattr(0,termios.TCSANOW,old)\n")
-                        run = command("terminal", "type", "-t", target, "--text", shlex.join([sys.executable, str(probe)]) + "\n", "--interval-ms", "0")
+                        run = command("terminal", "send-text", "-t", target, "--text", shlex.join([sys.executable, str(probe)]), "--enter")
                         self.assertEqual(run.returncode, 0, run.stdout + run.stderr)
                         deadline = time.monotonic() + 10
                         while not ready.exists() and time.monotonic() < deadline: time.sleep(.02)
@@ -252,7 +252,7 @@ class RemoteControllerTests(unittest.TestCase):
                     finally:
                         attachment.terminate()
                         attachment.wait(timeout=10)
-                    self.assertNotEqual(command("terminal", "send-key", "-t", target, "Enter").returncode, 0)
+                    self.assertNotEqual(command("terminal", "press", "-t", target, "Enter").returncode, 0)
                     self.assertEqual(peer.sync()["panes"][0]["pid"], pane["pid"])
 
 

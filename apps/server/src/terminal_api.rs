@@ -7,7 +7,7 @@ use serde_json::{Value, json};
 pub fn handles(method: &str) -> bool {
     matches!(
         method,
-        "terminal.get_text" | "terminal.pid" | "terminal.type" | "terminal.press" | "terminal.put"
+        "terminal.get_text" | "terminal.pid" | "internal.terminal.demo_type" | "terminal.press" | "terminal.put"
     )
 }
 
@@ -21,7 +21,7 @@ pub fn dispatch(
         "terminal.put" => &["target", "upload"],
         "terminal.get_text" => &["target", "tab_id", "scrollback"],
         "terminal.pid" => &["target", "tab_id", "details"],
-        "terminal.type" => &["target", "tab_id", "text", "interval_ms"],
+        "internal.terminal.demo_type" => &["target", "tab_id", "text", "interval_ms"],
         "terminal.press" => &["target", "tab_id", "key", "interval_ms", "effects"],
         _ => return Err(api::error("method_not_found", "Unknown terminal method")),
     };

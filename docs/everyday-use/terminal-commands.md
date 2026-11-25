@@ -2,7 +2,7 @@
 
 Use pane IDs from `gft pane list`. Commands address the pane without changing frontend focus.
 
-## Capture and type
+## Capture and send
 
 Save the current screen or include scrollback:
 
@@ -15,15 +15,15 @@ gft terminal get-text -t t3 --json
 Capture leaves focus and scroll position unchanged. Full-screen programs expose
 their current screen, without the shell's earlier scrollback.
 
-Type into another pane, then send a key:
+Paste into another pane, then send a key:
 
 ```sh
-gft terminal type -t t3 --text 'hello'
-gft terminal send-key -t t3 Enter
+gft terminal send-text -t t3 --text 'hello'
+gft terminal press -t t3 Enter
 ```
 
-Replace `t3` with an ID from `gft pane list`. Typing does not press Enter.
-Keys can include modifiers, such as `Ctrl+h`; add `--no-effects` to `send-key`
+Replace `t3` with an ID from `gft pane list`. Pasting does not press Enter.
+Keys can include modifiers, such as `Ctrl+h`; add `--no-effects` to `press`
 to suppress typing effects.
 
 ## Control a remote terminal
@@ -38,8 +38,8 @@ gft pane list -t build/
 Use a qualified target from the listing for input or capture:
 
 ```sh
-gft terminal type -t 'build/t12' --text 'hello'
-gft terminal send-key -t 'build/t12' Enter
+gft terminal send-text -t 'build/t12' --text 'hello'
+gft terminal press -t 'build/t12' Enter
 gft terminal get-text -t 'build/t12'
 ```
 
@@ -74,3 +74,12 @@ Typing during upload waits behind the completed path paste; a failed batch
 discards queued input so Enter cannot submit a draft with missing attachments.
 An ordinary `ssh` command inside a local terminal does not change the app's
 local/remote file routing.
+
+Text is pasted in one batch without a typing delay. With bracketed paste enabled,
+newlines stay inside the paste; add `--enter` to submit it. An omitted target means
+the calling terminal. Neovim explicitly uses `connected` to send to its selected pane.
+`send-text` uses the same `pane.send` RPC as the Neovim plugin.
+
+For recordings only, use `gft internal terminal demo-type --text 'hello' --interval-ms 60`.
+The interval is required. Demo typing emits individual keys and typing effects;
+it is not a text-paste API. Use `gft terminal press Escape` for actual control keys.

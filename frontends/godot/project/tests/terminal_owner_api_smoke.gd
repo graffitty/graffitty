@@ -32,7 +32,7 @@ func run() -> void:
 	check("@@READY@@" in str(captured.get("result", {}).get("text", "")), "Godot API captures authoritative owner text")
 	# The old viewport injection route would reject or drop this input.
 	host.sessions[id].vp.gui_disable_input = true
-	var typed: Dictionary = await api.dispatch(id, "terminal.type", {"text":"한🙂", "interval_ms":0})
+	var typed: Dictionary = await api.dispatch(id, "internal.terminal.demo_type", {"text":"한🙂", "interval_ms":0})
 	check(typed.get("result", {}).get("keys_sent", 0) == 2, "Typing completes through the owner with viewport input disabled")
 	var pressed: Dictionary = await api.dispatch(id, "terminal.press", {"key":"Alt+b", "interval_ms":0})
 	check(pressed.get("result", {}).get("keys_sent", 0) == 1, "Alt shortcut is encoded by the owner")

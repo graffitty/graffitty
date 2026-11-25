@@ -110,7 +110,7 @@ func run() -> void:
 			quit(1)
 			return
 	await input("window.set_title", {"title": "Terminal"})
-	await input("terminal.type", { "text": "unsetopt PROMPT_SP; clear", "interval_ms": 0 })
+	await input("pane.send", { "text": "unsetopt PROMPT_SP; clear" })
 	await input("terminal.press", { "key": "Enter" })
 	await create_timer(0.8).timeout
 	if settings.get("demo", "") == "adaptive_zoom":
@@ -137,7 +137,7 @@ func run() -> void:
 				"eza --tree --level=3 --color=always",
 				"batcat --color=always --style=numbers --paging=never src/main.py",
 			][tab]
-			await input("terminal.type", {"text": command, "interval_ms": 0})
+			await input("pane.send", {"text": command})
 			await input("terminal.press", {"key": "Enter"})
 			await create_timer(0.8).timeout
 		await select_fixture(0, true)
@@ -157,20 +157,19 @@ func run() -> void:
 	if settings.get("demo", "") == "cursor_motion":
 		# Prepare a normal command line; the recording only navigates its text.
 		await input(
-			"terminal.type",
+			"pane.send",
 			{
 				"text": "bindkey -e; bindkey '^[[H' beginning-of-line; bindkey '^[[F' end-of-line; clear",
-				"interval_ms": 0,
 			},
 		)
 		await input("terminal.press", { "key": "Enter" })
 		await create_timer(0.4).timeout
-		await input("terminal.type", { "text": "ls", "interval_ms": 0 })
+		await input("pane.send", { "text": "ls" })
 		await input("terminal.press", { "key": "Enter" })
 		await create_timer(0.4).timeout
 		await input(
-			"terminal.type",
-			{ "text": "clear; ls; print -z $'ls\\ncd src\\nls'", "interval_ms": 0 },
+			"pane.send",
+			{ "text": "clear; ls; print -z $'ls\\ncd src\\nls'" },
 		)
 		await input("terminal.press", { "key": "Enter" })
 		await create_timer(0.4).timeout
@@ -201,7 +200,7 @@ func run() -> void:
 	elif settings.get("demo", "") == "adaptive_zoom":
 		await create_timer(1.0).timeout
 		for command in ["ls", "cd src", "ls"]:
-			await input("terminal.type", {"text": command, "interval_ms": 160})
+			await input("internal.terminal.demo_type", {"text": command, "interval_ms": 160})
 			# Show the fit before output changes its bounds.
 			await create_timer(2.5).timeout
 			await input("terminal.press", {"key": "Enter"})
@@ -209,7 +208,7 @@ func run() -> void:
 		await create_timer(5.0).timeout
 	elif str(settings.get("transition", "")).is_empty():
 		for command in ["ls", "cd src", "ls", "cd .."]:
-			await input("terminal.type", { "text": command, "interval_ms": settings.interval_ms })
+			await input("internal.terminal.demo_type", { "text": command, "interval_ms": settings.interval_ms })
 			await create_timer(0.25).timeout
 			await input("terminal.press", { "key": "Enter" })
 			await create_timer(0.6).timeout

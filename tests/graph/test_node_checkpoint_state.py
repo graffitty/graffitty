@@ -40,7 +40,7 @@ class NodeCheckpointState(unittest.TestCase):
                     trigger = client.action("create", prompt, kind="pane")["created"]
 
                     def type_in(pane, text, enter=True):
-                        reply = client.action("rpc", pane, method="terminal.type", params={"text": text, "interval_ms": 0})
+                        reply = client.action("rpc", pane, method="pane.send", params={"text": text})
                         self.assertNotIn("error", reply, reply)
                         if enter:
                             self.assertNotIn("error", client.action("rpc", pane, method="terminal.press", params={"key": "Enter"}))

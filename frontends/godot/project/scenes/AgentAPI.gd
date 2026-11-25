@@ -213,14 +213,14 @@ func dispatch(tab_id: int, method: String, params: Dictionary) -> Dictionary:
 			params.erase("tab_id")
 			return await owner.session_backend.connection.remote_call(tab_id, method, params)
 		return terminal_pids(owner, params)
-	if (method.begins_with("terminal.") or method == "window.set_title") and params.has("target"):
+	if (method.begins_with("terminal.") or method == "internal.terminal.demo_type" or method == "window.set_title") and params.has("target"):
 		var key := Targets.resolve(application, owner, str(params.target))
 		if key.is_empty():
 			return error("invalid_target", "Unknown pane target" + Targets.hint(str(params.target)))
 		if key != PaneAddress.key(tab_id):
 			return error("forbidden", "Terminal access is scoped to the calling terminal")
 		params.erase("target")
-	if owner.session_backend.is_remote and method in ["terminal.get_text", "terminal.type", "terminal.press"]:
+	if owner.session_backend.is_remote and method in ["terminal.get_text", "internal.terminal.demo_type", "terminal.press", "pane.send"]:
 		# The owner encodes against live VT modes and never needs a focused view.
 		params.erase("tab_id")
 		return await owner.session_backend.connection.remote_call(tab_id, method, params)
@@ -321,7 +321,7 @@ func dispatch(tab_id: int, method: String, params: Dictionary) -> Dictionary:
 		return {"result": {"outcome": "edge" if owner.pane_focus == previous else "moved", "pane": owner.pane_focus}}
 	if method.begins_with("tiling."):
 		return preload("res://scenes/TilingCommands.gd").dispatch(owner, tab_id, method, params)
-	if method.begins_with("terminal."):
+	if method.begins_with("terminal.") or method == "internal.terminal.demo_type":
 		return await virtual_input.dispatch(owner, tab_id, method, params)
 	if method == "identify":
 		return {

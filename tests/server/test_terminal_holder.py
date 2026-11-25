@@ -158,7 +158,7 @@ class TerminalHolderTests(unittest.TestCase):
         self.assertEqual(parent(pane), holder, "the same holder still owns the program")
         self.wait(lambda: f"before-marker-{pane}" in self.screen(pane), "the earlier output on the adopted screen")
         word = f"after-{rounds}"
-        self.gft("terminal", "type", "--text", word + "\n", pane=pane)
+        self.gft("terminal", "send-text", "--text", word, "--enter", pane=pane)
         self.wait(lambda: f"got:{word}" in self.screen(pane), "the program's reply on screen")
         self.assertEqual((self.root / f"{pane}.input").read_text().split()[-1], word,
                          "input reached the same program")
@@ -170,7 +170,7 @@ class TerminalHolderTests(unittest.TestCase):
         pane = self.new_pane("one")
         holder = parent(pane)
         self.assertNotEqual(holder, self.server_pid(), "a holder, not the server, is the program's parent")
-        self.gft("terminal", "type", "--text", "before\n", pane=pane)
+        self.gft("terminal", "send-text", "--text", "before", "--enter", pane=pane)
         self.wait(lambda: "got:before" in self.screen(pane), "the first reply")
         return pane, holder
 
@@ -361,7 +361,7 @@ class TerminalHolderTests(unittest.TestCase):
                   "the holder to restart the filetree owner")
         self.assertTrue(alive(pane))
         self.assertEqual(parent(pane), holder)
-        self.gft("terminal", "type", "--text", "after-crash\n", pane=pane)
+        self.gft("terminal", "send-text", "--text", "after-crash", "--enter", pane=pane)
         self.wait(lambda: "got:after-crash" in self.screen(pane), "input after crash recovery")
         self.assertEqual(tree_state(), trees)
         self.assertEqual(self.wait(tree_pid, "filetree RPC after crash"), pid)

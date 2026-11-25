@@ -30,9 +30,10 @@ impl Input {
                 .as_f64()
                 .filter(|n| n.is_finite() && (0.0..=1000.0).contains(n))
                 .ok_or_else(|| api::error("invalid_params", "interval_ms must be 0–1000"))?,
-            None => 50.0,
+            None if method == "internal.terminal.demo_type" => return Err(api::error("invalid_params", "demo_type requires interval_ms")),
+            None => 0.0,
         };
-        let strokes: VecDeque<_> = if method == "terminal.type" {
+        let strokes: VecDeque<_> = if method == "internal.terminal.demo_type" {
             let text = params["text"]
                 .as_str()
                 .filter(|s| s.chars().count() <= 4096)
@@ -180,13 +181,13 @@ mod tests {
         let vt = graffitty_terminal_core::new_vt(80, 24, 0).unwrap();
         let (input, output) = mpsc::sync_channel(1);
         let (mut job, result) =
-            Input::new("terminal.type", &json!({"text":"ab", "interval_ms":0})).unwrap();
+            Input::new("internal.terminal.demo_type", &json!({"text":"ab", "interval_ms":0})).unwrap();
         assert!(!job.poll(&vt, &input, false));
         assert_eq!(output.recv().unwrap(), b"a");
         assert!(job.poll(&vt, &input, false));
         assert_eq!(output.recv().unwrap(), b"b");
         assert_eq!(result.recv().unwrap()["result"]["keys_sent"], 2);
-        let (job, result) = Input::new("terminal.type", &json!({"text":"remaining"})).unwrap();
+        let (job, result) = Input::new("internal.terminal.demo_type", &json!({"text":"remaining", "interval_ms":50})).unwrap();
         drop(job);
         assert_eq!(result.recv().unwrap()["error"]["code"], "workspace_closed");
     }

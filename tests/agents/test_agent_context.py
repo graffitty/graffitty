@@ -72,7 +72,7 @@ class AgentContextTests(unittest.TestCase):
                         # A real foreground PID holds its own rollout open. No
                         # hooks, graph registration, provider daemon or model calls.
                         command = f"exec 3<{shlex.quote(str(rollout))}; exec {shlex.quote(str(executable))}"
-                        for method, params in (("terminal.type", {"text": command, "interval_ms": 0}),
+                        for method, params in (("pane.send", {"text": command}),
                                                ("terminal.press", {"key": "Enter"})):
                             reply = client.action("rpc", pane, method=method, params=params)
                             self.assertNotIn("error", reply, reply)

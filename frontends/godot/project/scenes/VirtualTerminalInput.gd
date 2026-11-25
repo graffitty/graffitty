@@ -64,11 +64,11 @@ func dispatch(host: Node, tab_id: int, method: String, params: Dictionary) -> Di
 		if captured.has("error"):
 			return error("capture_failed", captured.error)
 		return { "result": captured }
-	if not method in ["terminal.type", "terminal.press"]:
+	if not method in ["internal.terminal.demo_type", "terminal.press"]:
 		return error("method_not_found", "Unknown terminal method")
 	var allowed := (
 		["text", "interval_ms", "tab_id"]
-		if method == "terminal.type"
+		if method == "internal.terminal.demo_type"
 		else ["key", "interval_ms", "tab_id", "effects"]
 	)
 	for key in params:
@@ -78,13 +78,13 @@ func dispatch(host: Node, tab_id: int, method: String, params: Dictionary) -> Di
 	if not effects is bool:
 		return error("invalid_params", "effects must be a boolean")
 	var events: Array[InputEventKey] = []
-	var interval = params.get("interval_ms", 50)
+	var interval = params.get("interval_ms", null if method == "internal.terminal.demo_type" else 0)
 	if (
 		not (interval is int or interval is float)
 		or not is_finite(float(interval)) or interval < 0 or interval > 1000
 	):
 		return error("invalid_params", "interval_ms must be 0–1000")
-	if method == "terminal.type":
+	if method == "internal.terminal.demo_type":
 		var text = params.get("text")
 		if not text is String or text.length() > 4096:
 			return error("invalid_params", "text must be a string of at most 4096 characters")

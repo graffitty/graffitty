@@ -1022,6 +1022,13 @@ fn place_viewer(
 }
 
 pub fn send(server: &mut Server, caller: u64, params: &Value) -> Result<Value, Error> {
+    let object = params.as_object().ok_or_else(|| crate::api::error("invalid_params", "Expected object params"))?;
+    if object.keys().any(|key| !["target", "text", "enter"].contains(&key.as_str())) {
+        return Err(crate::api::error("invalid_params", "pane.send accepts only target, text and enter"));
+    }
+    let target = params.get("target").map(|v| v.as_str().ok_or_else(||
+        crate::api::error("invalid_params", "target must be a string"))).transpose()?;
+
     let source = server
         .sessions
         .get(&caller)
@@ -1030,7 +1037,8 @@ pub fn send(server: &mut Server, caller: u64, params: &Value) -> Result<Value, E
     let tab = source.tab;
     workspace::sync(server, &name)?;
     let state = server.workspace_state.snapshot(&name);
-    let target = params["target"].as_str().unwrap_or("connected");
+    let own = format!("t{caller}");
+    let target = target.unwrap_or(&own);
     let target = if target == "connected" {
         format!(
             "t{}",

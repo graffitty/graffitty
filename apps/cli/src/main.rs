@@ -65,6 +65,8 @@ fn error(code: &str, message: impl std::fmt::Display) -> Value {
 }
 
 fn valid_method(method: &str) -> bool {
+    // Demo controls remain callable without advertising them to agents via MCP.
+    if method == "internal.terminal.demo_type" { return true; }
     let schema: Value = serde_json::from_str(include_str!("mcp-tools.json")).unwrap();
     schema["tools"][0]["inputSchema"]["properties"]["method"]["enum"]
         .as_array()
@@ -532,6 +534,7 @@ fn main() -> ExitCode {
             },
         },
         WorkspaceCommand::Internal(args) => match args.command {
+            options::InternalCommand::Terminal(_) => unreachable!("terminal demo command normalized by into_workspace"),
             options::InternalCommand::AgentHookIntegrate(args) => integration::exit(integration::event(args)),
             options::InternalCommand::AgentWorker(args) => match agent_bridge::worker(&args.request) {
                 Ok(value) => { println!("{value}"); ExitCode::SUCCESS }

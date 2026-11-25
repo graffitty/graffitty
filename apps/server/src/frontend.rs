@@ -305,7 +305,7 @@ mod capture_tests{
     }
     #[test]
     fn terminal_commands_never_depend_on_presentation_ownership() {
-        for method in ["terminal.type", "terminal.press", "terminal.get_text", "terminal.pid"] {
+        for method in ["internal.terminal.demo_type", "terminal.press", "terminal.get_text", "terminal.pid"] {
             assert!(!super::handles_request(&serde_json::json!({"method":method,"params":{}})));
         }
     }

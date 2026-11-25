@@ -127,24 +127,24 @@ Window/traffic-light/keyboard overlays scale with footage and use frozen fonts.
 ## Virtual input with gft
 
 ```sh
-"$GRAFFITTY_BIN" terminal type --text 'echo hello' --interval-ms 60
-"$GRAFFITTY_BIN" terminal send-key Enter
-"$GRAFFITTY_BIN" terminal send-key Backspace
-"$GRAFFITTY_BIN" terminal send-key Ctrl+u
-"$GRAFFITTY_BIN" terminal send-key Ctrl+h --no-effects
+"$GRAFFITTY_BIN" internal terminal demo-type --text 'echo hello' --interval-ms 60
+"$GRAFFITTY_BIN" terminal press Enter
+"$GRAFFITTY_BIN" terminal press Backspace
+"$GRAFFITTY_BIN" terminal press Ctrl+u
+"$GRAFFITTY_BIN" terminal press Ctrl+h --no-effects
 ```
 
 Run a driver outside the shell's foreground input loop, with the intended
 GRAFFITTY environment. If launched from that shell, background it:
 
 ```sh
-(sleep 1; "$GRAFFITTY_BIN" terminal type --text 'echo hello' --interval-ms 60; \
- "$GRAFFITTY_BIN" terminal send-key Enter) > /tmp/graffitty-cli-demo.log 2>&1 &
+(sleep 1; "$GRAFFITTY_BIN" internal terminal demo-type --text 'echo hello' --interval-ms 60; \
+ "$GRAFFITTY_BIN" terminal press Enter) > /tmp/graffitty-cli-demo.log 2>&1 &
 ```
 
 | Contract | Value |
 | --- | --- |
-| RPC | terminal.type(text,interval_ms); terminal.press(key,effects=true) |
+| RPC | internal.terminal.demo_type(text,interval_ms); terminal.press(key,effects=true) |
 | Limits | 4096 characters; interval0–1000 ms; nominal sequence≤30s |
 | Scope | Token's terminal/server; no workspace focus change |
 | Concurrency | Same-terminal concurrent sequence returns busy |

@@ -1066,7 +1066,7 @@ func remote_call(id: int, method: String, params: Dictionary, canceled: Callable
 		replies[int(message.get("request", -1))] = message
 	acknowledged.connect(receive)
 	var request := send_action("rpc", id, { "method": method, "params": map_graph(params, false) })
-	var deadline := Time.get_ticks_msec() + (65000 if method == "dictation.transcribe" else (35000 if method in ["terminal.type", "terminal.press"] else 10000))
+	var deadline := Time.get_ticks_msec() + (65000 if method == "dictation.transcribe" else (35000 if method in ["internal.terminal.demo_type", "terminal.press"] else 10000))
 	while (
 		request >= 0 and connected and not replies.has(request) and Time.get_ticks_msec() < deadline
 		and not (canceled.is_valid() and canceled.call())

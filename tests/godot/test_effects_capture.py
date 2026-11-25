@@ -29,7 +29,7 @@ class CaptureTests(unittest.TestCase):
         for arguments, expected in [
             (
                 ["type", "--text", "한🙂", "--interval-ms", "20"],
-                ("terminal.type", {"text": "한🙂", "interval_ms": 20}),
+                ("internal.terminal.demo_type", {"text": "한🙂", "interval_ms": 20}),
             ),
             (["send-key", "Ctrl+u"], ("terminal.press", {"key": "Ctrl+u"})),
             (["send-key", "Ctrl+h", "--no-effects"], ("terminal.press", {"key": "Ctrl+h", "effects": False})),
