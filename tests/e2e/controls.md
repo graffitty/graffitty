@@ -806,7 +806,7 @@ On mobile startup, attempt every saved server and restore the last workspace
 when it is ready. A server needing a corrected password leaves the other
 attempts running. With two saved servers and the manager open, connect the first
 and verify the list stays open. Connect the second and verify automatic entry.
-Android Back or the visible iOS Back control returns to Servers. Further status
+Android Back or the iOS **‹** immediately left of the tab-strip **⌄** menu returns to Servers. Further status
 and topology updates leave it open. Disconnect and reconnect one server; the
 transition back to all connected opens the workspace again. After a failed
 sign-in, Edit server retains the masked password for correction. An equivalent
@@ -832,6 +832,15 @@ translated text stays readable on phone and tablet in portrait and landscape. Di
 the last server removes the bubble and disables the start action while keeping
 the logo centered. Starting opens a connected workspace. Desktop has no start
 button; closing the manager returns to the terminal.
+
+On both iOS and Android, entering the workspace slides the entire workspace,
+including its tab strip and touch controls, in from the right. The server list
+moves left by 30% of the viewport width beneath it. Returning reverses those
+roles with the same measured UIKit spring (about 467 ms including its tail).
+There is no new edge-swipe gesture. Repeated taps/Back during the transition
+must not navigate twice or type into a terminal. Connection updates must not
+restart it. Rotation, backgrounding, and opening the editor must remove the
+transition surfaces and leave the destination usable. Sessions stay alive.
 
 Physical-device acceptance remains pending.
 

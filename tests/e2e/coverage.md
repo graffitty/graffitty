@@ -1576,6 +1576,17 @@ landing delay and feel. No app was installed and no server restarted.
 
 ## Workspace manager start controls (UI-09)
 
+2026-11-25: iOS and Android share the Rust server-list/workspace push/pop
+motion fitted to a stock UIKit probe on an iOS 26.3 simulator. Rust tests passed
+for native presentation samples, both directions and frame-rate independence.
+All 25 remote-manager unit tests passed. `remote_page_transition_smoke.gd`
+passed its 20 checks both headlessly and with the existing macOS background
+Metal harness, including repeated state delivery, resize/editor interruption,
+and retained-view cleanup. Rendered push/pop frames were inspected; the native
+background guard passed. These are simulated UI checks, not physical iOS or
+Android acceptance. No mobile package was installed.
+
+
 2026-11-13: headless server-home layout/navigation smoke passed across its
 French, German and English viewport cases; all 20 remote-manager unit tests
 passed, including connect-only card activation and Connect all navigation intent.

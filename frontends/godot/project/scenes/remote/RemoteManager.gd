@@ -907,6 +907,7 @@ func _notification(what: int) -> void:
 		_go_back()
 
 func _go_back() -> void:
+	if navigation.is_transitioning(): return
 	# Back dismisses workspace menus, never both a menu and the workspace.
 	if is_instance_valid(view) and is_instance_valid(view.host):
 		if preload("res://scenes/input/WorkspaceMenus.gd").dismiss(view.host): return

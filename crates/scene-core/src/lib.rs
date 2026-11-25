@@ -14,6 +14,7 @@ pub mod typing_camera;
 pub use pose::Pose;
 
 pub mod navigation;
+pub mod page_transition;
 pub mod pane_physics;
 pub mod fling;
 pub mod scroll;
