@@ -42,7 +42,11 @@ func _run() -> void:
 	assert(chromium.calls == [{"action": "context-menu-select", "params": {"menu_id": 17, "command_id": 101}}])
 	menu.menu_id = 18
 	menu.popup_hide.emit()
-	await process_frame
+	# Cancellation is deferred, then waits a frame for native id_pressed.
+	for frame in range(10):
+		await process_frame
+		if chromium.calls.size() == 2:
+			break
 	assert(chromium.calls.size() == 2 and chromium.calls[1].params == {"menu_id": 18, "command_id": -1})
 	print("PASS submenu selection, disabled state, and dismissal ordering")
 	chromium.free()

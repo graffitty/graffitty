@@ -68,6 +68,14 @@ CEF context menus preserve IDs/state/submenus and return selection/dismissal;
 remote request tokens route to the originating viewer, not the hidden host window.
 Website handlers can suppress the default menu.
 
+macOS HTML select menus redirect both `attachPopUpWithFrame:inView:` and
+`performClickWithFrame:inView:` for captured windows. Redirecting only the latter
+leaves an AppKit popup at the hidden host's coordinates and can prevent reopening.
+Visible native browser windows retain AppKit's normal behavior.
+`tests/chromium/chromium_nested_bundle_e2e.py <host.app> --select-menu` passed
+cancellation, repeated reopening, selection, disabled-action rejection and checked
+state on macOS. This host test does not verify the final Godot popup's screen position.
+
 ## Build and validation
 
 Build static pinned FFmpeg with `tools/build_chromium_video.py`, then the CEF host,

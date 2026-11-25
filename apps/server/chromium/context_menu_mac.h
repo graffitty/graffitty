@@ -72,26 +72,39 @@ static void trackContextInput(CefRefPtr<CefDictionaryValue> params) {
         contextRequest = @(params->GetString("contextMenuRequest").ToString().c_str());
 }
 
-// Chromium's HTML select picker uses an NSPopUpButtonCell anchored to the
-// browser window. For a captured page, present its real menu model at the
-// initiating client's click and return the chosen action to Chromium.
+// Only redirect menus belonging to a captured, registered browser window.
+static std::shared_ptr<WindowView> selectMenuView(NSView *anchor) {
+    if (!anchor.window || anchor.window.visible || activeSelect) return nullptr;
+    for (auto &page : pages) {
+        auto state = viewFor(page);
+        if (windowFor(page) == anchor.window && state->active == page && state->id &&
+            [selectRequests[@(page->GetIdentifier())] length]) return state;
+    }
+    return nullptr;
+}
+
+// Chromium attaches the popup before entering its tracking loop. Suppress both
+// steps for captured pages: attach alone can show a menu at the hidden host's
+// coordinates, even when performClick is redirected to the owning client.
 static void installSelectMenuBridge() {
     selectRequests = [NSMutableDictionary new];
     Class cls = NSPopUpButtonCell.class;
+    SEL attach = @selector(attachPopUpWithFrame:inView:);
+    Method attachMethod = class_getInstanceMethod(cls, attach);
+    IMP originalAttach = method_getImplementation(attachMethod);
+    IMP attachBridge = imp_implementationWithBlock(^(NSPopUpButtonCell *cell, NSRect frame, NSView *anchor) {
+        if (!selectMenuView(anchor))
+            ((void (*)(id, SEL, NSRect, NSView *))originalAttach)(cell, attach, frame, anchor);
+    });
+    if (!class_addMethod(cls, attach, attachBridge, method_getTypeEncoding(attachMethod)))
+        class_replaceMethod(cls, attach, attachBridge, method_getTypeEncoding(attachMethod));
     SEL selector = @selector(performClickWithFrame:inView:);
     Method method = class_getInstanceMethod(cls, selector);
     IMP original = method_getImplementation(method);
     IMP bridge = imp_implementationWithBlock(^(NSPopUpButtonCell *cell, NSRect frame, NSView *anchor) {
-        NSString *request = nil;
-        int windowId = 0;
-        if (!anchor.window.visible && anchor.window && !activeSelect) {
-            for (auto &page : pages) {
-                if (windowFor(page) != anchor.window || viewFor(page)->active != page) continue;
-                request = selectRequests[@(page->GetIdentifier())];
-                windowId = viewFor(page)->id;
-                break;
-            }
-        }
+        auto state = selectMenuView(anchor);
+        NSString *request = state ? selectRequests[@(state->active->GetIdentifier())] : nil;
+        int windowId = state ? state->id : 0;
         if (!request.length || !windowId) {
             ((void (*)(id, SEL, NSRect, NSView *))original)(cell, selector, frame, anchor);
             return;

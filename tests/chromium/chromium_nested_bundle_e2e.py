@@ -3,6 +3,7 @@
 
 Usage: python3 tests/chromium/chromium_nested_bundle_e2e.py <Chromium GPU Host.app>
 Add --context-menu to exercise macOS Start/Stop Speaking (briefly plays audio).
+Add --select-menu to check captured HTML select cancellation, reopening and selection.
 """
 import contextlib
 import json
@@ -136,28 +137,44 @@ def main():
                             """}, session)
                             assert call("Runtime.evaluate", {"expression":
                                 "document.elementFromPoint(24,18)?.tagName"}, session)["result"]["value"] == "SELECT"
-                            for command, expected in [(-1, 0), (2, 2)]:
+                            # Reopen after cancellation and selection. Attaching a native
+                            # popup before interception used to leave AppKit tracking
+                            # a misplaced menu and prevented the second open.
+                            selected = 0
+                            for attempt, (command, expected) in enumerate([(-1, 0), (2, 2), (1, 2), (0, 0)]):
                                 events.clear()
                                 for kind in ("mousePressed", "mouseReleased"):
                                     call("Input.dispatchMouseEvent", dict(windowId=window, type=kind,
                                          button="left", x=24, y=18, clickCount=1,
-                                         contextMenuRequest="select-test"), session)
+                                         contextMenuRequest=f"select-test-{attempt}"), session)
                                 deadline = time.monotonic() + 5
                                 while not (menus := [e["params"] for e in events
                                         if e["method"] == "Graffitty.contextMenu" and e["params"]["items"]]):
-                                    assert time.monotonic() < deadline, events
+                                    assert time.monotonic() < deadline, (attempt, events)
                                     call("Graffitty.diagnostics")
                                 menu = menus[-1]
-                                assert menu["request"] == "select-test" and menu["windowId"] == window
+                                assert menu["request"] == f"select-test-{attempt}" and menu["windowId"] == window
                                 assert [i["label"] for i in menu["items"]] == ["First", "Disabled", "Last"], menu
                                 assert not menu["items"][1]["enabled"]
+                                assert [i["id"] for i in menu["items"] if i["checked"]] == [selected]
                                 call("Graffitty.contextMenuSelect", dict(windowId=window,
                                      menu_id=menu["id"], command_id=command))
                                 deadline = time.monotonic() + 5
                                 while call("Runtime.evaluate", {"expression":
                                         "document.querySelector('select').selectedIndex"}, session)["result"]["value"] != expected:
                                     assert time.monotonic() < deadline
-                            print("PASS embedded native select menu, disabled item, cancel and selection")
+                                # Wait for the host to finish its nested tracking loop
+                                # and for Blink to process the select/cancel callback.
+                                deadline = time.monotonic() + 5
+                                while not any(e["method"] == "Graffitty.contextMenu" and
+                                        e["params"]["id"] == menu["id"] and not e["params"]["items"] for e in events):
+                                    assert time.monotonic() < deadline, (attempt, events)
+                                    call("Graffitty.diagnostics")
+                                call("Runtime.evaluate", {"expression":
+                                    "new Promise(r => requestAnimationFrame(() => requestAnimationFrame(r)))",
+                                    "awaitPromise": True}, session)
+                                selected = expected
+                            print("PASS embedded select menu, repeated reopening, disabled action, checked state, cancel and selection")
                         if "--context-menu" in sys.argv:
                             call("Runtime.evaluate", {"expression": """
                                 const h = document.querySelector('h1');
