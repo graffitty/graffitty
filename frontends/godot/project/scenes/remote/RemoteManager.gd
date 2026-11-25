@@ -148,13 +148,6 @@ func _ready() -> void:
 					remove_child(floating)
 					floating.queue_free()
 				floating = preload("res://scenes/input/FloatingButtons.gd").new()
-				if OS.has_feature("ios"):
-					var back := Button.new()
-					back.name = "BackButton"
-					back.text = "‹"
-					back.tooltip_text = tr("Back")
-					back.accessibility_name = tr("Back")
-					floating.add("back", back, Vector2(0, 0), Callable(), _go_back, true)
 				# client.toml `[touch] buttons` chooses which floating buttons exist.
 				var touch_buttons: Array = preload("res://config/UserConfig.gd").touch_config(OS.get_cmdline_user_args()).buttons
 				var Face := preload("res://scenes/input/TouchFace.gd")
