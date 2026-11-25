@@ -173,9 +173,17 @@
     # Runs a program without a window and returns its exit code. Calling a
     # console program directly would turn anything it writes to stderr into a
     # terminating error under Windows PowerShell 5.1.
+    # It waits for the program only. `Start-Process -Wait` also waits for every
+    # process the program starts, and `gft internal update finish` starts the
+    # session server, which keeps running: the installer would never end. That
+    # wait also holds the program in a job that its children cannot leave, so
+    # ending the installer would end the server and every terminal.
     function Invoke-GraffittyTool {
         param([string]$File, [string[]]$Arguments)
-        $process = Start-Process -FilePath $File -ArgumentList $Arguments -Wait -PassThru -WindowStyle Hidden
+        $process = Start-Process -FilePath $File -ArgumentList $Arguments -PassThru -WindowStyle Hidden
+        # Reading the handle now keeps the exit code available after the program exits.
+        $null = $process.Handle
+        $process.WaitForExit()
         return $process.ExitCode
     }
 
