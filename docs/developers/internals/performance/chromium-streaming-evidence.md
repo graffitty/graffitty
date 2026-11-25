@@ -83,3 +83,8 @@ server, and extension. The low-delay patch waits for asynchronous no-B-frame out
 Recorded M1 Max HEVC/H.264, desktop/emulator HEVC, physical tablet decode/scroll,
 multi-client/resize/recovery/rejection/preview checks passed in their environments.
 Those runs did not exercise AV1 hardware or Windows/Linux hardware backends.
+
+Incoming tab/session Chromium streams request frames as soon as they are subscribed,
+before the transition's projected geometry is readable. They stay awake through the
+session flight, then return to normal offscreen/small-pane settling. Paused panes
+retain their last picture with a gray overlay, without a large status label.

@@ -23,7 +23,6 @@ var _hyperlink_source: Control
 var chromium_frozen_overlay: ColorRect
 ## Shown instead of a frozen page when the chromium stopped unexpectedly.
 var chromium_failure: VBoxContainer
-var chromium_paused_label: Label
 var chromium_failure_heading: Label
 var chromium_failure_reason: Label
 var chromium_restart_button: Button
@@ -216,17 +215,6 @@ func _ensure_content_kind() -> void:
 		chromium_frozen_overlay.use_parent_material = true
 		texture.add_child(chromium_frozen_overlay)
 		chromium_frozen_overlay.set_anchors_and_offsets_preset(Control.PRESET_FULL_RECT)
-		chromium_paused_label = Label.new()
-		chromium_paused_label.name = "PausedChromiumLabel"
-		chromium_paused_label.text = "Paused"
-		chromium_paused_label.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
-		chromium_paused_label.vertical_alignment = VERTICAL_ALIGNMENT_CENTER
-		chromium_paused_label.mouse_filter = Control.MOUSE_FILTER_IGNORE
-		chromium_paused_label.add_theme_color_override("font_outline_color", Color(0, 0, 0, 0.6))
-		chromium_paused_label.add_theme_constant_override("outline_size", 6)
-		chromium_paused_label.hide()
-		chromium_frozen_overlay.add_child(chromium_paused_label)
-		chromium_paused_label.set_anchors_and_offsets_preset(Control.PRESET_FULL_RECT)
 		_build_chromium_failure()
 		# Above the page, where Chrome shows its find bar.
 		find_bar = preload("res://scenes/ChromiumFindBar.gd").new()
@@ -677,10 +665,6 @@ func _refresh_chromium_content() -> void:
 		# A paused pane is off-screen or projected too small to read: gray it
 		# out over its last picture rather than streaming frames nobody sees.
 		chromium_frozen_overlay.visible = chromium.native_visible or chromium.stream_paused
-		chromium_paused_label.visible = chromium.stream_paused and not chromium.native_visible
-		if chromium_paused_label.visible:
-			# Sized with the page, so it stays legible as the camera zooms in.
-			chromium_paused_label.add_theme_font_size_override("font_size", int(clampf(texture.size.y / 8.0, 22.0, 160.0)))
 	if chromium_failure != null:
 		# A stopped browser can be relaunched; a crashed or stuck page reloaded.
 		var stopped: bool = not chromium.failure_reason.is_empty()

@@ -944,7 +944,23 @@ func _subscribe() -> void:
 		for id in ids:
 			if id not in connection.subscriptions and host.sessions.has(id):
 				host.sessions[id].term.remote_expect_scene()
+		var arriving: Array = ids.filter(func(id): return id not in connection.subscriptions)
 		connection.subscribe(ids)
+		# Request incoming browser frames before the flight starts. Waiting for
+		# the 250 ms geometry poll sees the departure camera and can pause them.
+		var sizes := {}
+		for id in ids:
+			if not host.chromiums.has(id): continue
+			if not stream_sizes.has(id): stream_sizes[id] = {}
+			var state: Dictionary = stream_sizes[id]
+			if id in arriving and Layout.find(tab.get("tree", {}), PaneAddress.key(id)).get("shown", true):
+				warm_chromium_stream(state)
+				var chromium: Node = host.chromiums[id]
+				if chromium.stream_paused:
+					chromium.stream_paused = false
+					chromium.changed.emit()
+			sizes[id] = 0 if state.get("paused", true) else int(state.get("height", 720))
+		connection.set_chromium_viewports(sizes)
 	for id in ids: _sync_terminal_theme(int(id))
 
 
@@ -1033,12 +1049,23 @@ const PAUSE_HEIGHT := 96.0
 const RESUME_HEIGHT := 128.0
 
 
+## Start incoming streams before their transition geometry becomes readable.
+static func warm_chromium_stream(state: Dictionary) -> void:
+	state.paused = false
+	state.warming = true
+	state.erase("pause_since")
+	state.height = maxi(int(state.get("height", 0)), 720)
+
+
 ## Pause off-screen and tiny panes. A newly reported pane pauses at once; a
 ## displayed one only after a stable half second, so a passing camera move
 ## does not restart its stream.
 ##
 ## Panes resume as soon as they are readable.
-static func chromium_stream_paused(state: Dictionary, height: float, now: int) -> bool:
+static func chromium_stream_paused(state: Dictionary, height: float, now: int, transitioning := false) -> bool:
+	if state.get("warming", false):
+		if transitioning: return false
+		state.erase("warming")
 	if not state.has("paused"):
 		state.paused = height < PAUSE_HEIGHT
 	elif state.paused:
@@ -1104,7 +1131,10 @@ func _process_body(_dt: float) -> void:
 			# height zero stops their frames, and they keep the last picture.
 			var chromium: Node = host.chromiums[id]
 			var extent := chromium_pause_extent(chromium_readable_extent(size, host.get_window().content_scale_factor), int(chromium.frames))
-			var paused := chromium_stream_paused(stream_sizes[id], extent, now)
+			var transitioning: bool = host.session_switch_in_progress or (is_instance_valid(host.world) and host.world.session_transition_active)
+			var paused := chromium_stream_paused(stream_sizes[id], extent, now, transitioning)
+			if transitioning and stream_sizes[id].get("warming", false):
+				height = maxf(height, float(stream_sizes[id].height))
 			sizes[id] = 0 if paused else chromium_stream_height(stream_sizes[id], height, now)
 			if chromium.stream_paused != paused:
 				chromium.stream_paused = paused

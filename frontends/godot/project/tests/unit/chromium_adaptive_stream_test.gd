@@ -73,3 +73,48 @@ func test_resubscribe_restores_unchanged_chromium_demand() -> void:
 	expect(last.type == "chromium_stream" and int(last.viewports.get("7", 0)) == 240,
 		"Returning to a pane restores its demand even though its height did not change")
 	connection.free()
+
+func test_arriving_browser_resumes_before_transition_geometry_is_visible() -> void:
+	var state := {"paused":true, "height":360, "pause_since":0}
+	Client.warm_chromium_stream(state)
+	expect(not state.paused and state.height == 720, "Incoming pane immediately requests frames at a useful resolution")
+	expect(not Client.chromium_stream_paused(state, 0, 100, true), "The departing camera cannot pause the incoming stream")
+	expect(not Client.chromium_stream_paused(state, 0, 5000, true), "Warm stream survives the entire transition")
+	expect(not Client.chromium_stream_paused(state, 0, 5100, false), "After transition, normal settling starts")
+	expect(Client.chromium_stream_paused(state, 0, 5600, false), "An offscreen destination pauses again after settling")
+	Client.warm_chromium_stream(state)
+	expect(not Client.chromium_stream_paused(state, 500, 6000, false), "A readable destination remains live")
+
+class Browser extends Node:
+	signal changed
+	var stream_paused := true
+
+class Host extends Node:
+	var workspace_layout := preload("res://scenes/WorkspaceLayout.gd").new()
+	var sessions := {}
+	var chromiums := {}
+	var presentation_active := true
+
+func test_subscribing_sends_resume_before_the_geometry_poll() -> void:
+	var id := (1 << 32) + 1
+	var browser := Browser.new()
+	var host := Host.new()
+	host.chromiums[id] = browser
+	host.workspace_layout.active = 1
+	host.workspace_layout.tabs.assign([{"id":1, "tree":{"pane":"c1", "shown":true}}])
+	var connection := Connection.new()
+	var peer := Peer.new()
+	connection.socket = peer
+	connection.connected = true
+	connection.workspace = "$1"
+	var client := Client.new()
+	client.connection.free()
+	client.connection = connection
+	client.host = host
+	client._subscribe()
+	expect(not browser.stream_paused, "Subscribing clears the gray overlay synchronously")
+	expect(peer.sent.back().type == "chromium_stream" and int(peer.sent.back().viewports.get(str(id), 0)) >= 720, "Owner receives a frame request without waiting for a process tick")
+	client.free()
+	connection.free()
+	host.free()
+	browser.free()
