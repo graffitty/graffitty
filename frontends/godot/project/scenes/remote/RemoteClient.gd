@@ -391,6 +391,11 @@ func _show_remote_unavailable() -> void:
 	_show_connection_ui()
 
 func _status(message: String) -> void:
+	if is_instance_valid(host):
+		for id in host.sessions:
+			var transport: Node = connection.owners.get(id) if federated else connection
+			if not is_instance_valid(transport) or not transport.connected:
+				host.application.notifications.fail_uploads(host, id)
 	if not connection.connected:
 		_empty_session_attempted = false
 		_reset_empty_session()
@@ -1184,6 +1189,7 @@ func _paste_attachment(id: int, terminal: Node, attachment: Dictionary) -> void:
 
 func _release_host() -> void:
 	if is_instance_valid(host):
+		host.application.notifications.fail_uploads(host)
 		settings.startup_world = host.current_plugin
 		for chromium in host.chromiums.values(): chromium.release_rendering()
 		host.world.set_video_layers([])
@@ -1332,6 +1338,9 @@ func _input_activity(id: int, keys: Array) -> void:
 
 func _remote_notification(id: int, event: Dictionary) -> void:
 	if host == null or not host.sessions.has(id):
+		return
+	if event.has("upload"):
+		host.application.notifications.upload_progress(event.upload, host, id)
 		return
 	var terminal: Control = host.sessions[id].term
 	if event.get("bell", false):

@@ -14195,6 +14195,45 @@
       "nb": "Kan ikke lese innstillingene for fjernautentisering",
       "sv": "Det går inte att läsa inställningarna för fjärrautentisering",
       "da": "Kan ikke læse indstillingerne for fjerngodkendelse"
+    },
+    "Uploading file": {
+      "en-US": "Uploading file",
+      "fr": "Envoi du fichier",
+      "pt-BR": "Enviando arquivo",
+      "es": "Subiendo archivo",
+      "it": "Caricamento del file",
+      "ko": "파일 업로드 중",
+      "ja": "ファイルをアップロード中",
+      "de": "Datei wird hochgeladen",
+      "nb": "Laster opp fil",
+      "sv": "Laddar upp fil",
+      "da": "Uploader fil"
+    },
+    "Upload complete": {
+      "en-US": "Upload complete",
+      "fr": "Envoi terminé",
+      "pt-BR": "Envio concluído",
+      "es": "Carga completada",
+      "it": "Caricamento completato",
+      "ko": "업로드 완료",
+      "ja": "アップロード完了",
+      "de": "Upload abgeschlossen",
+      "nb": "Opplasting fullført",
+      "sv": "Uppladdningen är klar",
+      "da": "Upload fuldført"
+    },
+    "Upload failed": {
+      "en-US": "Upload failed",
+      "fr": "Échec de l’envoi",
+      "pt-BR": "Falha no envio",
+      "es": "Error al subir",
+      "it": "Caricamento non riuscito",
+      "ko": "업로드 실패",
+      "ja": "アップロード失敗",
+      "de": "Upload fehlgeschlagen",
+      "nb": "Opplasting mislyktes",
+      "sv": "Uppladdningen misslyckades",
+      "da": "Upload mislykkedes"
     }
   }
 }

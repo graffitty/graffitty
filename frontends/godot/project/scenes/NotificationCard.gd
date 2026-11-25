@@ -12,6 +12,9 @@ var motion: Tween
 var body: Control
 var title := Label.new()
 var is_history := false
+var progress_bar: ProgressBar
+var progress_label: Label
+var mark: Mark
 
 class Mark extends Control:
 	var tint := Color.WHITE
@@ -48,6 +51,7 @@ func configure(value: Dictionary, history := false) -> void:
 	heading.add_theme_constant_override("separation", 10)
 	column.add_child(heading)
 	var icon := Mark.new()
+	mark = icon
 	icon.tint = accent
 	icon.level = value.level
 	icon.custom_minimum_size = Vector2(22, 22)
@@ -92,6 +96,31 @@ func configure(value: Dictionary, history := false) -> void:
 		body = label
 	body.auto_translate_mode = Node.AUTO_TRANSLATE_MODE_DISABLED
 	column.add_child(body)
+	if value.has("progress"):
+		progress_bar = ProgressBar.new()
+		progress_bar.show_percentage = false
+		progress_bar.custom_minimum_size.y = 6
+		column.add_child(progress_bar)
+		progress_label = Label.new()
+		progress_label.add_theme_font_size_override("font_size", DesktopText.size(13))
+		column.add_child(progress_label)
+	refresh()
+
+func refresh() -> void:
+	remaining = float(entry.timeout)
+	var accent: Color = COLORS.get(entry.level, COLORS.info)
+	(get_theme_stylebox("panel") as StyleBoxFlat).border_color = Color(accent, 0.55)
+	title.add_theme_color_override("font_color", accent)
+	mark.tint = accent
+	mark.level = entry.level
+	mark.queue_redraw()
+	if progress_bar != null:
+		var progress: Dictionary = entry.progress
+		var total := maxi(0, int(progress.total))
+		var received := clampi(int(progress.received), 0, total)
+		var percent := 100.0 if total == 0 and progress.state == "complete" else (100.0 * received / total if total > 0 else 0.0)
+		progress_bar.value = percent
+		progress_label.text = "%s / %s · %d%%" % [String.humanize_size(received), String.humanize_size(total), floori(percent)]
 	_refresh_text()
 
 func _refresh_text() -> void:

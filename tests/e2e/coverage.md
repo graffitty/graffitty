@@ -2025,3 +2025,21 @@ Not run on a device (2026-11-18). Supporting check that passed:
 `cargo test -p graffitty-scene-core touch` (a still contact lifted just before
 the long press clicks once; one held into the long press does not).
 
+
+## Upload progress notifications
+
+2026-11-25, macOS ARM64, development build:
+
+- `uv run tests/server/upload_notification_e2e.py` passed: a real CLI uploads
+  512 KiB + 7 bytes and an empty file to a disposable server; an attached
+  frontend observer receives stable transfer IDs, acknowledged byte counts,
+  completion and an interrupted-transfer error. Destination bytes match.
+- `cargo test -p graffitty-server file_transfer --lib`: two tests passed,
+  including expiry with one failure event and confirmed received bytes.
+- `tests/upload_notification_smoke.gd`: nine headless assertions passed for
+  progress, retained active cards, one history entry, full completion timeout,
+  dismissal, pane-scoped disconnection failure and empty-file completion.
+- Existing `tests/notifications_smoke.gd` passed; Godot editor import passed.
+
+These are private-server and headless UI checks. Physical mobile testing and
+installation of the upload-notification change remain outstanding.

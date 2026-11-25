@@ -45,3 +45,13 @@ gft terminal get-text -t 'build/t12'
 
 The connection must stay open. Add `--no-gui` to connect without opening a window;
 Telegram verification requires the GUI. See [remote access](../remote-access/index.md).
+
+## Upload a file
+
+`gft terminal put --target t3 image.png` uploads a file to that terminal's
+server. Add `--paste` to paste the completed path without pressing Enter.
+With an attached Graffitty window, its existing notification shows the filename,
+received/total size, percentage and a progress bar. The same notification stays
+visible throughout the transfer, then uses the normal eight-second lifetime
+after completion. Failures are shown as errors; history retains one entry per
+upload. A CLI-only upload still works without a frontend.

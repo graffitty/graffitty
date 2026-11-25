@@ -2533,7 +2533,11 @@ pub fn run(options: Options, foreground_apps: fn(&Value) -> Value) -> Result<(),
         pane_claim::poll(&mut server);
         filetree::poll(&mut server);
         server.dictation.poll();
-        server.uploads.expire();
+        for (pane, progress) in server.uploads.expire() {
+            if let Some(session) = server.sessions.get_mut(&pane) {
+                session.upload_progress(progress);
+            }
+        }
         // Shell exit has the same lifecycle as closing a pane, even when no
         // frontend is attached to notice its final terminal frame.
         let exited: Vec<_> = server.sessions.values().filter(|s| s.exited).map(|s| s.id).collect();

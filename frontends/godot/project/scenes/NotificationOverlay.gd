@@ -15,6 +15,7 @@ func _ready() -> void:
 	layer = preload("res://scenes/WorkspaceLayers.gd").Order.NOTIFICATION
 	service = host.application.notifications
 	service.posted.connect(_posted)
+	service.updated.connect(_updated)
 	service.cleared.connect(_clear)
 	get_viewport().size_changed.connect(_resize)
 	history_panel.hide()
@@ -54,6 +55,12 @@ func _posted(entry: Dictionary) -> void:
 	queue.append(entry)
 	if queue.size() > 100: queue.pop_front()
 	_fill()
+
+func _updated(entry: Dictionary) -> void:
+	for card in cards:
+		if card.entry.id == entry.id and not card.leaving: card.refresh()
+	for card in history_list.get_children():
+		if card is Card and card.entry.id == entry.id: card.refresh()
 
 func _fill() -> void:
 	var limit := clampi(int((get_viewport().get_visible_rect().size.y - 40) / 200), 1, 3)
@@ -96,7 +103,7 @@ func _process(delta: float) -> void:
 
 func _process_body(delta: float) -> void:
 	for card in cards.duplicate():
-		if card.leaving: continue
+		if card.leaving or card.entry.get("active", false): continue
 		if card.get_global_rect().has_point(get_viewport().get_mouse_position()): continue
 		card.remaining -= delta
 		if card.remaining <= 0: _dismiss(card)

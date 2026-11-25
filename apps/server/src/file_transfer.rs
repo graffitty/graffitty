@@ -3,7 +3,7 @@
 //! See NOTICE for the upstream revision and attribution.
 use crate::{Error, api};
 use base64::{Engine as _, engine::general_purpose::STANDARD};
-use graffitty_protocol::file_transfer::{MAX_CHUNK_BYTES, Chunk, MAX_BYTES, Receipt};
+use graffitty_protocol::file_transfer::{MAX_CHUNK_BYTES, Chunk, MAX_BYTES, Receipt, Progress, TransferState};
 use std::{collections::HashMap, fs, io::Write, path::{Path, PathBuf}, time::{Duration, Instant}};
 
 const TIMEOUT: Duration = Duration::from_secs(120);
@@ -29,10 +29,26 @@ fn clean(name: &str) -> String {
 }
 
 impl Store {
-    pub fn expire(&mut self) {
+    pub fn expire(&mut self) -> Vec<(u64, Progress)> {
+        let mut events = Vec::new();
         let expired: Vec<_> = self.pending.iter().filter(|(_, p)| p.touched.elapsed() >= TIMEOUT).map(|(key, _)| key.clone()).collect();
         for key in expired {
             let pending = self.pending.remove(&key).unwrap();
+            events.push((key.0, Progress { id: key.1, name: pending.name,
+                received: pending.received, total: pending.size, state: TransferState::Failed }));
+            drop(pending.file);
+            let _ = fs::remove_dir_all(pending.directory);
+        }
+        events
+    }
+    pub fn progress(&self, pane: u64, id: &str) -> Option<Progress> {
+        self.pending.get(&(pane, id.to_owned())).map(|pending| Progress {
+            id: id.to_owned(), name: pending.name.clone(), received: pending.received,
+            total: pending.size, state: TransferState::Failed,
+        })
+    }
+    pub fn abort(&mut self, pane: u64, id: &str) {
+        if let Some(pending) = self.pending.remove(&(pane, id.to_owned())) {
             drop(pending.file);
             let _ = fs::remove_dir_all(pending.directory);
         }
@@ -42,7 +58,6 @@ impl Store {
         let _ = fs::remove_dir_all(root.join(pane.to_string()));
     }
     pub fn receive(&mut self, root: &Path, pane: u64, chunk: Chunk) -> Result<(Receipt, bool), Error> {
-        self.expire();
         let invalid = || api::error("invalid_params", "Invalid file upload chunk");
         if uuid::Uuid::parse_str(&chunk.id).is_err() || chunk.id.len() != 36
             || chunk.name.is_empty() || chunk.name.len() > 255 || chunk.name.chars().any(char::is_control)
@@ -154,7 +169,13 @@ mod tests {
         }
         store.receive(&root, 7, chunk.clone()).unwrap();
         store.pending.values_mut().next().unwrap().touched -= TIMEOUT;
-        store.expire();
+        let expired = store.expire();
+        assert_eq!(expired.len(), 1);
+        assert_eq!(expired[0].0, 7);
+        assert_eq!(expired[0].1.received, 1);
+        assert_eq!(expired[0].1.total, 2);
+        assert!(matches!(expired[0].1.state, TransferState::Failed));
+        assert!(store.expire().is_empty());
         assert!(store.pending.is_empty());
         assert!(!root.join("7").join(&chunk.id).exists());
         let _ = fs::remove_dir_all(root);
