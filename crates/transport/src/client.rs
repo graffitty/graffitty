@@ -335,6 +335,45 @@ pub fn normalize_server_url(url: &str) -> Result<String> {
     Ok(format!("{}://{authority}{}", uri.scheme_str().unwrap(), if path == "/" { "" } else { path }))
 }
 
+/// Validate the single destination argument passed to OpenSSH, preserving
+/// the spelling of config aliases, usernames, and scoped IPv6 addresses.
+pub fn validate_ssh_destination(destination: &str) -> Result<()> {
+    let (user, host) = match destination.split_once('@') {
+        Some((user, host)) => (Some(user), host),
+        None => (None, destination),
+    };
+    let valid_user = user.is_none_or(|name| {
+        !name.is_empty() && name.chars().all(|c| c.is_alphanumeric() || "._-\\$+".contains(c))
+    });
+    let valid_name = |name: &str| {
+        !name.is_empty() && name.chars().all(|c| c.is_alphanumeric() || "._-".contains(c))
+    };
+    let valid_host = if host.contains(':') {
+        let address = host.strip_prefix('[').and_then(|h| h.strip_suffix(']')).unwrap_or(host);
+        let (ip, scope) = address.split_once('%').unwrap_or((address, ""));
+        ip.parse::<std::net::Ipv6Addr>().is_ok() && (!address.contains('%') || valid_name(scope))
+    } else {
+        valid_name(host) && !host.starts_with('-')
+    };
+    ensure!(destination.len() <= 1024 && !destination.starts_with('-') && valid_user && valid_host,
+        "Use an SSH hostname, user@host, or ~/.ssh/config alias");
+    Ok(())
+}
+
+pub fn validate_ssh_session(session: &str) -> Result<()> {
+    ensure!(session.len() <= 64 && session.chars().all(|c| c.is_ascii_alphanumeric() || "-_.".contains(c)),
+        "Workspace must be empty or use 1–64 letters, numbers, dots, underscores or hyphens");
+    Ok(())
+}
+
+fn saved_url(url: &str) -> Result<String> {
+    if let Some(destination) = url.strip_prefix("ssh://") {
+        validate_ssh_destination(destination)?;
+        return Ok(url.to_owned());
+    }
+    normalize_server_url(url)
+}
+
 fn validated_request(url: &str) -> Result<tungstenite::handshake::client::Request> {
     let request = normalize_server_url(url)?.into_client_request().context("Invalid WebSocket URL")?;
     Ok(request)
@@ -539,6 +578,8 @@ pub struct SavedConnection {
     #[serde(default)]
     pub alias: String,
     pub url: String,
+    #[serde(default, skip_serializing_if = "String::is_empty")]
+    pub initial_session: String,
     #[serde(default)]
     pub hostname: String,
     /// Display metadata learned only after authenticating, absent until then.
@@ -568,7 +609,12 @@ impl SavedConnection {
             stream.max_height <= 2160 && stream.fps <= 60 && stream.bitrate_kbps <= 200_000,
             "Invalid Chromium stream quality"
         );
-        validated_request(&self.url)?;
+        if let Some(destination) = self.url.strip_prefix("ssh://") {
+            validate_ssh_destination(destination)?;
+        } else {
+            validated_request(&self.url)?;
+        }
+        validate_ssh_session(&self.initial_session)?;
         Ok(())
     }
 }
@@ -613,8 +659,8 @@ pub fn save_connections(path: &Path, connections: &[SavedConnection]) -> Result<
 /// Move a saved server without rewriting credentials or
 /// connection identity. The existing array is the single persisted order.
 pub fn reorder_connections(path: &Path, source: &str, target: &str, before: bool) -> Result<()> {
-    let source = normalize_server_url(source)?;
-    let target = normalize_server_url(target)?;
+    let source = saved_url(source)?;
+    let target = saved_url(target)?;
     let mut entries = load_connections(path)?;
     ensure!(entries.iter().any(|entry| entry.url == source), "Source server is not saved");
     ensure!(entries.iter().any(|entry| entry.url == target), "Target server is not saved");
@@ -633,7 +679,7 @@ pub fn reorder_connections(path: &Path, source: &str, target: &str, before: bool
 /// Update the server identity without ever accepting credentials in
 /// the persisted document. Read failures must not overwrite the saved list.
 pub fn upsert_connection(path: &Path, mut connection: SavedConnection) -> Result<SavedConnection> {
-    connection.url = normalize_server_url(&connection.url)?;
+    connection.url = saved_url(&connection.url)?;
     connection.validate()?;
     // Several windows can authenticate together. Reserve generated aliases in
     // one read/modify/write transaction, including when the file is new.
@@ -642,7 +688,7 @@ pub fn upsert_connection(path: &Path, mut connection: SavedConnection) -> Result
         .open(path.with_extension("lock"))?;
     lock.lock()?;
     let mut connections = load_connections(path)?;
-    for entry in &mut connections { entry.url = normalize_server_url(&entry.url)?; }
+    for entry in &mut connections { entry.url = saved_url(&entry.url)?; }
     if connection.alias.is_empty() {
         connection.alias = connections.iter()
             .find(|entry| entry.url == connection.url && !entry.alias.is_empty())
@@ -690,7 +736,7 @@ fn validate_aliases(connections: &[SavedConnection]) -> Result<()> {
     let mut aliases = std::collections::BTreeMap::new();
     let mut servers = std::collections::BTreeMap::new();
     for entry in connections {
-        let url = normalize_server_url(&entry.url)?;
+        let url = saved_url(&entry.url)?;
         ensure!(servers.insert(url.clone(), &entry.alias).is_none(), "Server is saved more than once");
         if entry.alias.is_empty() { continue; }
         if let Some(previous) = aliases.insert(&entry.alias, url.clone()) {
@@ -1048,6 +1094,7 @@ mod tests {
             name: "Home".into(),
             alias: "home".into(),
             url: "wss://example.test/graffitty".into(),
+            initial_session: String::new(),
             hostname: "build".into(),
             platform: "linux".into(),
             username: "developer".into(),
@@ -1173,6 +1220,36 @@ mod tests {
         fs::write(&path, b"broken JSON").unwrap();
         assert!(reorder_connections(&path, "wss://a.test", "wss://b.test", true).is_err());
         assert_eq!(fs::read(&path).unwrap(), b"broken JSON");
+    }
+
+    #[test]
+    fn ssh_profiles_keep_the_machine_identity_across_session_changes_and_reordering() {
+        let directory = tempfile::tempdir().unwrap();
+        let path = directory.path().join("connections.json");
+        let direct: SavedConnection = serde_json::from_value(json!({"name":"Direct","url":"ws://example.test:7183"})).unwrap();
+        let mut ssh: SavedConnection = serde_json::from_value(json!({"name":"SSH","url":"ssh://dev@Build-Alias"})).unwrap();
+        assert!(ssh.initial_session.is_empty());
+        save_connections(&path, &[direct.clone(), ssh.clone()]).unwrap();
+        ssh.initial_session = "dev-1".into();
+        upsert_connection(&path, ssh.clone()).unwrap();
+        reorder_connections(&path, &ssh.url, &direct.url, true).unwrap();
+        assert_eq!(load_connections(&path).unwrap(), vec![ssh.clone(), direct]);
+        let before = fs::read(&path).unwrap();
+        for session in ["a b", "name/new", &"x".repeat(65)] {
+            ssh.initial_session = session.into();
+            assert!(upsert_connection(&path, ssh.clone()).is_err());
+        }
+        ssh.initial_session.clear();
+        for host in ["", "-oProxyCommand=example", "foo bar", "user@host/path", "host?query",
+                     "user:password@host", "host:22", "@host", "u@v@host", "host\n", "[::1", "fe80::1%"] {
+            ssh.url = format!("ssh://{host}");
+            assert!(upsert_connection(&path, ssh.clone()).is_err(), "{host:?}");
+        }
+        assert_eq!(fs::read(&path).unwrap(), before);
+        for host in ["Build-Alias", "dev@127.0.0.1", "dev@[::1]", "fe80::1%en0"] {
+            assert_eq!(saved_url(&format!("ssh://{host}")).unwrap(), format!("ssh://{host}"));
+        }
+        assert!(validated_request("ssh://Build-Alias").is_err());
     }
 
     #[test]
