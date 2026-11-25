@@ -8,6 +8,13 @@ Build nodes that exchange messages and session context through explicit connecti
 
 Use the SDK types and CLI help for individual fields and options.
 
+## Pointer priority
+
+Panels and popups receive clicks before the workspace graph. Graph picking checks
+window coordinates and the workspace's visible clip before testing projected wires,
+so pan, zoom and overview cannot put a wire's hit area above a Sessions panel.
+Releasing a wire-inspection click or a new connection over a panel cancels that action.
+
 ## Shared read receipts
 
 Agent unread state belongs to the session server. Graph nodes and session agent

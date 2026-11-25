@@ -655,6 +655,15 @@ func _input(event: InputEvent) -> void:
 			get_viewport().set_input_as_handled()
 		return
 	if not event is InputEventMouse: return
+	# GUI has not run yet. An idle graph cannot take clicks or hover from a
+	# panel/popup or from outside the clipped workspace, at any camera zoom.
+	if view != null and not view.graph_pointer_allowed(event.position) and gesture.get("kind") != "waypoint" and cut.is_empty():
+		if gesture.get("kind") == "inspect_wire" or (event is InputEventMouseButton and not event.pressed):
+			gesture.clear()
+		hovered = ""
+		overlay.clear_edge_hover()
+		overlay.redraw()
+		return
 	var at: Vector2 = overlay.get_global_transform_with_canvas().affine_inverse() * event.position
 	if event is InputEventMouseMotion:
 		if gesture.get("kind") == "inspect_wire":

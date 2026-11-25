@@ -2236,6 +2236,14 @@ func _pointer_left() -> void:
 		canvas.notify_mouse_exited()
 
 
+## Match visible GUI stacking before raw graph handlers can consume a click.
+func graph_pointer_allowed(point: Vector2) -> bool:
+	if not is_visible_in_tree() or not foreground_clip.is_visible_in_tree(): return false
+	var local := foreground_clip.get_global_transform_with_canvas().affine_inverse() * point
+	if not Rect2(Vector2.ZERO, foreground_clip.size).has_point(local): return false
+	return not preload("res://scenes/mods/PanelWindow.gd").blocks_workspace_pointer(host, point)
+
+
 func _input(event: InputEvent) -> void:
 	if (
 		_navigation_press != null and event is InputEventKey
