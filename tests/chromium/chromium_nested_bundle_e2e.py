@@ -122,6 +122,42 @@ def main():
                         }, session)
                         assert result["result"]["value"] == "Ready", result
                         print("PASS nested app framework lookup, renderer startup, and CDP", flush=True)
+                        if "--select-menu" in sys.argv:
+                            deadline = time.monotonic() + 10
+                            while not (windows := call("Graffitty.diagnostics")["windows"]):
+                                assert time.monotonic() < deadline
+                                time.sleep(.05)
+                            window = windows[0]["id"]
+                            call("Graffitty.registerWindow", {"windowId": window,
+                                 "endpoint": "dev.graffitty.server.select-test"})
+                            call("Runtime.evaluate", {"expression": """
+                                document.body.innerHTML = '<select><option>First</option>' +
+                                    '<option disabled>Disabled</option><option>Last</option></select>';
+                            """}, session)
+                            assert call("Runtime.evaluate", {"expression":
+                                "document.elementFromPoint(24,18)?.tagName"}, session)["result"]["value"] == "SELECT"
+                            for command, expected in [(-1, 0), (2, 2)]:
+                                events.clear()
+                                for kind in ("mousePressed", "mouseReleased"):
+                                    call("Input.dispatchMouseEvent", dict(windowId=window, type=kind,
+                                         button="left", x=24, y=18, clickCount=1,
+                                         contextMenuRequest="select-test"), session)
+                                deadline = time.monotonic() + 5
+                                while not (menus := [e["params"] for e in events
+                                        if e["method"] == "Graffitty.contextMenu" and e["params"]["items"]]):
+                                    assert time.monotonic() < deadline, events
+                                    call("Graffitty.diagnostics")
+                                menu = menus[-1]
+                                assert menu["request"] == "select-test" and menu["windowId"] == window
+                                assert [i["label"] for i in menu["items"]] == ["First", "Disabled", "Last"], menu
+                                assert not menu["items"][1]["enabled"]
+                                call("Graffitty.contextMenuSelect", dict(windowId=window,
+                                     menu_id=menu["id"], command_id=command))
+                                deadline = time.monotonic() + 5
+                                while call("Runtime.evaluate", {"expression":
+                                        "document.querySelector('select').selectedIndex"}, session)["result"]["value"] != expected:
+                                    assert time.monotonic() < deadline
+                            print("PASS embedded native select menu, disabled item, cancel and selection")
                         if "--context-menu" in sys.argv:
                             call("Runtime.evaluate", {"expression": """
                                 const h = document.querySelector('h1');

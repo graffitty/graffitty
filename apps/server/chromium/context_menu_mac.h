@@ -34,8 +34,19 @@ static NSArray *contextItems(CefRefPtr<CefMenuModel> model, int depth = 0) {
     }
     return items;
 }
+static NSMutableDictionary<NSNumber *, NSString *> *selectRequests;
+static NSMenu *activeSelect;
+static NSInteger selectedOption = -1;
+
 static void chooseContext(uint64_t serial, int command) {
-    if (!contextCallback || serial != contextSerial) return;
+    if (serial != contextSerial) return;
+    if (activeSelect) {
+        selectedOption = command >= 0 && command < activeSelect.numberOfItems &&
+            [activeSelect itemAtIndex:command].enabled ? command : -1;
+        activeSelect = nil;
+        return;
+    }
+    if (!contextCallback) return;
     auto callback = contextCallback;
     contextCallback = nullptr;
     bool allowed = contextCommands.count(command);
@@ -54,6 +65,66 @@ static void chooseContext(uint64_t serial, int command) {
     else callback->Cancel();
 }
 static void trackContextInput(CefRefPtr<CefDictionaryValue> params) {
+    if (params && params->GetString("button") == "left" && params->GetString("type") == "mousePressed" && view().active) {
+        selectRequests[@(view().active->GetIdentifier())] = @(params->GetString("contextMenuRequest").ToString().c_str());
+    }
     if (params && params->GetString("button") == "right" && params->GetString("type") == "mousePressed")
         contextRequest = @(params->GetString("contextMenuRequest").ToString().c_str());
+}
+
+// Chromium's HTML select picker uses an NSPopUpButtonCell anchored to the
+// browser window. For a captured page, present its real menu model at the
+// initiating client's click and return the chosen action to Chromium.
+static void installSelectMenuBridge() {
+    selectRequests = [NSMutableDictionary new];
+    Class cls = NSPopUpButtonCell.class;
+    SEL selector = @selector(performClickWithFrame:inView:);
+    Method method = class_getInstanceMethod(cls, selector);
+    IMP original = method_getImplementation(method);
+    IMP bridge = imp_implementationWithBlock(^(NSPopUpButtonCell *cell, NSRect frame, NSView *anchor) {
+        NSString *request = nil;
+        int windowId = 0;
+        if (!anchor.window.visible && anchor.window && !activeSelect) {
+            for (auto &page : pages) {
+                if (windowFor(page) != anchor.window || viewFor(page)->active != page) continue;
+                request = selectRequests[@(page->GetIdentifier())];
+                windowId = viewFor(page)->id;
+                break;
+            }
+        }
+        if (!request.length || !windowId) {
+            ((void (*)(id, SEL, NSRect, NSView *))original)(cell, selector, frame, anchor);
+            return;
+        }
+        chooseContext(contextSerial, -1);
+        const auto serial = ++contextSerial;
+        contextRequest = request;
+        contextWindow = windowId;
+        NSMenu *menu = cell.menu;
+        NSMutableArray *items = [NSMutableArray new];
+        for (NSInteger index = 0; index < menu.numberOfItems; ++index) {
+            NSMenuItem *item = [menu itemAtIndex:index];
+            if (!item.hidden) [items addObject:@{@"id": @(index), @"type": @(item.separatorItem ? 4 : 3),
+                @"label": item.title, @"enabled": @(item.enabled && !item.separatorItem),
+                @"checked": @(index == cell.indexOfSelectedItem)}];
+        }
+        if (!items.count) return;
+        activeSelect = menu;
+        selectedOption = -1;
+        contextEvent(items);
+        // AppKit's native picker runs a nested loop too. Keep serving the
+        // owning client until selection, dismissal, shutdown or lost focus.
+        NSDate *deadline = [NSDate dateWithTimeIntervalSinceNow:120];
+        while (activeSelect == menu && !ending && !anchor.window.visible &&
+               anchor.superview && deadline.timeIntervalSinceNow > 0) {
+            [[NSRunLoop currentRunLoop] runMode:NSDefaultRunLoopMode
+                beforeDate:[NSDate dateWithTimeIntervalSinceNow:0.02]];
+        }
+        activeSelect = nil;
+        if (serial != contextSerial) return;
+        if (selectedOption >= 0) [menu performActionForItemAtIndex:selectedOption];
+        contextEvent(@[]);
+    });
+    if (!class_addMethod(cls, selector, bridge, method_getTypeEncoding(method)))
+        class_replaceMethod(cls, selector, bridge, method_getTypeEncoding(method));
 }
