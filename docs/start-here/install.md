@@ -95,8 +95,11 @@ process until you close them; new terminals use the new version.
 
 ## iOS
 
-There is no prebuilt iOS download yet. Building it yourself is covered in the
-[iOS development guide](../developers/build-and-run/ios.md).
+1. Download the unsigned IPA from [Releases](https://github.com/graffitty/graffitty/releases).
+2. Connect your iPhone or iPad by USB to a Mac, Linux PC or Windows PC. Trust the computer when prompted, then use [iLoader](https://iloader.app/) to sign and install the IPA with your Apple ID.
+3. On the device, enable **Settings → Privacy & Security → Developer Mode** and trust your Apple ID under **Settings → General → VPN & Device Management**.
+
+With a free Apple ID, re-sign and reinstall every **7 days**.
 
 ## Next step
 
