@@ -604,24 +604,40 @@ impl TabLayout {
         self.physics_anchor = Some(source.into());
         Ok(())
     }
-    /// Absolute placement in workspace coordinates. Tiled main panes take
-    /// their geometry from the tree, so only floating panes accept it.
-    pub fn set_rect(&mut self, key: &str, position: Option<[f32; 2]>, size: Option<[f32; 2]>) -> Result<()> {
+    /// Absolute placement in workspace coordinates.
+    ///
+    /// A Main tile takes its geometry from the tree. Given a position fully
+    /// outside Main View (`area`), it leaves the tiles and is stashed there,
+    /// as a pointer drop outside Main does. Inside Main View it is refused.
+    pub fn set_rect(&mut self, key: &str, position: Option<[f32; 2]>, size: Option<[f32; 2]>, area: Rect) -> Result<()> {
         let tiled = self.enabled;
         let window = self.window_mut(key).ok_or_else(|| anyhow::anyhow!("Unknown pane"))?;
-        ensure!(!(tiled && window.in_main()), "Pane is tiled; use a side (left/right/above/below) or switch the tab to floating");
+        let tile = tiled && window.in_main();
+        let mut rect = window.rect;
         if let Some([x, y]) = position {
             ensure!(x.is_finite() && y.is_finite(), "Position must be finite");
-            window.rect[0] = x;
-            window.rect[1] = y;
+            rect[0] = x;
+            rect[1] = y;
         }
         if let Some([width, height]) = size {
             ensure!(width.is_finite() && height.is_finite() && width >= 40. && height >= 40. && width <= RECT_LIMIT && height <= RECT_LIMIT,
                 "Size must be at least 40 by 40 workspace pixels");
-            window.rect[2] = width;
-            window.rect[3] = height;
+            rect[2] = width;
+            rect[3] = height;
         }
-        window.rect = clamp_window_position(window.rect);
+        let rect = clamp_window_position(rect);
+        if tile {
+            let [x, y, w, h] = area;
+            ensure!(position.is_some() && !overlaps(rect, area),
+                "Pane is a Main View tile. Use --side, or --at X,Y so the whole pane is outside Main View ({x},{y} {w}x{h})");
+        }
+        window.rect = rect;
+        if tile {
+            window.stashed = true;
+            let mut eligible: BTreeSet<_> = self.tiles.as_ref().map(Node::keys).unwrap_or_default().into_iter().collect();
+            eligible.remove(key);
+            self.tiles = self.tiles.take().and_then(|n| n.prune(&eligible));
+        }
         Ok(())
     }
     pub fn inner_area(&self, area: Rect) -> Rect {
@@ -1132,6 +1148,9 @@ pub fn contains(rect: Rect, point: [f32; 2]) -> bool {
         && point[0] < rect[0] + rect[2]
         && point[1] < rect[1] + rect[3]
 }
+fn overlaps(a: Rect, b: Rect) -> bool {
+    a[0] < b[0] + b[2] && b[0] < a[0] + a[2] && a[1] < b[1] + b[3] && b[1] < a[1] + a[3]
+}
 fn surface_key(key: &str) -> bool {
     crate::pane_id::parse(key).is_some()
 }
@@ -1205,9 +1224,9 @@ mod tests {
         tab.move_beside("t2", "t1", Side::Below, AREA).unwrap();
         assert_eq!(tab.window("t2").unwrap().rect, [100., 410., 400., 300.], "moved panes adopt the anchor's size");
         assert_eq!(tab.focused, "t1", "moving does not steal focus");
-        tab.set_rect("t2", Some([5., 6.]), Some([300., 200.])).unwrap();
+        tab.set_rect("t2", Some([5., 6.]), Some([300., 200.]), AREA).unwrap();
         assert_eq!(tab.window("t2").unwrap().rect, [5., 6., 300., 200.]);
-        assert!(tab.set_rect("t2", None, Some([10., 10.])).is_err(), "tiny sizes are rejected");
+        assert!(tab.set_rect("t2", None, Some([10., 10.]), AREA).is_err(), "tiny sizes are rejected");
         assert!(tab.move_beside("t2", "t2", Side::Left, AREA).is_err());
     }
 
@@ -1234,10 +1253,28 @@ mod tests {
         tab.add_beside("t2", "t3", Side::Below, AREA).unwrap();
         let rects = tab.arrange(AREA);
         assert!(rects["t1"][0] < rects["t2"][0] && rects["t2"][0] == rects["t3"][0] && rects["t2"][1] < rects["t3"][1]);
-        assert!(tab.set_rect("t3", Some([0., 0.]), None).is_err());
+        assert!(tab.set_rect("t3", Some([0., 0.]), None, AREA).is_err(), "a spot inside Main View cannot hold a tile");
+        assert!(tab.set_rect("t3", None, Some([300., 200.]), AREA).is_err(), "a tile has no free size");
         tab.move_beside("t3", "t1", Side::Left, AREA).unwrap();
         let rects = tab.arrange(AREA);
         assert!(rects["t3"][0] < rects["t1"][0] && rects["t1"][0] < rects["t2"][0]);
+    }
+
+    #[test]
+    fn set_rect_outside_main_view_stashes_a_tile_for_the_graph() {
+        let mut tab = floating_tab();
+        tab.enabled = true;
+        tab.add_beside("t1", "t2", Side::Right, AREA).unwrap();
+        let edge = AREA[0] + AREA[2];
+        assert!(tab.set_rect("t2", Some([edge - 10., 0.]), Some([400., 300.]), AREA).is_err(), "a pane overlapping Main View stays a tile");
+        tab.set_rect("t2", Some([edge + 40., 0.]), Some([400., 300.]), AREA).unwrap();
+        let moved = tab.window("t2").unwrap();
+        assert!(moved.stashed && !moved.in_main() && moved.rect == [edge + 40., 0., 400., 300.], "the pane waits outside Main View at its spot");
+        assert_eq!(tab.tiles.as_ref().map(Node::keys), Some(vec!["t1".to_string()]), "the user's tiles are unchanged");
+        tab.add_beside("t2", "t3", Side::Right, AREA).unwrap();
+        assert!(tab.window("t3").unwrap().stashed && tab.window("t3").unwrap().rect[0] > edge + 440., "the graph continues beside it");
+        assert_eq!(tab.arrange(AREA).len(), 3);
+        assert_eq!(tab.tiles.as_ref().map(Node::keys), Some(vec!["t1".to_string()]));
     }
 
     #[test]

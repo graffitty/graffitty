@@ -50,6 +50,8 @@ class TerminalStub extends Node:
 func test_arrival_waits_for_claim_topology_resize_and_matching_scene() -> void:
 	var f := fixture("other")
 	f.backend.sync_window_area(f.host)
+	# A transition's first frame reports the switch as input.
+	f.backend.note_activity(f.host)
 	expect(not f.backend.transition_layout_ready(f.host), "An unacknowledged claim cannot supply arrival geometry")
 	f.transport.topology.workspace_state.revision += 1
 	f.backend._workspace_ack({"type": "ack", "request": f.backend.pending_edit, "workspace_state": f.transport.topology.workspace_state})
@@ -138,7 +140,7 @@ func test_attaching_with_fit_claims_the_main_area_for_this_window() -> void:
 
 func test_a_claim_stays_provisional_until_the_topology_names_its_owner() -> void:
 	var f := fixture("other")
-	f.backend.sync_window_area(f.host)
+	f.backend.note_activity(f.host)
 	var state: Dictionary = f.transport.topology.workspace_state
 	state.revision += 1
 	f.transport.topology.workspace_revision = state.revision
@@ -150,7 +152,7 @@ func test_a_claim_stays_provisional_until_the_topology_names_its_owner() -> void
 
 func test_claim_accepts_topology_before_its_batched_acknowledgement() -> void:
 	var f := fixture("other")
-	f.backend.sync_window_area(f.host)
+	f.backend.note_activity(f.host)
 	f.transport.topology.workspace_state.revision += 1
 	topology(f, "self", FIT)
 	expect(not f.backend.transition_layout_ready(f.host), "Topology alone still waits for the claim acknowledgement")
@@ -186,33 +188,46 @@ func test_input_on_this_client_takes_the_area_back() -> void:
 	release(f)
 
 
-func test_resizing_this_window_wins_over_a_client_used_earlier() -> void:
+func test_attaching_or_resizing_never_takes_another_clients_area() -> void:
 	var f := fixture("other")
+	f.backend.sync_window_area(f.host)
+	f.host.workspace_view.fit = Rect2(0, 34, 1440, 866)
+	f.backend.sync_window_area(f.host)
+	expect(f.transport.sent.is_empty(), "An idle window attaching or resizing leaves the area of the client used last")
+	expect(f.backend.content_rect(f.host, FIT) == SERVER, "It letterboxes that area until input here")
+	release(f)
+
+
+func test_resizing_the_owner_refits_its_area() -> void:
+	var f := fixture("self")
+	topology(f, "self", FIT)
 	f.backend.attach_claim = false
 	f.backend.sync_window_area(f.host)
 	f.host.workspace_view.fit = Rect2(0, 34, 1440, 866)
 	f.backend.sync_window_area(f.host)
-	expect(claims(f).size() == 1, "Resizing this window is the latest activity, even while another client holds the area")
+	expect(claims(f).size() == 1, "Resizing the owning window refits its area")
 	if claims(f).size() == 1:
 		expect(rect_of(claims(f)[0].edit.settings.area) == Rect2(0, 34, 1440, 866), "The claim carries the new window size")
 	release(f)
 
 
 func test_the_soft_keyboard_reclaims_the_available_area() -> void:
-	var f := fixture("other")
+	var f := fixture("self")
+	topology(f, "self", FIT)
 	f.backend.attach_claim = false
 	f.backend.sync_window_area(f.host)
 	f.host.workspace_view.visible_area = Rect2(0, 34, 1280, 400)
 	f.host.workspace_view.fit = f.host.workspace_view.visible_area
 	f.backend.sync_window_area(f.host)
-	expect(claims(f).size() == 1, "Opening the keyboard claims the reduced usable area")
-	expect(rect_of(claims(f)[0].edit.settings.area) == Rect2(0, 34, 1280, 400), "The keyboard claim carries the area above the IME")
+	expect(claims(f).size() == 1, "Opening the keyboard on the owner claims the reduced usable area")
+	if claims(f).size() == 1:
+		expect(rect_of(claims(f)[0].edit.settings.area) == Rect2(0, 34, 1280, 400), "The keyboard claim carries the area above the IME")
 	release(f)
 
 
 func test_manager_claims_keep_each_servers_revision_and_acknowledgement_separate() -> void:
-	var first := fixture("other")
-	var second := fixture("other")
+	var first := fixture("none")
+	var second := fixture("none")
 	# Two connections can use the same request number while their workspace
 	# revisions and mapped tab IDs are unrelated.
 	second.transport.topology.workspace_revision = 73

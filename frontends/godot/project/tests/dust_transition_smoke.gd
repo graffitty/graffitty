@@ -39,29 +39,30 @@ func play() -> void:
    world.fx_cfg.set_option("scene.session_switch", "fly_ratio_sparse", 0.5 if share == 0.1 else share)
    world.fx_cfg.set_option("scene.session_switch", "fly_ratio_dense", dense_ratio)
    var source: Node = host.active_terminal()
-   var source_cell: Vector2 = source.get_cell_size()
    var source_count := preload("res://scenes/DustPieces.gd").cells(source, 0).size()
    var source_ratio: float = world.dust_flying_ratio(source)
    check(is_equal_approx(source_ratio, dense_ratio), "Dense tab reaches its configured flying ratio")
    var label: String = ("3d" if path == "" else "2d") + "-" + str(share)
    check(await marked_pixels(label + "-live") > 1000, label + ": dense source visible")
    await switch_and_freeze(1)
-   var layers: Array = world.tab_fx_out.filter(func(layer): return layer.has_meta("dust")) if path == "" else world._transition_out.glyphs.filter(func(layer): return layer.has_meta("dust"))
+   # Both renderers fly CellShatter pieces; Flat 2D keeps them in its 3D overlay.
+   var flying: Array = world.tab_fx_out if path == "" else world._transition_out.glyphs
+   var layers: Array = flying.filter(func(layer): return layer.has_meta("dust"))
    check(layers.is_empty() == (share == 1.0), label + ": creates dust only below a full flying share")
    for layer in layers:
-    var mat: ShaderMaterial = layer._material() if path == "" else layer.material
+    var mat: ShaderMaterial = layer._material()
     var count: int = mat.get_shader_parameter("dust_count")
     check(count > 1000 and count <= 32768, label + ": thousands of actual stroke fragments")
     check(layer.multimesh.instance_count == count, label + ": every instance is a stroke fragment")
-   var letters: Array = world.tab_fx_out.filter(func(layer): return layer.get_meta("glyph_layer", false) and not layer.has_meta("dust")) if path == "" else world._transition_out.glyphs.filter(func(layer): return not layer.has_meta("dust"))
+   var letters: Array = flying.filter(func(layer): return layer.get_meta("glyph_layer", false) and not layer.has_meta("dust"))
    check(letters.is_empty() == (share == 0.0), label + ": zero flying share creates no whole-letter layers")
    var whole_characters := 0
    for layer in letters:
-    var mat: ShaderMaterial = layer._material() if path == "" else layer.material
-    check(mat.get_shader_parameter("chunked_flight" if path == "" else "glyph_layer"), label + ": flying letters use the original scatter shader path")
+    var mat: ShaderMaterial = layer._material()
+    check(mat.get_shader_parameter("chunked_flight"), label + ": flying letters use the original scatter shader path")
     for index in layer.multimesh.instance_count:
      var uv: Color = layer.multimesh.get_instance_custom_data(index)
-     whole_characters += 1 + floori(uv.b) if path == "" else roundi(uv.b * float(mat.get_shader_parameter("texture_size").x) / source_cell.x)
+     whole_characters += 1 + floori(uv.b)
     check(layer.multimesh.instance_count > 8, label + ": dense text retains its proportional whole-letter share")
    check(whole_characters == roundi(source_count * source_ratio), label + ": rendered whole-character count follows density (%d/%d)" % [whole_characters, source_count])
    for phase in [0.0, 0.25, 0.5, 1.0]:

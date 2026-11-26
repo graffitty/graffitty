@@ -310,7 +310,7 @@ pub enum WorkspaceCommand {
     Layout(Layout),
     /// Call a versioned workspace API method with JSON parameters.
     Rpc(Rpc),
-    /// Read terminal text or send virtual keyboard input in this workspace.
+    /// Read terminal text or send virtual keyboard input to any terminal on this server.
     Terminal(Terminal),
     /// Upload a file to a terminal's machine; print its destination path.
     Put(crate::put::Options),
@@ -738,7 +738,7 @@ pub struct Filetree {
 }
 #[derive(Args)]
 pub struct ListPanes {
-    /// Attached server alias/ or alias/session; omit for this workspace.
+    /// A session (name or $N), attached server alias/ or alias/session; omit for every session on this server.
     #[usage(short = 't', long)]
     target: Option<String>,
 }
@@ -797,7 +797,7 @@ pub enum EffectsCommand {
 }
 #[derive(Args)]
 pub struct EffectsHold {
-    /// Explicit pane target (tN or cN or :tab.pane, both numbered from 1) in this workspace.
+    /// Explicit pane target: tN in any session, session:tab.pane, or :tab.pane in this session (numbered from 1).
     #[usage(long)]
     target: Option<String>,
     /// Hold id; a hold with the same id replaces the previous one.
@@ -817,7 +817,7 @@ pub struct EffectsHold {
 }
 #[derive(Args)]
 pub struct EffectsRelease {
-    /// Explicit pane target (tN or cN or :tab.pane, both numbered from 1) in this workspace.
+    /// Explicit pane target: tN in any session, session:tab.pane, or :tab.pane in this session (numbered from 1).
     #[usage(long)]
     target: Option<String>,
     /// Hold id; omit to release every hold of the pane.
@@ -828,7 +828,7 @@ pub struct EffectsRelease {
 }
 #[derive(Args)]
 pub struct EffectsList {
-    /// Explicit pane target (tN or cN or :tab.pane, both numbered from 1) in this workspace.
+    /// Explicit pane target: tN in any session, session:tab.pane, or :tab.pane in this session (numbered from 1).
     #[usage(long)]
     target: Option<String>,
 }
@@ -1139,10 +1139,11 @@ pub struct Placement {
     /// The pane a side refers to (tN or cN or :tab.pane); omitted: this terminal.
     #[usage(long)]
     of: Option<String>,
-    /// Absolute position "X,Y" in workspace pixels (floating tabs only).
+    /// Absolute position "X,Y" in workspace pixels. In a tiled tab, the whole
+    /// pane must be outside Main View; it waits there as a graph node.
     #[usage(long)]
     at: Option<String>,
-    /// Size "WIDTHxHEIGHT" in workspace pixels (floating tabs only).
+    /// Size "WIDTHxHEIGHT" in workspace pixels (not for Main View tiles).
     #[usage(long)]
     size: Option<String>,
 }

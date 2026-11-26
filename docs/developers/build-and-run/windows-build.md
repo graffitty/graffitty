@@ -4,7 +4,8 @@
 
 - x64 Windows.
 - MSVC C++ build tools and a Windows SDK.
-- Rust 1.96.0 or later, Zig 0.17.1 on PATH, Godot 4.7.2.
+- Rust 1.96.0 or later, Zig 0.17.1 on PATH, Godot 4.7.2 for development.
+- For release packages: the Godot engine pinned in `packaging/godot-engines.toml` (4.8-beta5) with its export templates. `prepare_bundle.py` refuses another engine; pass `--godot` or set `GRAFFITTY_GODOT`.
 - A normal, **non-elevated desktop terminal launched by Explorer** for GUI and live-agent tests.
 
 SSH service launches do not reproduce desktop input or GPU behavior. A working terminal or agent badge alone does not verify Ctrl+C or graph delivery.

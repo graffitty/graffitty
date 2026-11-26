@@ -5,8 +5,8 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [v0.0.6] - 2026-11-25
-### :bug: Bug Fixes
-- keep terminals running through Windows updates and remember the sidebar width ([#7](https://github.com/graffitty/graffitty/pull/7)).
+### :sparkles: New Features
+- control terminals in every session, fly Flat 2D letters in 3D and fix IME input ([#7](https://github.com/graffitty/graffitty/pull/7)).
 
 ## [v0.0.5] - 2026-11-25
 ### :sparkles: New Features

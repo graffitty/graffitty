@@ -270,5 +270,31 @@ class NativeTasksTests(unittest.TestCase):
             self.assertEqual(tasks.main(), 23)
 
 
+class GodotReleaseTests(unittest.TestCase):
+    def test_each_package_names_its_engine(self):
+        pin = tomllib.loads((tasks.ROOT / "mise.toml").read_text())["tools"]["godot"]
+        engines = tomllib.loads((tasks.ROOT / "packaging/godot-engines.toml").read_text())
+        self.assertEqual(tasks.godot_release("linux"), engines["linux"]["version"])
+        self.assertEqual(tasks.godot_release("windows"), engines["windows"]["version"])
+        for platform in (None, "macos", "ios", "android"):
+            self.assertEqual(tasks.godot_release(platform), pin)
+
+    def test_a_different_engine_is_rejected(self):
+        def probe(stdout, returncode=0):
+            return subprocess.CompletedProcess(["godot", "--version"], returncode, stdout, "")
+
+        with patch.object(tasks.subprocess, "run", return_value=probe("4.7.2.stable.official.ed1daf0bf\n")):
+            with patch.object(tasks, "godot_release", return_value="4.7.2-stable"):
+                self.assertEqual(tasks.require_godot("godot"), "4.7.2.stable.official.ed1daf0bf")
+            with patch.object(tasks, "godot_release", return_value="4.8-beta5"):
+                with self.assertRaises(SystemExit):
+                    tasks.require_godot("godot", "windows")
+        # A failed probe is no evidence, whatever it printed.
+        with patch.object(tasks.subprocess, "run", return_value=probe("4.8.beta5.official.a661dfdbc\n", 1)):
+            with patch.object(tasks, "godot_release", return_value="4.8-beta5"):
+                with self.assertRaises(SystemExit):
+                    tasks.require_godot("godot", "windows")
+
+
 if __name__ == "__main__":
     unittest.main()

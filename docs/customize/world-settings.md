@@ -93,4 +93,6 @@ effect = "fly_away" # Or "none", "fly_away_and_in".
 
 **Fly away** reveals the destination while the old view disperses. **Fly away and in** also animates the arriving letters.
 
+Letters blow left when you switch to a later session in the session list, and right when you switch to an earlier one.
+
 See [letter and dust settings](session-flight-settings.md).

@@ -1097,6 +1097,15 @@ impl Server {
             Ok(api::Reply::Ready(json!({"result":self.settings.navigator})))
         } else if method.starts_with("dictation.") {
             self.dictation.request(&self.settings.dictation, id, method, params, None)
+        } else if method == "pane.list" {
+            // Every session on this server, not only the caller's window.
+            let object = params.as_object().ok_or_else(|| api::error("invalid_params", "Expected object params"))?;
+            if object.keys().any(|key| key != "target") {
+                return Err(api::error("invalid_params", "pane.list accepts only target"));
+            }
+            let target = params.get("target").filter(|v| !v.is_null()).map(|v| v.as_str()
+                .ok_or_else(|| api::error("invalid_target", "target must be a string"))).transpose()?;
+            controller::list_panes(self, target).map(|result| api::Reply::Ready(json!({"result":result})))
         } else if terminal_api::handles(method) {
             terminal_api::dispatch(self, id, method, params)
         } else if effects_api::handles(method) {

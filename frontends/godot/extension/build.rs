@@ -39,6 +39,7 @@ fn main() {
         cc::Build::new()
             .file("src/ios_renderer.m")
             .file("src/ios_password_keyboard.m")
+            .file("src/ios_terminal_ime.m")
             .file("src/clipboard_ios.m")
             .flag("-fobjc-arc")
             .flag("-Werror=unguarded-availability-new")
@@ -46,6 +47,9 @@ fn main() {
         println!("cargo:rustc-link-lib=framework=Metal");
         println!("cargo:rerun-if-changed=src/ios_renderer.m");
         println!("cargo:rerun-if-changed=src/ios_password_keyboard.m");
+        println!("cargo:rerun-if-changed=src/ios_terminal_ime.m");
+        // GCKeyboard tells whether a hardware keyboard is attached.
+        println!("cargo:rustc-link-lib=framework=GameController");
         println!("cargo:rustc-link-lib=framework=UIKit");
         println!("cargo:rerun-if-changed=src/clipboard_ios.m");
     }

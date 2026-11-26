@@ -7,7 +7,8 @@ gft pane list
 gft pane select -t t3
 ```
 
-Replace `t3` with a returned ID. Selection reveals hidden panes and switches
+Replace `t3` with a returned ID from your own window; the listing also shows
+other sessions' panes. Selection reveals hidden panes and switches
 tabs within the calling window. With no flags, the calling terminal is selected.
 
 ## Choose a neighbor

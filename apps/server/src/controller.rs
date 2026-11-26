@@ -31,38 +31,7 @@ pub fn dispatch(server: &mut Server, value: &Value) -> Result<api::Reply, Error>
                 "pane.list accepts only target",
             ));
         }
-        let selected = target
-            .filter(|s| !s.is_empty())
-            .map(|s| server.workspaces.resolve(s))
-            .transpose()
-            .map_err(|e| api::error("invalid_target", &e.to_string()))?;
-        let keys: Vec<_> = server
-            .workspaces
-            .iter()
-            .filter(|k| selected.as_ref().is_none_or(|s| s == *k))
-            .cloned()
-            .collect();
-        let mut panes = Vec::new();
-        for key in keys {
-            workspace::sync(server, &key)?;
-            let state = server.workspace_state.snapshot(&key);
-            let session = server.workspaces.id(&key);
-            for (tab_index, tab) in state.order.iter().enumerate() {
-                for (pane_index, pane) in state.layout.tabs[tab].numbered_keys().iter().enumerate()
-                {
-                    let id = graffitty_workspace_core::pane_id::parse(pane);
-                    let kind = if id.is_some_and(|id| server.sessions.contains_key(&id)) {
-                        "terminal"
-                    } else {
-                        "chromium"
-                    };
-                    panes.push(json!({"id":pane,"pane":pane,"type":kind,"session":session,
-                        "session_name":server.workspaces.info(&key).name,"tab":format!("@{tab}"),
-                        "target":pane,"position_target":format!("{session}:{}.{}", tab_index+1, pane_index+1)}));
-                }
-            }
-        }
-        return Ok(api::Reply::Ready(json!({"result":{"panes":panes}})));
+        return Ok(api::Reply::Ready(json!({"result":list_panes(server, target)?})));
     }
     let target = target
         .filter(|s| !s.is_empty())
@@ -101,6 +70,44 @@ pub fn dispatch(server: &mut Server, value: &Value) -> Result<api::Reply, Error>
         return Err(api::error("invalid_target", "Unknown terminal pane"));
     }
     dispatch_target(id, request, |id, method, params| server.request(id, method, params))
+}
+
+/// Every pane on this server, or one session's (`target` = name or `$N`).
+///
+/// Pane and viewer capabilities share this listing.
+pub fn list_panes(server: &mut Server, target: Option<&str>) -> Result<Value, Error> {
+    let selected = target
+        .filter(|s| !s.is_empty())
+        .map(|s| server.workspaces.resolve(s))
+        .transpose()
+        .map_err(|e| api::error("invalid_target", &e.to_string()))?;
+    let keys: Vec<_> = server
+        .workspaces
+        .iter()
+        .filter(|k| selected.as_ref().is_none_or(|s| s == *k))
+        .cloned()
+        .collect();
+    let mut panes = Vec::new();
+    for key in keys {
+        workspace::sync(server, &key)?;
+        let state = server.workspace_state.snapshot(&key);
+        let session = server.workspaces.id(&key);
+        for (tab_index, tab) in state.order.iter().enumerate() {
+            for (pane_index, pane) in state.layout.tabs[tab].numbered_keys().iter().enumerate()
+            {
+                let id = graffitty_workspace_core::pane_id::parse(pane);
+                let kind = if id.is_some_and(|id| server.sessions.contains_key(&id)) {
+                    "terminal"
+                } else {
+                    "chromium"
+                };
+                panes.push(json!({"id":pane,"pane":pane,"type":kind,"session":session,
+                    "session_name":server.workspaces.info(&key).name,"tab":format!("@{tab}"),
+                    "target":pane,"position_target":format!("{session}:{}.{}", tab_index+1, pane_index+1)}));
+            }
+        }
+    }
+    Ok(json!({"panes":panes}))
 }
 
 fn dispatch_target(

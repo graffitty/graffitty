@@ -14,7 +14,7 @@ import zipfile
 
 ROOT = Path(__file__).resolve().parents[2]
 sys.path.insert(0, str(ROOT / "tools"))
-from mise_tasks import godot  # noqa: E402
+from mise_tasks import godot, require_godot  # noqa: E402
 from check_godot import failed as godot_failed  # noqa: E402
 
 # Windows' inbox ConPTY re-renders output and drops what it does not handle,
@@ -81,6 +81,8 @@ def main() -> None:
     parser.add_argument("--godot")
     args = parser.parse_args()
     launch = args.godot or godot()
+    # packaging/godot-engines.toml: Windows ships a newer engine than mise.toml.
+    engine = require_godot(launch, "windows")
     source = ROOT / "frontends/godot/project"
     chromium = ROOT / "dist/chromium-windows"
     for path in [
@@ -101,10 +103,13 @@ def main() -> None:
     stage = ROOT / "build/windows-installer/project"
     output = ROOT / "dist/windows"
     # Both directories are generated outputs owned by this packaging task.
+    # The import cache belongs to the engine that wrote it.
+    marker = stage / ".godot/graffitty-engine"
+    keep_cache = marker.is_file() and marker.read_text() == engine
     for directory in (stage, output):
         if directory.exists():
             for child in directory.iterdir():
-                if directory == stage and child.name == ".godot":
+                if directory == stage and child.name == ".godot" and keep_cache:
                     continue  # Import cache is keyed by the current source files.
                 if child.is_dir() and not child.is_symlink():
                     shutil.rmtree(child)
@@ -130,6 +135,7 @@ def main() -> None:
     (stage / "project.godot").write_text(project)
     shutil.copy2(Path(__file__).with_name("export_presets.cfg"), stage)
     run_godot(launch, "--headless", "--editor", "--path", stage, "--import")
+    marker.write_text(engine)
     run_godot(
         launch,
         "--headless",

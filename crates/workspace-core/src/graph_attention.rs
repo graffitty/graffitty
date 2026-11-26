@@ -108,6 +108,9 @@ pub struct AttentionState {
     transport: Option<String>,
     status_source: Option<String>,
     timed_out_status: Option<String>,
+    /// When each status began. A restart keeps "busy for 48m", not "1m".
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    status_history: Vec<Value>,
 }
 
 impl Graph {
@@ -124,6 +127,7 @@ impl Graph {
             integrated: node["integrated"].as_bool(), transport: text("transport"),
             status_source: text("status_source"),
             timed_out_status: self.timed_out_status.get(&key).and_then(Value::as_str).map(str::to_owned),
+            status_history: node["status_history"].as_array().cloned().unwrap_or_default(),
         })
     }
 
@@ -245,6 +249,32 @@ mod tests {
         assert!(shell > revision(&original));
         adopted.restore_attention_state(1, &saved).unwrap();
         assert!(revision(&adopted) > shell);
+    }
+
+    #[test]
+    fn owner_adoption_keeps_when_the_current_status_began() {
+        let mut original = graph();
+        hook(&mut original, "UserPromptSubmit");
+        let began = "2026-11-26T05:34:00.000+00:00";
+        original.nodes.get_mut("t1").unwrap()["status_history"].as_array_mut().unwrap().last_mut().unwrap()["at"] = json!(began);
+        let saved: AttentionState = serde_json::from_value(serde_json::to_value(original.attention_state(1).unwrap()).unwrap()).unwrap();
+        let mut adopted = Graph::default();
+        adopted.add(1, "Adopted".into());
+        adopted.restore_attention_state(1, &saved).unwrap();
+        hook(&mut adopted, "PreToolUse");
+        let history = adopted.nodes["t1"]["status_history"].as_array().unwrap();
+        assert_eq!((history.last().unwrap()["status"].as_str(), history.last().unwrap()["at"].as_str()), (Some("busy"), Some(began)),
+            "a restart does not restart the busy timer: {history:?}");
+        let legacy: AttentionState = serde_json::from_value({
+            let mut value = serde_json::to_value(&saved).unwrap();
+            value.as_object_mut().unwrap().remove("status_history");
+            value
+        }).unwrap();
+        let mut fresh = Graph::default();
+        fresh.add(1, "Adopted".into());
+        let before = fresh.nodes["t1"]["status_history"].clone();
+        fresh.restore_attention_state(1, &legacy).unwrap();
+        assert_eq!(fresh.nodes["t1"]["status_history"], before, "a state saved without history leaves the node's own");
     }
 
     #[test]

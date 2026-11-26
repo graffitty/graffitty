@@ -224,6 +224,7 @@ func _ready() -> void:
 		terminal_ime = preload("res://scenes/input/AndroidTerminalIme.gd").new()
 		terminal_ime.manager = self
 		add_child(terminal_ime)
+	if OS.has_feature("android") or OS.has_feature("ios"):
 		keyboard_insets = preload("res://scenes/input/AndroidKeyboardInsets.gd").new()
 		keyboard_insets.manager = self
 		add_child(keyboard_insets)

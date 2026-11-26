@@ -15,7 +15,6 @@ pub fn handles(method: &str) -> bool {
         "navigator.focus"
             | "identify"
             | "window.set_title"
-            | "pane.list"
             | "pane.inspect"
             | "surface.list"
             | "chromium.list"
@@ -305,7 +304,7 @@ mod capture_tests{
     }
     #[test]
     fn terminal_commands_never_depend_on_presentation_ownership() {
-        for method in ["internal.terminal.demo_type", "terminal.press", "terminal.get_text", "terminal.pid"] {
+        for method in ["internal.terminal.demo_type", "terminal.press", "terminal.get_text", "terminal.pid", "pane.list", "pane.send"] {
             assert!(!super::handles_request(&serde_json::json!({"method":method,"params":{}})));
         }
     }

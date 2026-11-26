@@ -77,6 +77,8 @@ var _raster_zoom := 1.0
 var _pending_raster_zoom := 0.0
 var _pending_raster_region := Rect2()
 var _raster_settle_timer := Timer.new()
+## The frame that already spent its one extra camera-driven presentation flush.
+var _camera_reflush_frame := -1
 var drop_hint := Panel.new()
 var hint_text := Label.new()
 var _refreshing := false
@@ -1026,11 +1028,11 @@ func _update_compact_headers(for_transition := false) -> void:
 		if title.get_meta("navigation", []) != navigation:
 			title.scale = Vector2.ONE * host.world.title_navigation_scale(pane.position)
 			title.set_meta("navigation", navigation)
-		if pane.touch_header:
-			pane.header.scale = title.scale
-			var header_width := maxf(0, pane.size.x - 16) / title.scale.x
-			pane.header.set_available_width(header_width)
-			pane.header.size = Vector2(header_width, 30)
+		# Header actions share the title's readable scale.
+		pane.header.scale = title.scale
+		var header_width := maxf(0, pane.size.x - 16) / title.scale.x
+		pane.header.set_available_width(header_width)
+		pane.header.size = Vector2(header_width, 30)
 		var title_height := title.get_theme_font("font").get_height(title.get_theme_font_size("font_size"))
 		pane.set_compact_header(compact, title_height * title.scale.y)
 		var handle_rect: Rect2 = pane.title_handle_rect()
@@ -1046,7 +1048,7 @@ func _update_compact_headers(for_transition := false) -> void:
 		var inset := 0.0
 		if title.visible and host.is_terminal_pane(key):
 			inset = maxf(0.0, title.position.y + title.size.y * title.scale.y + title.scale.y - pane.body.position.y)
-		if pane.touch_header and not compact:
+		if not compact:
 			inset = maxf(inset, pane.header.size.y * pane.header.scale.y - pane.body.position.y)
 		pane.set_title_inset(inset)
 	_update_status_strips(for_transition)
@@ -1359,7 +1361,9 @@ func _toggle_fit_frame(key: String, rect: Rect2, target: Dictionary, fallback: D
 ## Keyboard focus can reach every shown pane, including outside Main View.
 ## At Main View's zoom, panes inside its bounds always use the exact Main frame.
 ## Other zoom levels retain the cursor/visibility-based reveal policy.
-func reveal_navigation_target(key: String) -> void:
+## `instant` frames the pane without animating, for a session arrival whose
+## flight should land directly on it.
+func reveal_navigation_target(key: String, instant := false) -> void:
 	if not pane_rects.has(key): return
 	# A second focus change supersedes an unfinished reveal, even if its new
 	# target is already readable at the current animation sample.
@@ -1372,7 +1376,8 @@ func reveal_navigation_target(key: String) -> void:
 		if not overview: return # Already Main; leave typing effects alone.
 		_fit_return = {}
 		_cancel_main_magnet()
-		_animate_inspection(main.center, main.zoom, true)
+		if instant: _jump_inspection(main.center, main.zoom, true)
+		else: _animate_inspection(main.center, main.zoom, true)
 		return
 	var center := canvas_point_at(size * 0.5)
 	var zoom: float = maxf((host.world._navigation_camera_zoom() if uses_navigation_camera() else host.world.fx_cam_zoom * host.world.gesture_zoom) if host.world != null else 1.0, 0.01)
@@ -1401,7 +1406,8 @@ func reveal_navigation_target(key: String) -> void:
 	overview = true
 	navigation_center = stable.center
 	navigation_zoom = stable_zoom
-	_animate_inspection(navigation_center + delta, navigation_zoom, false)
+	if instant: _jump_inspection(navigation_center + delta, navigation_zoom, false)
+	else: _animate_inspection(navigation_center + delta, navigation_zoom, false)
 
 
 func inspect_pane(key: String) -> void:
@@ -1440,8 +1446,10 @@ func pan_after_close(key: String, origin: Dictionary) -> void:
 		navigation_zoom = origin.zoom
 	else:
 		_begin_navigation()
-	var target: Vector2 = pane_rects[key].get_center()
-	_animate_inspection(target, navigation_zoom, false)
+	# From the view the close left, frame the survivor exactly as keyboard
+	# focus does: the smallest pan that shows it and its cursor inside the
+	# visible region, clear of side panels.
+	reveal_navigation_target(key)
 
 
 static func fit_frame(rect: Rect2, visible: Rect2, viewport_size: Vector2, coverage: float) -> Dictionary:
@@ -1476,6 +1484,13 @@ func _inspection_target(key: String, coverage := 0.9) -> Dictionary:
 	var target := fit_frame(main_area if main_view else rect, visible, size, 1.0 if main_view else coverage)
 	target.main = main_view
 	return target
+
+
+func _jump_inspection(target_center: Vector2, target_zoom: float, main_view: bool) -> void:
+	navigation_center = target_center
+	navigation_zoom = target_zoom
+	_apply_navigation()
+	_finish_inspection(main_view)
 
 
 func _animate_inspection(target_center: Vector2, target_zoom: float, main_view: bool) -> void:
@@ -1532,17 +1547,28 @@ func _disconnect_projection_world() -> void:
 func _projection_changed() -> void:
 	_raster_dirty = true
 	_links_dirty = true
-	_invalidate_headers()
+	_invalidate_headers(true)
 
 
-func _invalidate_headers() -> void:
+## `camera`: the displayed projection moved. Layout that re-invalidates during a
+## flush waits for the next frame. A camera move after this frame's flush (wheel
+## easing runs in _process) flushes once more before the draw, so graph ports,
+## titles and status strips stay on their panes instead of trailing a frame.
+func _invalidate_headers(camera := false) -> void:
 	_headers_dirty = true
-	if _presentation_pending or not is_inside_tree():
+	if not is_inside_tree():
 		return
+	var frame := Engine.get_process_frames()
+	var reflush := camera and _last_presentation_frame == frame and _camera_reflush_frame != frame
+	var waiting := get_tree().process_frame.is_connected(_flush_presentation_updates)
+	if _presentation_pending and not (reflush and waiting):
+		return
+	if waiting: get_tree().process_frame.disconnect(_flush_presentation_updates)
 	_presentation_pending = true
-	if _last_presentation_frame == Engine.get_process_frames():
+	if _last_presentation_frame == frame and not reflush:
 		get_tree().process_frame.connect(_flush_presentation_updates, CONNECT_ONE_SHOT)
 	else:
+		if reflush: _camera_reflush_frame = frame
 		_flush_presentation_updates.call_deferred()
 
 

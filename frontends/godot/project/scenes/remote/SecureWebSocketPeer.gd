@@ -28,8 +28,14 @@ func secure(value: RefCounted) -> void:
 	channel = value
 
 
+var _probe: bool = ClassDB.class_exists(&"SocketProbe") and ClassDB.class_call_static(&"SocketProbe", &"enabled")
+var _probed_state := -1
+
+
 func connect_to_url(url: String) -> int:
-	return peer.connect_to_url(url)
+	var err := peer.connect_to_url(url)
+	if _probe: ClassDB.class_call_static(&"SocketProbe", &"report", "connect %s -> %d" % [url.get_slice("?", 0), err])
+	return err
 
 
 func poll() -> void:
@@ -44,6 +50,9 @@ func poll() -> void:
 	else:
 		peer.poll()
 	_last_poll_msec = now
+	if _probe and peer.get_ready_state() != _probed_state:
+		_probed_state = peer.get_ready_state()
+		ClassDB.class_call_static(&"SocketProbe", &"report", "state %d close=%d %s" % [_probed_state, peer.get_close_code(), peer.get_close_reason()])
 
 
 func get_ready_state() -> int:

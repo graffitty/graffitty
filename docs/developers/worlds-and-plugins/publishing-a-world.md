@@ -17,7 +17,9 @@ Users need Graffitty; they do not need Godot or Blender.
      --export-pack "World Pack" /path/to/output/my-world.pck
    ```
 
-Use the same Godot engine version as the host. The shared terminal kit ships
+Export with Godot 4.7.2, the oldest engine a Graffitty package uses. Linux and
+Windows packages run Godot 4.8, which loads 4.7 packs; macOS, Android and iOS
+run 4.7.2, which rejects packs written by 4.8. The shared terminal kit ships
 with Graffitty; do not replace host resources in your pack.
 
 ## Add the manifest

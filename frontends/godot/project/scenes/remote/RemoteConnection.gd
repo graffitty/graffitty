@@ -56,6 +56,9 @@ var socket: RefCounted
 ## A request belongs to one transport, even if reconnect finishes before it resumes.
 var transport_generation := 0
 var workspace := ""
+## Flight side of the last session switch, by server order: -1 for an
+## earlier session (flies right), 1 for a later or unlisted one (flies left).
+var session_switch_side := 1.0
 ## Device-local view preference, never part of server authentication.
 var preferred_session := ""
 ## Whether the last reported session switch only returned this connection to
@@ -654,6 +657,10 @@ func _receive(message: Dictionary) -> void:
 			session_switching.emit()
 			terminal_themes.clear()
 			if not workspace.is_empty() and workspace != str(message.workspace): last_session = workspace
+			var order: Array = available_sessions.map(func(session): return str(session.id))
+			var leaving := order.find(workspace)
+			var arriving := order.find(str(message.workspace))
+			session_switch_side = -1.0 if leaving >= 0 and arriving >= 0 and arriving < leaving else 1.0
 			session_reattached = workspace.is_empty() and str(message.workspace) == _shown_session
 			workspace = str(message.workspace)
 			_shown_session = workspace

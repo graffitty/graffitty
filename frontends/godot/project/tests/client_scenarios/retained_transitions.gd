@@ -79,6 +79,10 @@ func close_with_state(path: String, effect: String) -> void:
 			if not is_instance_valid(layer): continue
 			for capture in layer.terminal_captures.values():
 				if capture not in captures: captures.append(capture)
+			# Flying letters keep their own captures in the 3D overlay.
+			for piece in layer.glyphs:
+				for capture in piece._captures:
+					if capture not in captures: captures.append(capture)
 	else:
 		var layers: Array = world.tab_fx_out + world.tab_fx_stale.map(func(entry): return entry.layer)
 		for layer in layers:

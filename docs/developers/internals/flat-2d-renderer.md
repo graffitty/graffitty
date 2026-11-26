@@ -23,16 +23,69 @@ images, graph links, and input controls. It retains the shared host/session help
 their inherited Node3D root is only an API container, with no 3D render camera,
 surfaces, lights, or scenery passes. The world viewport disables 3D.
 
+### 3D flight overlay
+
+Flying letters and dust render in real 3D, the same pieces Flat 3D flies; everything
+else stays 2D. `FlightOverlay3D.gd` owns a transparent window-sized 3D viewport that
+exists only while a transition holds it, composited over the workspace canvas inside
+its clip. Pane backings, chrome and graph wires remain 2D panels.
+
+- Resting letters (first and last frames) draw as a 2D panel in their own pane, so
+  later panes still cover them. Once they move they draw in the overlay, over every
+  pane, as in Flat 3D.
+- Each frame, a piece's plane follows its pane's 2D transform; the overlay camera
+  never moves.
+- The world warms each piece mesh variant once when it opens, so the first switch
+  compiles nothing.
+
 Camera2D's inverse transform maps pointer input and IME placement.
 
 ### Supported effects
 
 Compatible effects remain: typing zoom, cursor following, pan, drift, shake,
-ripple/splash, cursor trails and particle presets. Tab switching uses
-batched 2D scatter and eased camera movement. These particle/scatter
-variants are planar; depth travel, camera tilt, saddle curvature, lens depth of
-field, depth tint, and lifted image planes are omitted. Zoom and workspace
-navigation retain their existing configuration and gestures.
+ripple/splash, cursor trails and particle presets. Tab and session switches fly
+their letters and dust in the 3D overlay, with eased camera movement. Typing
+particles stay planar; camera tilt, saddle curvature, lens depth of field, depth
+tint, and lifted image planes are omitted. Zoom and workspace navigation retain
+their existing configuration and gestures.
+
+## Recorded flight comparison — 2026-11-26
+
+**Result:** the 3D overlay costs the same frame time as the earlier 2D scatter and
+adds 60–95 MiB of video memory while a flight runs (freed afterwards). No shader
+compilation stall appears in the first frames.
+
+Godot 4.7.2, Metal Forward+, Apple M1 Max, 1240×2038 window, VSync off. The same
+benchmark ran on the 2D-only commit and on the overlay; 180 fixed poses per flight,
+two rounds each. Medians of per-frame time:
+
+| Panes / flight | 2D scatter | 3D overlay | Extra video memory |
+| --- | ---: | ---: | ---: |
+| 1 / fly away | 3.11–3.14 ms | 3.11–3.27 ms | +90–95 MiB |
+| 1 / fly away and in | 3.50 ms | 3.36–3.45 ms | +75 MiB |
+| 4 / fly away | 3.06–3.09 ms | 2.99–3.07 ms | +90 MiB |
+| 4 / fly away and in | 3.22–3.34 ms | 3.08–3.13 ms | +60 MiB |
+
+<details><summary>Method and limits</summary>
+
+Idle frames measured 2.1–2.4 ms median with an 11–12 ms p95 from other desktop load,
+so differences under about 0.5 ms are noise. Metal returned no GPU timestamps; these
+are CPU frame intervals. Build time stayed within the same 16–62 ms range.
+
+Memory is almost all the overlay's own Forward+ render targets at the window's
+native pixels (2.5 MP here): 70 MiB empty with its 8-bit sRGB output, 80 MiB with a
+16-bit output, 132 MiB with 2× MSAA. Terminal captures are not duplicated. The
+memory column comes from the 8-bit build, measured during a parallel native build,
+so its frame times are not used; the frame times above come from the 16-bit build
+on a quiet desktop. The output format does not change the 3D work per frame.
+
+```sh
+godot --path frontends/godot/project --script tools/benchmark_flat_2d_flight.gd -- --no-focus-skip --shell=/bin/sh [--side=-1]
+```
+
+Raw samples: [flat-2d-flight-macos.json](../../benchmarks/flat-2d-flight-macos.json).
+
+</details>
 
 ### Visual boundary
 

@@ -52,6 +52,17 @@ Every bundle includes CEF; the exporter requires `--chromium-runtime`. The folde
 
 See [release validation, publication, and install layout](linux-release-checks.md).
 
+## Godot engine
+
+Linux bundles use the engine pinned in `packaging/godot-engines.toml`
+(4.8-beta5), not the development pin in `mise.toml`. The build checks out that
+commit and builds the editor and export template with two patches:
+
+- `frontends/godot/modules/graffitty_wayland_frame/wayland-decorations.patch`
+- `packaging/linux/godot-linux-ime.patch`: input methods keep working across
+  window focus changes on X11 and Wayland, and Wayland reports window focus from
+  the keyboard rather than the pointer. See [Korean input](../internals/korean-input.md#linux).
+
 The Linux editor and export template include the `graffitty_wayland_frame`
 Godot module from `frontends/godot/modules`. It reads the tiled edges that
 Godot receives from xdg-shell or libdecor and sets the corresponding Wayland

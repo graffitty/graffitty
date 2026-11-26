@@ -35,6 +35,29 @@ fn color_of(c: graffitty_mods::Color) -> Color {
     Color::from_rgba(c.r, c.g, c.b, c.a)
 }
 
+/// The SVG's own drawing size in its units: the larger root width/height, else
+/// the viewBox extent, else Lucide's 24. Rasterizing scales from this, so a
+/// 512-unit icon and a 24-unit icon both come out at the requested pixels.
+fn svg_intrinsic_size(source: &str) -> f32 {
+    let Some(start) = source.find("<svg") else { return 24.0 };
+    let Some(end) = source[start..].find('>') else { return 24.0 };
+    let header = &source[start..start + end];
+    let attr = |name: &str| -> Option<&str> {
+        let at = header.find(&format!(" {name}="))? + name.len() + 2;
+        let quote = header[at..].chars().next().filter(|c| *c == '"' || *c == '\'')?;
+        let rest = &header[at + 1..];
+        Some(&rest[..rest.find(quote)?])
+    };
+    let number = |value: &str| value.trim().trim_end_matches("px").parse::<f32>().ok().filter(|v| v.is_finite() && *v > 0.0);
+    let declared = [attr("width"), attr("height")].into_iter().flatten().filter_map(number).fold(0.0_f32, f32::max);
+    if declared > 0.0 { return declared; }
+    if let Some(view_box) = attr("viewBox") {
+        let parts: Vec<f32> = view_box.split([' ', ',']).filter_map(|part| part.parse().ok()).collect();
+        if parts.len() == 4 && parts[2].max(parts[3]) > 0.0 { return parts[2].max(parts[3]); }
+    }
+    24.0
+}
+
 /// The SVG source with the root element's width and height replaced by `px`.
 /// Node artwork declares its own size; the badge needs it icon-sized.
 fn size_inline_svg(source: &str, px: f32) -> String {
@@ -886,8 +909,24 @@ impl ModView {
         path.to_owned()
     }
 
+    /// Device pixels per layout unit where this view draws: its canvas
+    /// transform (pane zoom, readable scaling) times its viewport's pixel
+    /// stretch. At least 2 (HiDPI), rounded up to a power of two so zooming
+    /// re-rasterizes in a few steps rather than on every frame.
+    fn raster_density(&self) -> f32 {
+        let base = self.base();
+        let mut scale = base.get_global_transform_with_canvas().scale().abs();
+        if let Some(viewport) = base.get_viewport() {
+            scale *= viewport.get_final_transform().scale().abs();
+        }
+        let density = scale.x.max(scale.y);
+        if !density.is_finite() || density <= 0.0 { return 2.0; }
+        density.max(2.0).log2().ceil().exp2().min(16.0)
+    }
+
     fn texture(&mut self, path: &str, px: f32, tinted: bool, grayscale: bool) -> Option<Gd<Texture2D>> {
-        let source = self.source_texture(path, px, tinted)?;
+        let pixels = (px * self.raster_density()).max(1.0);
+        let source = self.source_texture(path, pixels, tinted)?;
         if !grayscale { return Some(source); }
         let key = format!("grayscale:{}", source.instance_id());
         if let Some(texture) = self.textures.get(&key) { return Some(texture.clone()); }
@@ -901,17 +940,18 @@ impl ModView {
         Some(texture)
     }
 
-    fn source_texture(&mut self, path: &str, px: f32, tinted: bool) -> Option<Gd<Texture2D>> {
-        let key = format!("{path}@{}", px.round());
+    /// `pixels`: the raster's larger side, in device pixels.
+    fn source_texture(&mut self, path: &str, pixels: f32, tinted: bool) -> Option<Gd<Texture2D>> {
+        let key = format!("{path}@{}", pixels.round());
         if let Some(texture) = self.textures.get(&key) {
             return Some(texture.clone());
         }
         let mut texture: Option<Gd<Texture2D>> = None;
         // Inline artwork: `svg("<svg …>…</svg>")`, as a graph node's manifest
-        // icon arrives. Its own width/height are replaced so it draws icon-sized
-        // and crisp at HiDPI, as NodeIcon.gd does for native badges.
+        // icon arrives. Its own width/height are replaced so it rasterizes at
+        // the drawn device size, as NodeIcon.gd does for native badges.
         if path.trim_start().starts_with("<svg") {
-            let sized = size_inline_svg(path, (px * 2.0).max(1.0));
+            let sized = size_inline_svg(path, pixels);
             let mut image = Image::new_gd();
             if image.load_svg_from_string(&GString::from(&sized)) == godot::global::Error::OK {
                 texture = ImageTexture::create_from_image(&image).map(|t| t.upcast());
@@ -926,8 +966,8 @@ impl ModView {
         let resolved = self.resolve(path);
         let resolved_g = GString::from(&resolved);
         if resolved.ends_with(".svg") {
-            // Rasterize at twice the drawn size so HiDPI stays crisp. Lucide
-            // sources are 24 units; other sizes still scale into the rect.
+            // Rasterize at the drawn device size, scaled from the artwork's
+            // own size: Lucide is 24 units, Font Awesome 512.
             let source = if FileAccess::file_exists(&resolved_g) { FileAccess::get_file_as_string(&resolved_g).to_string() } else { String::new() };
             if !source.is_empty() {
                 // Tinting multiplies the rasterized pixels, so the artwork has to
@@ -935,7 +975,8 @@ impl ModView {
                 // becomes white here, as a CSS `color: white` would make it.
                 let source = source.replace("currentColor", "#ffffff");
                 let mut image = Image::new_gd();
-                if image.load_svg_from_string_ex(&GString::from(&source)).scale((px * 2.0 / 24.0).max(0.1)).done() == godot::global::Error::OK {
+                let scale = (pixels / svg_intrinsic_size(&source)).max(0.01);
+                if image.load_svg_from_string_ex(&GString::from(&source)).scale(scale).done() == godot::global::Error::OK {
                     texture = ImageTexture::create_from_image(&image).map(|t| t.upcast());
                 }
             }
@@ -1122,5 +1163,19 @@ impl ModView {
                 }
             }
         }
+    }
+}
+
+#[cfg(test)]
+mod svg_size_tests {
+    use super::svg_intrinsic_size;
+
+    #[test]
+    fn rasterizing_scales_from_the_artworks_own_size() {
+        assert_eq!(svg_intrinsic_size(r#"<svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" stroke-width="2">"#), 24.0);
+        assert_eq!(svg_intrinsic_size(r#"<svg width="512" height="512" viewBox="0 0 512 512"><path/></svg>"#), 512.0);
+        assert_eq!(svg_intrinsic_size(r#"<svg viewBox="0 0 640 480"><path/></svg>"#), 640.0);
+        assert_eq!(svg_intrinsic_size(r#"<svg stroke-width="2"><path/></svg>"#), 24.0, "stroke-width is not the width");
+        assert_eq!(svg_intrinsic_size("not svg"), 24.0);
     }
 }

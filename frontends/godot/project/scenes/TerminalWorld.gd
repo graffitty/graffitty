@@ -1980,11 +1980,22 @@ func _on_session_requested(index: int) -> void:
 		# moves the camera to its cursor. Changing tabs changes surfaces.
 		var surface := _surface_for_session(_sheet_session(index) if _floating() else index)
 		if surface >= 0 and surface != active:
-			_goto(surface, false)
+			_goto(surface, _floating() and _shows_tab_of(index))
 		if _floating():
 			_focus_session(index)
 		return
 	_goto(index, false)
+
+
+## The displayed sheet already belongs to this terminal's tab.
+##
+## The sheet can stay bound to another window of that tab: closing its first
+## pane, or reordering its windows, changes which terminal carries the sheet.
+## Rebinding it then is not a tab switch and must not fly.
+func _shows_tab_of(index: int) -> bool:
+	if active < 0 or active >= surfaces.size(): return false
+	var group: int = host.workspace_layout.containing(PaneAddress.key(index))
+	return group >= 0 and group == host.workspace_layout.containing(PaneAddress.key(int(surfaces[active].session_id)))
 
 
 ## The world's own places are for tabs.
@@ -2159,6 +2170,8 @@ func _tab_order_ids() -> Array[int]:
 
 
 var session_transition_active := false
+## Lateral side of the current session switch's flight; see `_flight_side`.
+var session_flight_side := 1.0
 var _building_switch_arrival := false
 var session_transition_capture: Dictionary = {}
 var _session_places: Dictionary = {}
@@ -2205,7 +2218,9 @@ func _clear_switch_visuals() -> void:
 		entry.layer.queue_free()
 	tab_fx_stale.clear()
 
-func begin_session_transition(animate := true) -> void:
+## `side` 1 flies left (to a later session); -1 flies right (to an earlier one).
+func begin_session_transition(animate := true, side := 1.0) -> void:
+	session_flight_side = side
 	var interrupted := animate and session_transition_active and tab_fx_wall != null
 	var retiring: Array = []
 	var previous_wall := tab_fx_wall
@@ -4357,6 +4372,7 @@ func _start_tab_transition(
 		# Each kind keeps its original spacing and shares one eased flight.
 		var out_layer := CellShatterScript.new()
 		add_child(out_layer)
+		out_layer.flight_side = _flight_side()
 		if out_layer.build_cells(
 			out_term,
 			out_vp,
@@ -4389,7 +4405,8 @@ func _start_tab_transition(
 
 
 func _await_arrival(wall: MeshInstance3D) -> void:
-	CellShatterScript.assign_release_ranks(tab_fx_out.filter(func(layer): return layer.get_meta("glyph_layer", false)))
+	for layer in tab_fx_out: layer.flight_side = _flight_side()
+	CellShatterScript.assign_release_ranks(tab_fx_out.filter(func(layer): return layer.get_meta("glyph_layer", false)), _flight_side())
 	if camera_relative_tab_fx or depth_effect() or screen_space_session_flight():
 		for layer in tab_fx_out:
 			if not layer.has_meta("transition_camera"): _bind_transition_camera(layer, cam.global_transform)
@@ -4595,6 +4612,7 @@ func _window_layers(
 					continue
 				var layer := CellShatterScript.new()
 				add_child(layer)
+				layer.flight_side = _flight_side()
 				if layer.build_cells(
 					pair.term,
 					pair.vp,
@@ -4760,6 +4778,12 @@ func screen_space_session_flight() -> bool:
 	return false
 
 
+## 1 flies left, -1 mirrors the flight right. Only session switches choose a
+## side, from the sessions' server order; tab switches always fly left.
+func _flight_side() -> float:
+	return session_flight_side if session_transition_active else 1.0
+
+
 func fly_away_effect() -> bool:
 	return session_transition_active and fx_cfg.scene.session_switch.effect == "fly_away"
 
@@ -4832,7 +4856,8 @@ func _build_arriving_layers() -> void:
 	if camera_motion._target.has("transform"):
 		_display_camera_frame(camera_motion._target)
 	_build_arriving_layers_at_destination()
-	CellShatterScript.assign_release_ranks(tab_fx_in.filter(func(layer): return layer.get_meta("glyph_layer", false)))
+	for layer in tab_fx_in: layer.flight_side = _flight_side()
+	CellShatterScript.assign_release_ranks(tab_fx_in.filter(func(layer): return layer.get_meta("glyph_layer", false)), _flight_side())
 	_display_camera_frame(displayed)
 
 
@@ -4871,6 +4896,7 @@ func _build_arriving_layers_at_destination() -> void:
 		var spec: Dictionary = LAYERS[i]
 		var layer := CellShatterScript.new()
 		add_child(layer)
+		layer.flight_side = _flight_side()
 		if layer.build_cells(
 			term,
 			term_vp,
@@ -5113,9 +5139,12 @@ func _workspace_transition_layers(origin: Vector3, du: Vector3, dv: Vector3, sha
 		layer.build_regions(still, [whole], whole, origin + du * at.x + dv * at.y, du * extent.x, dv * extent.y, Vector2.ZERO, 0)
 		layer.set_progress(1.0)
 		layer.set_meta("workspace_chrome", true)
+		# Strips fade and recede with the pane backing; only text flies.
+		layer.set_meta("panel", true)
 		layer.set_appearance(ink_gain, tonemap_exposure)
 		_prepare_transition_layer(layer)
-		_group_transition_layer(layer, 1)
+		layer._material().set_shader_parameter("background_layer", true)
+		layer._material().set_shader_parameter("panel_rect", Vector4(0, 0, 1, 1))
 		_set_transition_priority(layer, 122)
 		layer._material().set_shader_parameter("source_sheet_rect", Vector4(at.x, at.y, extent.x, extent.y))
 		_apply_piece_sheet_shape(layer, _piece_sheet_shape() if shape.is_empty() else shape)
@@ -5251,6 +5280,7 @@ func _layer_fly(layer: Node, value: float, arriving := false) -> float:
 		terminal_effects.configure_defocus_tint(layer._material())
 		layer._material().set_shader_parameter("source_depth_plane", _terminal_depth_plane())
 	layer._material().set_shader_parameter("arrival_flight", arriving)
+	layer._material().set_shader_parameter("flight_side", layer.flight_side)
 	layer._material().set_shader_parameter("retire_flight_pieces", true)
 	_update_transition_lens(layer)
 	if layer.get_meta("depth_mode", false):

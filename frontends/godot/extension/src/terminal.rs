@@ -749,6 +749,9 @@ impl Terminal {
     /// opt out of impulses and particles with `effects`.
     #[func]
     fn send_key(&mut self, key: Gd<InputEventKey>, #[opt(default = true)] effects: bool) -> bool {
+        // Key bar keys end the composition the input method still holds.
+        #[cfg(target_os = "ios")]
+        self.ios_finish_composition();
         let Some(st) = self.state.as_mut() else {
             return false;
         };
@@ -2006,6 +2009,49 @@ impl Terminal {
             self.set_preedit(GString::new(), Vector2i::ZERO);
         }
     }
+
+    /// iOS has no IME feature in Godot; the terminal owns the keyboard view
+    /// while it owns input (see ios_terminal_ime.m).
+    #[cfg(target_os = "ios")]
+    fn ios_ime_process(&mut self, owns: bool) {
+        use crate::ios_terminal_ime as ime;
+        let id = self.base().instance_id();
+        if owns {
+            // The pane that had the keyboard sends its composition first.
+            if let Some(previous) = ime::owner().filter(|previous| *previous != id)
+                && let Ok(mut other) = Gd::<Terminal>::try_from_instance_id(previous)
+            {
+                other.bind_mut().ios_ime_process(false);
+            }
+            ime::set_owner(Some(id));
+            ime::poll();
+            if let Some((text, mark)) = ime::preedit() {
+                self.set_preedit(text, mark);
+            }
+        } else if ime::owner() == Some(id) {
+            self.ios_finish_composition();
+            ime::set_owner(None);
+        }
+    }
+
+    /// Sends the composition ahead of a key that ends it.
+    #[cfg(target_os = "ios")]
+    fn ios_finish_composition(&mut self) {
+        use crate::ios_terminal_ime as ime;
+        if ime::owner() != Some(self.base().instance_id()) || ime::flushing() {
+            return;
+        }
+        let text = ime::finish();
+        self.clear_preedit();
+        if text.is_empty() {
+            return;
+        }
+        ime::set_flushing(true);
+        for key in ime::text_keys(&text) {
+            self.send_key(key, true);
+        }
+        ime::set_flushing(false);
+    }
 }
 
 #[godot_api]
@@ -2122,6 +2168,8 @@ impl IControl for Terminal {
             self.clear_preedit();
             self.set_ime_active(!suppress);
         }
+        #[cfg(target_os = "ios")]
+        self.ios_ime_process(owns_ime && !suppress);
         let control_size = self.base().get_size();
         let mouse_pos = if visible { self.base().get_local_mouse_position() } else { Vector2::ZERO };
         let global_position = if visible { self.base().get_global_position() } else { Vector2::ZERO };
@@ -2506,6 +2554,9 @@ impl IControl for Terminal {
             // Focus sets the input method itself; process() reapplies copy mode.
             self.ime_suppressed = false;
             if !active {
+                // Send the open syllable before focus moves elsewhere.
+                #[cfg(target_os = "ios")]
+                self.ios_ime_process(false);
                 self.keyboard.reset();
                 self.clear_preedit();
             }
@@ -2517,6 +2568,8 @@ impl IControl for Terminal {
             self.set_ime_active(active);
         }
         if what == ControlNotification::EXIT_TREE {
+            #[cfg(target_os = "ios")]
+            self.ios_ime_process(false);
             self.sync_terminal_key_focus(false);
         }
         if what == ControlNotification::OS_IME_UPDATE {

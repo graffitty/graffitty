@@ -341,10 +341,11 @@ def main():
     require_ios_target(IOS_LIBRARY)
     if args.native_only:
         return
-    from mise_tasks import godot
+    from mise_tasks import godot, require_godot
     run("uv", "run", "tools/build_info.py")
     stage = stage_project(args.team)
     launch = godot()
+    require_godot(launch)
     checked_godot(launch, "--headless", "--editor", "--path", str(stage), "--import")
     exported = OUTPUT / "export"
     if exported.exists():

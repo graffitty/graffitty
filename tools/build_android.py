@@ -8,7 +8,7 @@ import subprocess
 import sys
 import zipfile
 
-from mise_tasks import android_sdk, godot
+from mise_tasks import android_sdk, godot, require_godot
 from android_ime import prepare_template
 
 ROOT = Path(__file__).resolve().parent.parent
@@ -111,6 +111,7 @@ def main():
     presets = re.sub(r"(?m)^permissions/vibrate=.*\n?", "", presets)
     presets = presets.replace("[preset.0.options]", "[preset.0.options]\n\npermissions/vibrate=true", 1)
     launch = godot()
+    require_godot(launch)
     # The client is a signed release; staged test tools still export debug APKs.
     for kind in ("debug", "release"):
         template = prepare_template(sdk, launch, output.parent / f"terminal-ime-{kind}.apk", kind)

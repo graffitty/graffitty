@@ -1,0 +1,519 @@
+Linux input methods for Godot 4.8-beta5 (apply after wayland-decorations.patch).
+
+X11: keep XIM focus on the input context window across window manager
+focus changes and input method restarts; keep commits made while the next
+syllable is composing; a nested popup's field keeps the input method while
+its parent popup's field is still editing.
+Wayland: re-enable text input after every enter for the latest editor on
+the focused surface or its popups; per-window requests and caret rectangles;
+keyboard-based window focus across all seats.
+
+Known limits:
+- Wayland: preedit and commit are delivered to the seat's text input owner;
+  with several seats typing into different popups at once, the IME target is
+  not carried per seat through delivery.
+- X11: preedit updates reach controls through a deferred notification, after
+  the key events of the same batch (stock behaviour). A LineEdit given Enter
+  while a syllable is composing then applies the stale preedit and inserts
+  that syllable twice; the terminal is not affected. Notifying synchronously
+  on commit fixes this but lets a parent popup's field take X focus back
+  from a nested popup. Queueing preedit snapshots in X event order would fix
+  both.
+- X11: closing a nested popup returns X focus to the main window under
+  metacity, which closes the parent popup too (stock Godot does the same).
+
+--- a/platform/linuxbsd/x11/display_server_x11.h
++++ b/platform/linuxbsd/x11/display_server_x11.h
+@@ -37,6 +37,7 @@
+ #include "core/os/process_id.h"
+ #include "core/os/thread.h"
+ #include "core/os/thread_safe.h"
++#include <atomic>
+ #include "core/templates/local_vector.h"
+ #include "servers/display/display_server.h"
+ 
+@@ -147,7 +148,8 @@
+ 		Window x11_xim_window = None;
+ 		::XIC xic = nullptr;
+ 		bool ime_active = false;
+-		bool ime_in_progress = false;
++		// The focused control wants an input method, even while the window is unfocused.
++		bool ime_requested = false;
+ 		bool ime_suppress_next_keyup = false;
+ #ifdef XKB_ENABLED
+ 		xkb_compose_state *xkb_state = nullptr;
+@@ -232,6 +234,9 @@
+ 	::XIM xim = nullptr;
+ 	::XIMStyle xim_style = 0;
+ 	bool warn_xim_just_stopped = true;
++	// A restarted input method created new input contexts without focus. Set by
++	// the instantiate callback, which can run on the event polling thread.
++	std::atomic<bool> xim_restarted = false;
+ 
+ 	static int _xim_preedit_start_callback(::XIM xim, ::XPointer client_data,
+ 			::XPointer call_data);
+@@ -358,6 +363,7 @@
+ 
+ 	DisplayServerEnums::WindowID _get_focused_window_or_popup() const;
+ 	bool _window_focus_check();
++	bool _window_has_x11_focus(const WindowData &p_wd) const;
+ 
+ 	void _send_window_event(const WindowData &wd, DisplayServerEnums::WindowEvent p_event);
+ 	static void _dispatch_input_events(const Ref<InputEvent> &p_event);
+--- a/platform/linuxbsd/x11/display_server_x11.cpp
++++ b/platform/linuxbsd/x11/display_server_x11.cpp
+@@ -3558,6 +3558,9 @@
+ 	ERR_FAIL_COND(!windows.has(p_window));
+ 	WindowData &wd = windows[p_window];
+ 
++	// FocusIn restores a request made, or kept, while the window was unfocused
++	// or before its input context existed.
++	wd.ime_requested = p_active;
+ 	if (!wd.xic) {
+ 		return;
+ 	}
+@@ -3567,6 +3570,18 @@
+ 		im_selection = Vector2i();
+ 		return;
+ 	}
++	// A popup opened after this window holds X input focus for its own field,
++	// while this window's field still asks for the input method (a nested
++	// popup over a popup with a field). Taking focus back would compose the
++	// popup's keys here; FocusIn applies the request once the popup is gone.
++	if (p_active && !_window_has_x11_focus(wd)) {
++		const List<DisplayServerEnums::WindowID>::Element *mine = popup_list.find(p_window);
++		for (const List<DisplayServerEnums::WindowID>::Element *E = mine ? mine->next() : popup_list.front(); E; E = E->next()) {
++			if (windows.has(E->get()) && windows[E->get()].ime_requested && _window_has_x11_focus(windows[E->get()])) {
++				return;
++			}
++		}
++	}
+ 
+ 	// Block events polling while changing input focus
+ 	// because it triggers some event polling internally.
+@@ -3999,9 +4014,11 @@
+ 	// X11 functions don't know what const is
+ 	XKeyEvent *xkeyevent = p_event;
+ 
+-	if (wd.ime_in_progress) {
+-		return;
+-	}
++	// No key is dropped for an ongoing composition. XFilterEvent already
++	// removed the keys the input method consumed. Those that arrive here were
++	// given back (Latin text, Enter) or are XIM commits (keycode 0): a Hangul
++	// syllable commits while the next one is composing, and ibus starts a
++	// composition as soon as the window has focus.
+ 	if (wd.ime_suppress_next_keyup) {
+ 		wd.ime_suppress_next_keyup = false;
+ 		if (xkeyevent->type != KeyPress) {
+@@ -4499,13 +4516,6 @@
+ 
+ int DisplayServerX11::_xim_preedit_start_callback(::XIM xim, ::XPointer client_data,
+ 		::XPointer call_data) {
+-	DisplayServerX11 *ds = reinterpret_cast<DisplayServerX11 *>(client_data);
+-	DisplayServerEnums::WindowID window_id = ds->_get_focused_window_or_popup();
+-	WindowData &wd = ds->windows[window_id];
+-	if (wd.ime_active) {
+-		wd.ime_in_progress = true;
+-	}
+-
+ 	return -1; // Allow preedit strings of any length (no limit).
+ }
+ 
+@@ -4515,7 +4525,6 @@
+ 	DisplayServerEnums::WindowID window_id = ds->_get_focused_window_or_popup();
+ 	WindowData &wd = ds->windows[window_id];
+ 	if (wd.ime_active) {
+-		wd.ime_in_progress = false;
+ 		wd.ime_suppress_next_keyup = true;
+ 	}
+ }
+@@ -4929,6 +4938,16 @@
+ 	return closed;
+ }
+ 
++bool DisplayServerX11::_window_has_x11_focus(const WindowData &p_wd) const {
++	// Focus events are processed from a queue. Only act on one while X still
++	// reports this window (or its input method window) focused, so a stale
++	// event cannot take focus back from another application or Godot window.
++	Window focused_window;
++	int focus_ret_state;
++	XGetInputFocus(x11_display, &focused_window, &focus_ret_state);
++	return focused_window == p_wd.x11_window || (p_wd.xic && focused_window == p_wd.x11_xim_window);
++}
++
+ bool DisplayServerX11::_window_focus_check() {
+ 	Window focused_window;
+ 	int focus_ret_state;
+@@ -4957,6 +4976,15 @@
+ 
+ 	bool ignore_events = mouse_process_popups();
+ 
++	// Give a restarted input method's new contexts the focus they had.
++	if (xim_restarted.exchange(false)) {
++		for (const KeyValue<DisplayServerEnums::WindowID, WindowData> &E : windows) {
++			if (E.value.ime_requested && E.value.xic && _window_has_x11_focus(E.value)) {
++				window_set_ime_active(true, E.key);
++			}
++		}
++	}
++
+ 	if (app_focused) {
+ 		//verify that one of the windows has focus, else send focus out notification
+ 		bool focus_found = false;
+@@ -5278,12 +5306,30 @@
+ 			case FocusIn: {
+ 				DEBUG_LOG_X11("[%u] FocusIn window=%lu (%u), mode='%u' \n", frame, event.xfocus.window, window_id, event.xfocus.mode);
+ 				if (ime_window_event || (event.xfocus.detail == NotifyInferior)) {
++					// The window manager can focus the main window while the input
++					// method's window has focus, for example on a click. Keys would
++					// then reach the main window and bypass the input method.
++					const WindowData &focused = windows[window_id];
++					if (!ime_window_event && focused.ime_active && _window_has_x11_focus(focused)) {
++						XWindowAttributes xwa;
++						XGetWindowAttributes(x11_display, focused.x11_xim_window, &xwa);
++						if (xwa.map_state == IsViewable) {
++							MutexLock mutex_lock(events_mutex);
++							_set_input_focus(focused.x11_xim_window, RevertToParent);
++						}
++					}
+ 					break;
+ 				}
+ 
+ 				WindowData &wd = windows[window_id];
+ 				last_focused_window = window_id;
+ 				wd.focused = true;
++				// FocusOut deactivates the input method, and the window manager
++				// focuses the main window rather than the input method's window.
++				// Give the input method back to the control that wants it.
++				if (wd.ime_requested && _window_has_x11_focus(wd)) {
++					window_set_ime_active(true, window_id);
++				}
+ 
+ 				// Keep track of focus order for overlapping windows.
+ 				static unsigned int focus_order = 0;
+@@ -6884,6 +6930,7 @@
+ 	for (KeyValue<DisplayServerEnums::WindowID, WindowData> &E : ds->windows) {
+ 		ds->_create_xic(E.value);
+ 	}
++	ds->xim_restarted = true;
+ }
+ 
+ DisplayServerX11::DisplayServerX11(const String &p_rendering_driver, DisplayServerEnums::WindowMode p_mode, DisplayServerEnums::VSyncMode p_vsync_mode, uint32_t p_flags, const Vector2i *p_position, const Vector2i &p_resolution, int p_screen, DisplayServerEnums::Context p_context, int64_t p_parent_window, Error &r_error) {
+--- a/platform/linuxbsd/wayland/wayland_thread.h
++++ b/platform/linuxbsd/wayland/wayland_thread.h
+@@ -290,6 +290,13 @@
+ 
+ 	struct WindowState {
+ 		DisplayServerEnums::WindowID id = DisplayServerEnums::INVALID_WINDOW_ID;
++
++		// A control in this window wants an input method; text input enter
++		// enables it again. The caret rectangle is in logical coordinates.
++		bool ime_requested = false;
++		// Order of requests: the latest editor on a popup chain owns text input.
++		uint64_t ime_request_serial = 0;
++		Rect2i ime_rect;
+ 		DisplayServerEnums::WindowID parent_id = DisplayServerEnums::INVALID_WINDOW_ID;
+ 
+ 		Rect2i rect;
+@@ -613,6 +620,9 @@
+ 		// IME.
+ 		struct zwp_text_input_v3 *wp_text_input = nullptr;
+ 		DisplayServerEnums::WindowID ime_window_id = DisplayServerEnums::INVALID_WINDOW_ID;
++		// The window whose request the seat applies: ime_window_id or one of its
++		// popups, which get keys while their parent keeps keyboard focus.
++		DisplayServerEnums::WindowID ime_source_id = DisplayServerEnums::INVALID_WINDOW_ID;
+ 		bool ime_enabled = false;
+ 		bool ime_active = false;
+ 		String ime_text;
+@@ -1232,6 +1242,11 @@
+ 	static void _wayland_state_update_cursor();
+ 
+ 	void _set_current_seat(struct wl_seat *p_seat);
++
++	bool _seat_ime_window(const SeatState *p_ss, DisplayServerEnums::WindowID p_window_id, Point2i &r_offset);
++	void _seat_apply_ime(SeatState *p_ss, DisplayServerEnums::WindowID p_window_id);
++	DisplayServerEnums::WindowID _seat_ime_requester(const SeatState *p_ss);
++	uint64_t ime_request_serial = 0;
+ 
+ 	void _window_hover(DisplayServerEnums::WindowID p_window_id);
+ 	void _window_hover();
+@@ -1315,7 +1330,7 @@
+ 	void window_set_title(DisplayServerEnums::WindowID p_window_id, const String &p_title);
+ 	void window_set_app_id(DisplayServerEnums::WindowID p_window_id, const String &p_app_id);
+ 
+-	bool window_is_focused(DisplayServerEnums::WindowID p_window_id);
++	bool window_is_focused(DisplayServerEnums::WindowID p_window_id) const;
+ 
+ 	// Optional - requires xdg_activation_v1
+ 	void window_request_attention(DisplayServerEnums::WindowID p_window_id, bool p_hint_strong_focus = false);
+--- a/platform/linuxbsd/wayland/wayland_thread.cpp
++++ b/platform/linuxbsd/wayland/wayland_thread.cpp
+@@ -1870,6 +1870,19 @@
+ 			ss->xkb_state = nullptr;
+ 		}
+ 
++		// No keyboard, no keyboard focus; window_is_focused checks every seat.
++		if (ss->focused_id != DisplayServerEnums::INVALID_WINDOW_ID) {
++			DisplayServerEnums::WindowID unfocused = ss->focused_id;
++			ss->focused_id = DisplayServerEnums::INVALID_WINDOW_ID;
++			if (!wayland_thread->window_is_focused(unfocused)) {
++				Ref<WindowEventMessage> msg;
++				msg.instantiate();
++				msg->id = unfocused;
++				msg->event = DisplayServerEnums::WINDOW_EVENT_FOCUS_OUT;
++				wayland_thread->push_message(msg);
++			}
++		}
++
+ 		if (ss->wl_keyboard) {
+ 			wl_keyboard_destroy(ss->wl_keyboard);
+ 			ss->wl_keyboard = nullptr;
+@@ -2468,11 +2481,14 @@
+ 
+ 	ss->focused_id = DisplayServerEnums::INVALID_WINDOW_ID;
+ 
+-	Ref<WindowEventMessage> msg;
+-	msg.instantiate();
+-	msg->id = ws->id;
+-	msg->event = DisplayServerEnums::WINDOW_EVENT_FOCUS_OUT;
+-	wayland_thread->push_message(msg);
++	// Another seat can still type into this window.
++	if (!wayland_thread->window_is_focused(ws->id)) {
++		Ref<WindowEventMessage> msg;
++		msg.instantiate();
++		msg->id = ws->id;
++		msg->event = DisplayServerEnums::WINDOW_EVENT_FOCUS_OUT;
++		wayland_thread->push_message(msg);
++	}
+ 
+ 	ss->shift_pressed = false;
+ 	ss->ctrl_pressed = false;
+@@ -3580,6 +3596,14 @@
+ 
+ 	ss->ime_window_id = ws->id;
+ 	ss->ime_enabled = true;
++
++	// Leave disabled text input. Enable it again for the editor that still
++	// wants it, here or in one of this surface's popups: after every enter, the
++	// client must send enable itself.
++	DisplayServerEnums::WindowID requester = ss->wayland_thread->_seat_ime_requester(ss);
++	if (requester != DisplayServerEnums::INVALID_WINDOW_ID) {
++		ss->wayland_thread->_seat_apply_ime(ss, requester);
++	}
+ }
+ 
+ // NOTE: From now on, we must ignore all further events until an enter event.
+@@ -3601,6 +3625,7 @@
+ 	ss->wayland_thread->push_message(msg);
+ 
+ 	ss->ime_window_id = DisplayServerEnums::INVALID_WINDOW_ID;
++	ss->ime_source_id = DisplayServerEnums::INVALID_WINDOW_ID;
+ 	ss->ime_enabled = false;
+ 	ss->ime_active = false;
+ 	ss->ime_text = String();
+@@ -3687,16 +3712,18 @@
+ 		return;
+ 	}
+ 
++	// A popup's request receives its own text, not its parent.
++	DisplayServerEnums::WindowID target = ss->ime_source_id != DisplayServerEnums::INVALID_WINDOW_ID ? ss->ime_source_id : ss->ime_window_id;
+ 	if (!ss->ime_text_commit.is_empty()) {
+ 		Ref<IMECommitEventMessage> msg;
+ 		msg.instantiate();
+-		msg->id = ss->ime_window_id;
++		msg->id = target;
+ 		msg->text = ss->ime_text_commit;
+ 		ss->wayland_thread->push_message(msg);
+ 	} else {
+ 		Ref<IMEUpdateEventMessage> msg;
+ 		msg.instantiate();
+-		msg->id = ss->ime_window_id;
++		msg->id = target;
+ 		msg->text = ss->ime_text;
+ 		msg->selection = ss->ime_cursor;
+ 		ss->wayland_thread->push_message(msg);
+@@ -4535,6 +4562,15 @@
+ 	ERR_FAIL_COND(!windows.has(p_window_id));
+ 	WindowState &ws = windows[p_window_id];
+ 
++	// A closing popup hands text input back to the surface under it.
++	for (struct wl_seat *wl_seat : registry.wl_seats) {
++		SeatState *ss = wl_seat_get_seat_state(wl_seat);
++		if (ss && ss->ime_source_id == p_window_id && ss->ime_window_id != p_window_id) {
++			ws.ime_requested = false;
++			_seat_apply_ime(ss, p_window_id);
++		}
++	}
++
+ 	if (ws.xdg_popup) {
+ 		xdg_popup_destroy(ws.xdg_popup);
+ 	}
+@@ -5404,6 +5440,18 @@
+ 	return has_touch;
+ }
+ 
++bool WaylandThread::window_is_focused(DisplayServerEnums::WindowID p_window_id) const {
++	// Keyboard focus, as on the other platforms. The pointer can rest on
++	// another surface while this window receives keys and text input.
++	for (struct wl_seat *wl_seat : registry.wl_seats) {
++		SeatState *ss = wl_seat_get_seat_state(wl_seat);
++		if (ss && ss->focused_id == p_window_id) {
++			return true;
++		}
++	}
++	return false;
++}
++
+ DisplayServerEnums::WindowID WaylandThread::pointer_get_pointed_window_id() const {
+ 	SeatState *ss = wl_seat_get_seat_state(wl_seat_current);
+ 
+@@ -5867,36 +5915,114 @@
+ 	}
+ }
+ 
+-void WaylandThread::window_set_ime_active(const bool p_active, DisplayServerEnums::WindowID p_window_id) {
+-	SeatState *ss = wl_seat_get_seat_state(wl_seat_current);
++bool WaylandThread::_seat_ime_window(const SeatState *p_ss, DisplayServerEnums::WindowID p_window_id, Point2i &r_offset) {
++	// Text input focus is on a toplevel; its popups take keys and text through
++	// it. r_offset moves a popup's caret into that surface's coordinates.
++	r_offset = Point2i();
++	const WindowState *focus = window_get_state(p_ss->ime_window_id);
++	const WindowState *target = window_get_state(p_window_id);
++	if (!p_ss->wp_text_input || !p_ss->ime_enabled || !focus || !target) {
++		return false;
++	}
++	for (const WindowState *ws = target; ws; ws = window_get_state(ws->parent_id)) {
++		if (ws == focus) {
++			r_offset = target->rect.position - focus->rect.position;
++			return true;
++		}
++		if (!ws->xdg_popup) {
++			return false;
++		}
++	}
++	return false;
++}
+ 
+-	if (ss && ss->wp_text_input && ss->ime_enabled) {
+-		if (p_active) {
+-			ss->ime_active = true;
+-			zwp_text_input_v3_enable(ss->wp_text_input);
+-			zwp_text_input_v3_set_cursor_rectangle(ss->wp_text_input, ss->ime_rect.position.x, ss->ime_rect.position.y, ss->ime_rect.size.x, ss->ime_rect.size.y);
+-		} else {
+-			ss->ime_active = false;
+-			ss->ime_text = String();
+-			ss->ime_text_commit = String();
+-			ss->ime_cursor = Vector2i();
+-			zwp_text_input_v3_disable(ss->wp_text_input);
++void WaylandThread::_seat_apply_ime(SeatState *p_ss, DisplayServerEnums::WindowID p_window_id) {
++	// Applies p_window_id's request to the seat. A popup whose request ends
++	// hands text input back to the request of the surface under it.
++	Point2i offset;
++	WindowState *ws = window_get_state(p_window_id);
++	if (!ws || !ws->ime_requested || !_seat_ime_window(p_ss, p_window_id, offset)) {
++		// The nearest ancestor up to the text input surface that still wants it.
++		if (ws && ws->id != p_ss->ime_window_id) {
++			for (WindowState *up = window_get_state(ws->parent_id); up; up = window_get_state(up->parent_id)) {
++				if (up->ime_requested && _seat_ime_window(p_ss, up->id, offset)) {
++					_seat_apply_ime(p_ss, up->id);
++					return;
++				}
++				if (up->id == p_ss->ime_window_id) {
++					break;
++				}
++			}
+ 		}
+-		zwp_text_input_v3_commit(ss->wp_text_input);
++		p_ss->ime_source_id = DisplayServerEnums::INVALID_WINDOW_ID;
++		p_ss->ime_active = false;
++		p_ss->ime_text = String();
++		p_ss->ime_text_commit = String();
++		p_ss->ime_cursor = Vector2i();
++		zwp_text_input_v3_disable(p_ss->wp_text_input);
++		zwp_text_input_v3_commit(p_ss->wp_text_input);
++		return;
+ 	}
++	p_ss->ime_source_id = p_window_id;
++	p_ss->ime_active = true;
++	p_ss->ime_rect = Rect2i(ws->ime_rect.position + offset, ws->ime_rect.size);
++	zwp_text_input_v3_enable(p_ss->wp_text_input);
++	zwp_text_input_v3_set_cursor_rectangle(p_ss->wp_text_input, p_ss->ime_rect.position.x, p_ss->ime_rect.position.y, p_ss->ime_rect.size.x, p_ss->ime_rect.size.y);
++	zwp_text_input_v3_commit(p_ss->wp_text_input);
+ }
+ 
+-void WaylandThread::window_set_ime_position(const Point2i &p_pos, DisplayServerEnums::WindowID p_window_id) {
+-	SeatState *ss = wl_seat_get_seat_state(wl_seat_current);
++DisplayServerEnums::WindowID WaylandThread::_seat_ime_requester(const SeatState *p_ss) {
++	// The latest editor that wants text input on the surface or its popups.
++	DisplayServerEnums::WindowID requester = DisplayServerEnums::INVALID_WINDOW_ID;
++	uint64_t serial = 0;
++	Point2i offset;
++	for (const KeyValue<DisplayServerEnums::WindowID, WindowState> &E : windows) {
++		if (E.value.ime_requested && E.value.ime_request_serial >= serial && _seat_ime_window(p_ss, E.key, offset)) {
++			requester = E.key;
++			serial = E.value.ime_request_serial;
++		}
++	}
++	return requester;
++}
+ 
+-	if (ss && ss->wp_text_input && ss->ime_enabled) {
+-		WindowState *ws = window_get_state(p_window_id);
+-		double scale = ws ? window_state_get_scale_factor(ws) : 1.0;
+-		Point2i logical_pos = scale_vector2i(p_pos, 1.0 / scale);
+-		ss->ime_rect = Rect2i(logical_pos, Size2i(1, 10));
+-		zwp_text_input_v3_set_cursor_rectangle(ss->wp_text_input, ss->ime_rect.position.x, ss->ime_rect.position.y, ss->ime_rect.size.x, ss->ime_rect.size.y);
+-		zwp_text_input_v3_commit(ss->wp_text_input);
++void WaylandThread::window_set_ime_active(const bool p_active, DisplayServerEnums::WindowID p_window_id) {
++	// Text input enter applies a request made, or kept, without text input focus.
++	WindowState *ws = p_window_id == DisplayServerEnums::INVALID_WINDOW_ID ? nullptr : window_get_state(p_window_id);
++	if (!ws) {
++		return;
+ 	}
++	ws->ime_requested = p_active;
++	if (p_active) {
++		ws->ime_request_serial = ++ime_request_serial;
++	}
++	// Every seat whose text input is on this window or under its popup.
++	for (struct wl_seat *wl_seat : registry.wl_seats) {
++		SeatState *ss = wl_seat_get_seat_state(wl_seat);
++		Point2i offset;
++		if (!ss || !_seat_ime_window(ss, p_window_id, offset)) {
++			continue;
++		}
++		if (p_active || ss->ime_source_id == p_window_id || ss->ime_source_id == DisplayServerEnums::INVALID_WINDOW_ID) {
++			_seat_apply_ime(ss, p_window_id);
++		}
++	}
++}
++
++void WaylandThread::window_set_ime_position(const Point2i &p_pos, DisplayServerEnums::WindowID p_window_id) {
++	WindowState *ws = p_window_id == DisplayServerEnums::INVALID_WINDOW_ID ? nullptr : window_get_state(p_window_id);
++	if (!ws) {
++		return;
++	}
++	ws->ime_rect = Rect2i(scale_vector2i(p_pos, 1.0 / window_state_get_scale_factor(ws)), Size2i(1, 10));
++	for (struct wl_seat *wl_seat : registry.wl_seats) {
++		SeatState *ss = wl_seat_get_seat_state(wl_seat);
++		Point2i offset;
++		if (ss && ss->ime_source_id == p_window_id && _seat_ime_window(ss, p_window_id, offset)) {
++			ss->ime_rect = Rect2i(ws->ime_rect.position + offset, ws->ime_rect.size);
++			zwp_text_input_v3_set_cursor_rectangle(ss->wp_text_input, ss->ime_rect.position.x, ss->ime_rect.position.y, ss->ime_rect.size.x, ss->ime_rect.size.y);
++			zwp_text_input_v3_commit(ss->wp_text_input);
++		}
++	}
+ }
+ 
+ int WaylandThread::keyboard_get_layout_count() const {
+--- a/platform/linuxbsd/wayland/display_server_wayland.cpp
++++ b/platform/linuxbsd/wayland/display_server_wayland.cpp
+@@ -1413,7 +1413,7 @@
+ bool DisplayServerWayland::window_is_focused(DisplayServerEnums::WindowID p_window_id) const {
+ 	MutexLock mutex_lock(wayland_thread.mutex);
+ 
+-	return wayland_thread.pointer_get_pointed_window_id() == p_window_id;
++	return wayland_thread.window_is_focused(p_window_id);
+ }
+ 
+ bool DisplayServerWayland::window_can_draw(DisplayServerEnums::WindowID p_window_id) const {

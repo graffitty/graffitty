@@ -166,7 +166,13 @@ impl Input {
             key::Action::Release
         };
 
-        let mods = event_mods(ev.clone().upcast());
+        let mut mods = event_mods(ev.clone().upcast());
+        // The Windows input method commits a syllable with no keycode while the
+        // chord that ends it is held: 가 arrives with Ctrl down before Ctrl+C.
+        // That is text, not Ctrl+가. Alt stays: Alt+é is a deliberate chord.
+        if cfg!(windows) && ev.get_keycode() == GKey::NONE && ev.get_unicode() >= 0x80 {
+            mods.remove(key::Mods::CTRL);
+        }
         // macOS keycode translation may fall back to the physical US key when
         // Option produces a non-ASCII symbol. key_label retains the active
         // layout's unmodified key, including for releases and dead keys.

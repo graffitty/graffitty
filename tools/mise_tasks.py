@@ -145,6 +145,33 @@ def godot():
     return launch
 
 
+def godot_release(platform=None):
+    """The Godot release a package is exported with: Linux and Windows use
+    packaging/godot-engines.toml, everything else the mise.toml pin."""
+    # Packaging runs on Python 3.11+; other tasks still import this module on 3.9.
+    import tomllib
+
+    engines = tomllib.loads((ROOT / "packaging/godot-engines.toml").read_text())
+    if platform in engines:
+        return engines[platform]["version"]
+    return tomllib.loads((ROOT / "mise.toml").read_text())["tools"]["godot"]
+
+
+def require_godot(launch, platform=None):
+    """Fail unless `launch` is the pinned release (4.8-beta5 reports 4.8.beta5.*).
+    A GRAFFITTY_GODOT shared between platforms would otherwise export with the
+    wrong engine and templates. Returns the reported version."""
+    release = godot_release(platform)
+    probe = subprocess.run([str(launch), "--version"], capture_output=True, text=True,
+                           encoding="utf-8", errors="replace")
+    lines = probe.stdout.strip().splitlines()
+    reported = lines[-1].strip() if lines and probe.returncode == 0 else ""
+    if not reported.startswith(release.replace("-", ".") + "."):
+        raise SystemExit(f"{platform or 'This'} package uses Godot {release}; {launch} is "
+                         f"{reported or 'unknown'}. Pass --godot or set GRAFFITTY_GODOT.")
+    return reported
+
+
 def prepare_godot_links(project):
     """Restore Git symlinks checked out as text files on Windows."""
     if os.name != "nt":

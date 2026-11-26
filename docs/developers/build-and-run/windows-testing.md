@@ -128,10 +128,10 @@ python tests/platform/windows/windows_installer_upgrade.py --setup <setup.exe> -
 
 | Runtime | Issue | Required action |
 | --- | --- | --- |
-| Godot 4.7.2 | Microsoft Korean IME can lose composing characters, even in a plain LineEdit | Keep native IME acceptance failed on this runtime; retest before changing the pin |
+| Godot 4.7.2 | Microsoft Korean IME drops each syllable committed when the next one starts (`한영 전환` arrives as `영 환`) | Windows packages use 4.8-beta5 (`packaging/godot-engines.toml`), which has the fix; development runs on 4.7.2 still show the loss |
 | PowerShell 7.6.6 | Korean update banner can crash before the prompt | For affected tests, set `POWERSHELL_UPDATECHECK=Off` and record it; `-NoLogo` also avoids the banner |
 
-The [Godot fix](https://github.com/godotengine/godot/pull/123274) was merged for 4.7.3, which was unreleased at the **2026-10-21 verification date**. Unicode injection does not verify native IME behavior.
+The [Godot fix](https://github.com/godotengine/godot/pull/123274) is in 4.8; 4.7.3 was still unreleased on **2026-11-26**. That day, typing with the Microsoft Korean IME on the interactive desktop showed the loss on 4.7.2 and none on 4.8-beta5. Unicode injection does not verify native IME behavior.
 
 ## Recordings
 

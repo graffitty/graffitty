@@ -1,6 +1,8 @@
 extends Node
 
 const PaneAddress := preload("res://scenes/PaneAddress.gd")
+## Terminal methods the server answers for any pane on it.
+const SERVER_TERMINAL_METHODS := ["terminal.get_text", "internal.terminal.demo_type", "terminal.press"]
 ## v1 local API: routing and authorization use the workspace capability, not focus.
 const Targets := preload("res://scenes/PaneTargets.gd")
 var application: Node
@@ -200,6 +202,9 @@ func dispatch(tab_id: int, method: String, params: Dictionary) -> Dictionary:
 			owner.sessions[tab_id].model.pin_title(str(params.get("title", "")))
 		return response
 	if method == "pane.list":
+		# The server lists every session on it, not only this window.
+		if owner.session_backend.is_remote:
+			return await owner.session_backend.connection.remote_call(tab_id, method, params)
 		return {"result": {"panes": Targets.list_panes(owner)}}
 	if method == "pane.inspect":
 		var key := Targets.resolve(application, owner, str(params.get("target", "")))
@@ -215,12 +220,18 @@ func dispatch(tab_id: int, method: String, params: Dictionary) -> Dictionary:
 		return terminal_pids(owner, params)
 	if (method.begins_with("terminal.") or method == "internal.terminal.demo_type" or method == "window.set_title") and params.has("target"):
 		var key := Targets.resolve(application, owner, str(params.target))
-		if key.is_empty():
-			return error("invalid_target", "Unknown pane target" + Targets.hint(str(params.target)))
-		if key != PaneAddress.key(tab_id):
-			return error("forbidden", "Terminal access is scoped to the calling terminal")
-		params.erase("target")
-	if owner.session_backend.is_remote and method in ["terminal.get_text", "internal.terminal.demo_type", "terminal.press", "pane.send"]:
+		if owner.session_backend.is_remote and method in SERVER_TERMINAL_METHODS:
+			# The server reaches any terminal on it, as with tmux, WezTerm and
+			# herdr. Positions this window resolves keep its visible order;
+			# anything else, such as another session's pane, the server resolves.
+			if not key.is_empty(): params.target = key
+		else:
+			if key.is_empty():
+				return error("invalid_target", "Unknown pane target" + Targets.hint(str(params.target)))
+			if key != PaneAddress.key(tab_id):
+				return error("forbidden", "Terminal access is scoped to the calling terminal")
+			params.erase("target")
+	if owner.session_backend.is_remote and (method in SERVER_TERMINAL_METHODS or method == "pane.send"):
 		# The owner encodes against live VT modes and never needs a focused view.
 		params.erase("tab_id")
 		return await owner.session_backend.connection.remote_call(tab_id, method, params)

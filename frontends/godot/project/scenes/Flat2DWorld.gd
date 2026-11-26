@@ -1,11 +1,11 @@
 extends "res://scenes/FlatTerminalSpaceWorld.gd"
 
 ## Shares session/config/input helpers with Flat. The inherited Node3D is only
-## a host API container: this world creates no 3D camera, mesh, light or
-## viewport.
+## a host API container: the world itself has no 3D camera, mesh or light.
 ##
-## All drawing uses CanvasItems and a Camera2D; the viewport disables 3D
-## entirely.
+## All resting drawing uses CanvasItems and a Camera2D; the viewport disables
+## 3D entirely. Only flying letters and dust render in 3D, in a transparent
+## overlay that exists while a transition runs (FlightOverlay3D).
 const Place2D = preload("res://scenes/TerminalSurface2D.gd")
 const Effects2D = preload("res://scenes/TerminalEffects2D.gd")
 var camera_2d := Camera2D.new()
@@ -26,6 +26,7 @@ var _transition_out: Node2D
 var _transition_in: Node2D
 var _transition_stale: Array[Node2D] = []
 var scrollbar: VScrollBar
+var flight_overlay: Node
 
 func _init() -> void:
 	super()
@@ -122,6 +123,11 @@ func _ready() -> void:
 	_foreground_canvas_2d.add_child(effects_2d)
 	effects_2d.configure(fx_cfg)
 	effects_2d.typed.connect(_typed_2d)
+	flight_overlay = preload("res://scenes/FlightOverlay3D.gd").new(_foreground_clip_2d)
+	flight_overlay.name = "FlightOverlay3D"
+	add_child(flight_overlay)
+	# Compile the flight pieces now, not on the first switch.
+	flight_overlay.warm.call_deferred()
 	# Places only identify persistent sessions. No per-tab renderer allocation.
 	var existing: Array = host.get_terminal_tabs()
 	var count := existing.size() if not existing.is_empty() or host.restoring_window else flat_tab_count
@@ -206,7 +212,7 @@ func remove_terminal_tab(index: int) -> void:
 func follow_tab_order() -> void:
 	var first := _first_terminal(host.workspace_layout.tab(host.workspace_layout.active))
 	var next := _surface_for_session(first)
-	if next >= 0 and next != active: _goto(next,false)
+	if next >= 0 and next != active: _goto(next,_shows_tab_of(first))
 
 func cancel_typing_effects() -> void:
 	super.cancel_typing_effects()
@@ -237,7 +243,8 @@ func _clear_switch_visuals() -> void:
 		if is_instance_valid(layer): layer.hide()
 	_end_transition_2d(true)
 
-func begin_session_transition(animate := true) -> void:
+func begin_session_transition(animate := true, side := 1.0) -> void:
+	session_flight_side = side
 	_end_transition_2d(true)
 	if session_transition_capture.has("layer"):
 		session_transition_capture.layer.queue_free()

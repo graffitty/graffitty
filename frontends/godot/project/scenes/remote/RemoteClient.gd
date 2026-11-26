@@ -35,6 +35,9 @@ var host_bound := false
 var pending_focus := -1
 ## The tab active when pending_focus was requested; -1 always applies it.
 var pending_focus_from := -1
+## The session switch was made to reach pending_focus (the Agents panel), so
+## its arrival also frames that pane instead of the session's saved camera.
+var pending_focus_reveal := false
 var docking_panes: Dictionary = {} # Pane key -> source tab for local tab-strip drops.
 ## The peer whose destination topology we await. Subscriptions can change
 ## federation.selected while the outgoing workspace is still on screen.
@@ -135,13 +138,14 @@ func _ready() -> void:
 		if is_instance_valid(host) and is_instance_valid(host.world):
 			host.session_switch_in_progress = true
 			# A parked desktop host has no departing frame on this window.
-			host.world.begin_session_transition(host.presentation_active and not transport.session_reattached)
+			host.world.begin_session_transition(host.presentation_active and not transport.session_reattached, transport.session_switch_side)
 		if not federated:
 			view_state.remember_session(connection)
 			primary_presentation = true
 			presentation_tabs.clear()
 		pending_focus = -1
 		pending_focus_from = -1
+		pending_focus_reveal = false
 		pending_close_origin.clear()
 		topology_signature = ""
 		workspace_signature = "")
@@ -537,7 +541,9 @@ func _refresh_body() -> void:
 				var wire := int(host.get_meta("session_switch_focus"))
 				host.remove_meta("session_switch_focus")
 				var wanted := int(switching_peer.local_id(wire))
-				if pane_tab(target, wanted) >= 0: pending_focus = wanted
+				if pane_tab(target, wanted) >= 0:
+					pending_focus = wanted
+					pending_focus_reveal = true
 			if pending_focus >= 0:
 				var tab := pane_tab(target, pending_focus)
 				switch_tab = tab if tab >= 0 else pending_focus
@@ -693,7 +699,12 @@ func _refresh_body() -> void:
 			# Reveal: a hidden pane focused in place leaves the camera fitting
 			# content that is not laid out.
 			host.reveal_pane(PaneAddress.key(pending_focus))
+			# Frame it before the arrival is captured: one flight onto the pane.
+			if pending_focus_reveal and is_instance_valid(host.workspace_view):
+				host._refresh_workspace_layout()
+				host.workspace_view.reveal_navigation_target(PaneAddress.key(pending_focus), true)
 		pending_focus = -1
+		pending_focus_reveal = false
 	# Title signals update pane headers directly. Re-arranging every pane and
 	# rebuilding graph sockets for each CLI spinner tick monopolizes Android's
 	# UI thread even when terminal painting is disabled.

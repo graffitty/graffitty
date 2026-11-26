@@ -197,3 +197,20 @@ func test_already_in_main_does_not_start_another_fit() -> void:
 	view.reveal_navigation_target("inside")
 	expect(view.destination.is_empty() and not view.overview, "Focus within Main View does not restart its camera or settle typing effects")
 	view.host.free(); view.free()
+
+
+func test_close_reveals_the_survivor_like_keyboard_focus() -> void:
+	for outside in ["below", "above", "right", "left"]:
+		var keyboard := reveal_fixture()
+		var closing := reveal_fixture()
+		for view in [keyboard, closing]:
+			# A side panel covers the right of the window.
+			view.visible_area = Rect2(0, 34, 640, 700)
+			view.overview = true
+		keyboard.reveal_navigation_target(outside)
+		closing.pan_after_close(outside, {"overview": true, "center": closing.navigation_center, "zoom": closing.navigation_zoom})
+		expect(closing.destination == keyboard.destination, "Closing toward %s pans like prefix hjkl" % outside)
+		var shown := Rect2((closing.pane_rects[outside].position - closing.navigation_center) * closing.navigation_zoom + closing.size * .5, closing.pane_rects[outside].size * closing.navigation_zoom)
+		expect(closing.visible_area.grow(.001).encloses(shown), "The %s survivor is not cut off by the side panel" % outside)
+		for view in [keyboard, closing]:
+			view.host.free(); view.free()

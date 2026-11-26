@@ -88,8 +88,8 @@ def assemble(godot: pathlib.Path, output: pathlib.Path) -> None:
         "CFBundleDisplayName": "Graffitty",
         "CFBundleIconFile": "Graffitty.icns",
         "CFBundlePackageType": "APPL",
-        "CFBundleShortVersionString": "0.0.5",
-        "CFBundleVersion": "5",
+        "CFBundleShortVersionString": "0.0.6",
+        "CFBundleVersion": "6",
         "LSMinimumSystemVersion": "12.0",
         "NSHighResolutionCapable": True,
         "NSServices": [{

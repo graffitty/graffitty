@@ -2,6 +2,7 @@ extends SceneTree
 ## Flying ink must stay visible over its own backing and neighbouring panes.
 const Pieces := preload("res://scenes/CellShatter.gd")
 const Transition2D := preload("res://scenes/TabTransition2D.gd")
+const Overlay := preload("res://scenes/FlightOverlay3D.gd")
 var failures: Array[String] = []
 
 func _initialize() -> void:
@@ -68,6 +69,10 @@ func run() -> void:
 	material.set_shader_parameter("grouped_flight", true)
 	material.set_shader_parameter("group_motion", Vector4(.3, .2, 0, 0))
 	material.set_shader_parameter("group_float", Vector2.ZERO)
+	# A corner of the sheet is in the first release cohort, so it is already
+	# flying at every sampled phase. The default whole-sheet rect is the centre,
+	# which is released last and still rests behind the later pane at 0.15.
+	material.set_shader_parameter("source_sheet_rect", Vector4(0, 0, .1, .1))
 	material.set_shader_parameter("group_travel_du", Vector3(1, 0, 0))
 	material.set_shader_parameter("group_travel_dv", Vector3(0, -1, 0))
 	var backing := Pieces.new()
@@ -81,28 +86,38 @@ func run() -> void:
 		ink.set_fly(Vector3(0, 0, 5), phase)
 		var pixels := await ink_pixels(view, "3d-phase-%s" % phase)
 		check(pixels > 100 if phase > 0.0 else pixels == 0, "3D flying ink clears pane depth; rest restores stacking at %s: %d pixels" % [phase, pixels])
+	# Flat 2D: resting ink is a 2D panel in its own pane, under later panes;
+	# flying ink is in the 3D overlay, over every pane.
 	var flat := viewport(false)
 	var transition := Transition2D.new()
 	flat.add_child(transition)
+	var clip := Control.new()
+	clip.size = Vector2(flat.size)
+	flat.add_child(clip)
+	var overlay := Overlay.new(clip)
+	flat.add_child(overlay)
+	transition.overlay = overlay
 	var group := Node2D.new()
+	group.position = Vector2(128, 128)
 	transition.add_child(group)
-	var glyph := MultiMeshInstance2D.new()
-	glyph.texture = green.get_texture()
-	glyph.multimesh = MultiMesh.new()
-	glyph.multimesh.transform_format = MultiMesh.TRANSFORM_2D
-	glyph.multimesh.use_custom_data = true
-	glyph.multimesh.mesh = QuadMesh.new()
-	glyph.multimesh.mesh.size = Vector2.ONE
-	glyph.multimesh.instance_count = 1
-	glyph.multimesh.set_instance_transform_2d(0, Transform2D(Vector2(40, 0), Vector2(0, 40), Vector2(128, 128)))
-	glyph.multimesh.set_instance_custom_data(0, Color(0, 0, 1, 1))
-	glyph.material = ShaderMaterial.new()
-	glyph.material.shader = Transition2D.TransitionShader
-	glyph.material.set_shader_parameter("glyph_layer", true)
-	glyph.material.set_shader_parameter("texture_size", Vector2(40, 40))
-	glyph.material.set_shader_parameter("extent", Vector2(64, 64))
-	group.add_child(glyph)
-	transition.glyphs.append(glyph)
+	var local := Rect2(-20, -20, 40, 40)
+	var piece := Pieces.new()
+	overlay.acquire().add_child(piece)
+	var map := overlay.frame(group, local)
+	piece.build_regions(green, [whole], whole, map[0], map[1], map[2], Vector2.ZERO, 0)
+	piece.set_progress(1.0)
+	piece.set_appearance(1.0, 1.0)
+	piece.set_meta("glyph_layer", true)
+	piece.set_meta("anchor", group)
+	piece.set_meta("local_rect", local)
+	for parameter in ["grouped_flight", "retire_flight_pieces"]: piece._material().set_shader_parameter(parameter, true)
+	piece._material().set_shader_parameter("group_motion", Vector4(.3, .2, 0, 0))
+	piece._material().set_shader_parameter("source_sheet_rect", Vector4(0, 0, .1, .1))
+	piece._material().set_shader_parameter("group_travel_du", map[1] * 6.0)
+	piece._material().set_shader_parameter("group_travel_dv", map[2] * 6.0)
+	transition.glyphs.append(piece)
+	transition.panel(green.get_texture(), local, group)
+	transition.rest_ink.append(transition.panels.back())
 	var cover := Sprite2D.new()
 	cover.texture = red.get_texture()
 	cover.position = Vector2(128, 128)
@@ -111,5 +126,20 @@ func run() -> void:
 		transition.set_progress(phase)
 		var pixels := await ink_pixels(flat, "2d-phase-%s" % phase)
 		check(pixels > 100 if phase > 0.0 else pixels == 0, "2D flying ink clears later panes; rest restores stacking at %s: %d pixels" % [phase, pixels])
+	# The overlay composites premultiplied ink exactly once: a translucent
+	# source looks the same as a resting 2D panel and as a flying 3D piece.
+	cover.hide()
+	var glass := solid_source(Color(0.9, 0.6, 0.3, 0.5))
+	piece._material().set_shader_parameter("terminal_tex", glass.get_texture())
+	transition.rest_ink[0].texture = glass.get_texture()
+	# The sheet centre releases last, so this piece is still assembled.
+	piece._material().set_shader_parameter("source_sheet_rect", Vector4(.45, .45, .1, .1))
+	var colors: Array[Color] = []
+	for phase in [0.0, 0.0005]:
+		transition.set_progress(phase)
+		await ink_pixels(flat, "2d-translucent-%s" % phase)
+		colors.append(flat.get_texture().get_image().get_pixel(128, 128))
+	var error := maxf(absf(colors[0].r - colors[1].r), maxf(absf(colors[0].g - colors[1].g), absf(colors[0].b - colors[1].b)))
+	check(error < 0.03 and absf(colors[0].a - colors[1].a) < 0.03, "Overlay ink matches its 2D panel: %s vs %s" % [colors[0], colors[1]])
 	print("SCATTER_VISIBILITY_PASS" if failures.is_empty() else "SCATTER_VISIBILITY_FAIL: " + str(failures))
 	quit(0 if failures.is_empty() else 1)

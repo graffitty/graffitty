@@ -1,4 +1,5 @@
 mod scene;
+mod socket_probe;
 mod remote_client;
 mod font_cache;
 mod workspace_layout;
@@ -175,6 +176,8 @@ mod x11_scale;
 mod ios_renderer;
 #[cfg(target_os = "ios")]
 mod ios_password_keyboard;
+#[cfg(target_os = "ios")]
+mod ios_terminal_ime;
 mod agent_attention;
 mod agents;
 mod attention_audio;

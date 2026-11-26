@@ -9,15 +9,25 @@ func advertised_ports_ready(keys: Array) -> bool:
 
 func play() -> void:
  root.unfocusable = true
+ # Grouped flight belongs to the session switch; tab switches push and pull.
+ check(host.switch_world('flat-3d'), 'Open Flat 3D')
  await camera_at_rest()
- check(is_zero_approx(host.active_terminal().get('cell_padding')), 'Workspace pane padding is not duplicated inside the terminal')
- host.set_tab_transition_effect("scatter")
+ var term: Control = host.active_terminal()
+ # The server inset already includes the terminal's own cell padding.
+ if check(term.has_meta('server_content_insets'), 'Server provides pane content insets'):
+  check(is_equal_approx(term.position.x + term.cell_padding, float(term.get_meta('server_content_insets')[0])), 'Workspace pane padding is not duplicated inside the terminal')
+ host.set_session_transition_effect('fly_away_and_in')
+ await open_world_sessions(2)
  var first: int = host.workspace_layout.active
  host.workspace_layout.tab(first).tree.tiling = false
  host.create_terminal_window(host.pane_focus)
- await hold(1.0)
- var keys: Array = host.workspace_view.pane_rects.keys().filter(func(key): return host.is_terminal_pane(key))
- check(keys.size() == 2, 'Two graph nodes are visible')
+ var terminal_keys := func(): return host.workspace_view.pane_rects.keys().filter(func(key): return host.is_terminal_pane(key))
+ # The owner acknowledges the new window asynchronously.
+ var window_deadline := Time.get_ticks_msec() + 5000
+ while terminal_keys.call().size() != 2 and Time.get_ticks_msec() < window_deadline: await process_frame
+ await hold(0.5)
+ var keys: Array = terminal_keys.call()
+ check(keys.size() == 2, 'Two graph nodes are visible: %d' % keys.size())
  for key in keys:
   await host.agent_api.graph.dispatch(int(key.get_slice(':',1)), 'agent.event', {'provider':'adapter', 'event':'SessionStart'})
   await host.agent_api.graph.dispatch(int(key.get_slice(':',1)), 'agent.register', {'name':key,'inputs':[{'id':'in'}],'outputs':[{'id':'out','color':'#ffd47a'}]})
@@ -43,7 +53,8 @@ func play() -> void:
  host.workspace_view._sync_chromium_links()
  host.toggle_pane_status()
  await hold(0.1)
- host.create_session()
+ # Start the switch and inspect its departure while it is in flight.
+ preload("res://scenes/session/LiveSessionMenu.gd").switch_to(host, preload("res://scenes/session/LiveSessionMenu.gd").transport(host), world_sessions[1])
  var deadline := Time.get_ticks_msec() + 10000
  while host.world.tab_fx_out.is_empty() and Time.get_ticks_msec() < deadline: await process_frame
  var panels: Array = host.world.tab_fx_out.filter(func(layer): return layer.has_meta('panel'))
@@ -68,7 +79,8 @@ func play() -> void:
  check(motions.all(func(motion): return maxf(absf(motion.x),absf(motion.y))<=0.085 and motion.z>=0.96), 'Camera depth dominates the small lateral drift')
  check(motions.size()>1 and motions[0]!=motions[1], 'Layers retain small variations in travel')
  check(motions.all(func(motion): return motion.w>=0.0 and motion.w<=1.0), 'Each layer has a bounded random timing seed')
- check(glyphs.all(func(layer): return layer.multimesh.mesh.surface_get_array_len(0)>4), 'Flying glyphs have volume geometry')
+ var letters: Array = glyphs.filter(func(layer): return not layer.has_meta('dust'))
+ check(not letters.is_empty() and letters.all(func(layer): return layer.multimesh.mesh is ArrayMesh and layer.multimesh.mesh.surface_get_array_len(0)>4), 'Flying letters have volume geometry; dust stays flat')
  # Moving the camera farther away must not increase scatter's world distance.
  var sample_layer = glyphs[0]
  var travel_before: Vector3 = sample_layer._material().get_shader_parameter('group_travel_du')
@@ -90,7 +102,7 @@ func play() -> void:
    check(layer._material().get_shader_parameter('grouped_flight'), 'Transition uses grouped motion')
  check(preload("res://scenes/PaneStatusDialog.gd").find(host) != null, 'Pane Status remains independent of tab departure')
  check('wires' in names and 'sockets' in names, 'Both connections and sockets participate in departure')
- check(2 in groups and 4 in groups, 'CJK and emoji have separate grouped layers')
+ check(0 in groups and 1 in groups, 'Dust and flying letters are separate grouped layers')
  await hold(0.15)
  if DisplayServer.get_name() != 'headless':
   overlay.hide()
@@ -105,7 +117,7 @@ func play() -> void:
    await RenderingServer.frame_post_draw
    root.get_texture().get_image().save_png('/tmp/grouped-scatter-'+sample+'.png')
  await hold(2.0)
- host.select_workspace(first)
+ await select_world_session(0)
  await hold(0.4)
  if DisplayServer.get_name() != 'headless':
   overlay.hide()
