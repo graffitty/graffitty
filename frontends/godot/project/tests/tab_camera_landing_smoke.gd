@@ -1,5 +1,9 @@
 extends "scatter_interruption_smoke.gd"
-## Both built-in renderers spend the scatter tail decelerating the camera.
+## Both built-in renderers spend the tab switch's landing decelerating the camera.
+##
+## Tab switches use Push/Pull (the only tab effect), whose camera and depth
+## motion share one short deadline. Sample that live deadline instead of the
+## longer scatter timeline (FLY_TIME + TAB_FX_SETTLE) this smoke was written for.
 func play() -> void:
 	use_config("res://../../../tests/llm-e2e/suites/godot/flat-world/per-tab-camera-view.conf")
 	await labelled_tabs(["SOURCE", "DESTINATION"])
@@ -27,26 +31,29 @@ func play() -> void:
 		var source_center: Vector2 = world.camera_2d.position if path == "flat-2d" else Vector2.ZERO
 		await switch_and_freeze(1)
 		check(host.world == world, "Tab change retains the requested renderer")
+		var landing: float = world._transition_duration()
+		check(world.depth_effect() and world.fly_dur > 0.0, path + ": tab switch flies with Push/Pull")
 		if path == "flat-2d":
 			var destination: Dictionary = world._canvas_camera_target()
 			var eye: Vector3 = destination.transform.origin
 			var target_zoom := Vector2.ONE / (Vector2(destination.rect.z, destination.rect.w) * eye.z)
-			world._process(world.tab_transition_duration() * .25)
+			world._process(landing * .25)
 			# At one quarter of the shared quintic, depth has covered 10.3515625%.
 			# Magnification interpolation looks different even with the same clock.
 			var expected_zoom := Vector2.ONE / (Vector2.ONE / source_zoom).lerp(Vector2.ONE / target_zoom, .103515625)
 			check(world.camera_2d.zoom.distance_to(expected_zoom) < .0001, "2D zoom follows the 3D dolly curve")
 			check(world.camera_2d.position.distance_to(source_center.lerp(Vector2(eye.x, eye.y), .103515625)) < .01,
 				"2D pan and depth share one speed ramp")
-		world._process(maxf(0.0, world.FLY_TIME - world.tab_fx_t))
-		check(world.fly_dur > 0.0, path + ": camera is still travelling at 1.6 seconds")
-		check(is_equal_approx(world.tab_fx_dur, world.tab_transition_duration()), path + ": scatter and camera share a deadline")
+		world._process(maxf(0.0, landing * .75 - world.tab_fx_t))
+		check(world.fly_dur > 0.0, path + ": camera is still travelling at three quarters of the switch")
+		check(is_equal_approx(world.tab_fx_dur, landing) and is_equal_approx(world.fly_dur, landing),
+			path + ": tab effect and camera share a deadline")
 		var displayed: Variant = world.camera_2d.position if path == "flat-2d" else world.cam.global_transform
-		world._process(0.25)
+		world._process(landing * .125)
 		var later: Variant = world.camera_2d.position if path == "flat-2d" else world.cam.global_transform
 		check(displayed != later and world.fly_dur > 0.0, path + ": camera continues moving through the landing interval")
-		world._process(0.25)
-		check(is_zero_approx(world.fly_dur), path + ": camera finishes with scatter at 2.1 seconds")
+		world._process(landing * .125)
+		check(is_zero_approx(world.fly_dur), path + ": camera finishes with the tab effect at its deadline")
 		world.set_process(true)
 		await camera_at_rest()
 		if path == "flat-2d": await interrupted_2d_flight(world)
@@ -54,7 +61,8 @@ func play() -> void:
 func interrupted_2d_flight(world: Node) -> void:
 	world.set_process(false)
 	await switch_and_freeze(0)
-	world._process(.7)
+	var landing: float = world._transition_duration()
+	world._process(landing / 3.0)
 	var position: Vector2 = world.camera_2d.position
 	var zoom: Vector2 = world.camera_2d.zoom
 	var velocity: Vector3 = world.camera_motion.velocity
@@ -66,7 +74,7 @@ func interrupted_2d_flight(world: Node) -> void:
 		"Interrupted 2D flight preserves incoming speed instead of restarting at rest")
 	# A destination that settles late must not be substituted into a partially
 	# completed lerp: retain the displayed frame, derivative and landing time.
-	world._process(.4)
+	world._process(landing * .2)
 	position = world.camera_2d.position
 	zoom = world.camera_2d.zoom
 	velocity = world.camera_motion.velocity
@@ -82,11 +90,14 @@ func interrupted_2d_flight(world: Node) -> void:
 	check(absf(world.camera_motion.duration - world.camera_motion.elapsed - remaining + .0001) < .00001,
 		"Late destination changes preserve the original landing time")
 	world._process(remaining)
-	check(not world.camera_motion.moving and is_zero_approx(world.fly_dur) and world.tab_fx_t < 0.0,
-		"Interrupted 2D flight and scatter finish together")
+	# The arrival is drawn fully assembled at the shared deadline; the live
+	# sheet replaces it on the next frame (_update_transition_2d).
+	check(not world.camera_motion.moving and is_zero_approx(world.fly_dur) and is_equal_approx(world.tab_fx_t, world.tab_fx_dur),
+		"Interrupted 2D flight and arrival land together")
 	position = world.camera_2d.position
 	zoom = world.camera_2d.zoom
 	world._process(.1)
+	check(world.tab_fx_t < 0.0, "Live sheet replaces the landed 2D arrival on the next frame")
 	check(world.camera_2d.position.distance_to(position) < .001 and world.camera_2d.zoom.distance_to(zoom) < .00001,
 		"2D landing has no second pan or zoom")
 	world.set_process(true)

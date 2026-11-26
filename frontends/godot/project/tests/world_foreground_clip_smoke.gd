@@ -15,6 +15,9 @@ func run() -> void:
 		world._apply_camera_fx()
 		world.set_process(false)
 		world.scenery_vp.render_target_update_mode = SubViewport.UPDATE_ALWAYS
+		# Bistro's TAA jitters each scenery render: two renders of the same
+		# scene differ by ~0.3 at edges. Compare clipping, not jitter phases.
+		world.scenery_vp.use_taa = false
 		var view: Control = host.workspace_view
 		var marker := ColorRect.new()
 		marker.color = Color(0.9, 0.15, 0.4)

@@ -11,7 +11,9 @@ func run() -> void:
 	var view: Control = host.workspace_view
 	check(bar.get_viewport() == view.get_viewport(), "Scrollbar receives input in the host viewport")
 	check(bar.is_in_group(&"touch_chrome"), "Android treats scrollbar as directly interactive chrome")
-	check(bar.custom_minimum_size.x == 0, "Scrollbar uses the normal theme width on every platform")
+	# The shader-painted bar reserves its own fixed WIDTH (the native minimum
+	# ignores its empty styles); touch controls must not widen it.
+	check(bar.custom_minimum_size.x == bar.WIDTH and is_equal_approx(bar.size.x, bar.WIDTH), "Scrollbar uses the normal theme width on every platform")
 	# A deterministic remote terminal supplies history without shell startup races.
 	var terminal: Control = ClassDB.instantiate("Terminal")
 	terminal.remote_mode = true

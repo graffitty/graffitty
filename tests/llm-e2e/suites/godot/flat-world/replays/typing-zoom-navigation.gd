@@ -8,6 +8,9 @@ func play() -> void:
 		var world: Node = host.world
 		var view: Control = host.workspace_view
 		world.fx_enabled = true
+		# Adaptive zoom is the default; this scenario covers the fixed typing
+		# zoom multiplier, so select it explicitly.
+		world.fx_cfg.set_option("scene.camera", "zoom_mode", "typing")
 		world.fx_cfg.set_option("state." + str(world.fx_cfg.behavior.rest_state), "camera.zoom", 1.0)
 		var destination: Dictionary = world.fx_cfg.frame(str(world.fx_cfg.behavior.active_state))
 		destination["camera.zoom"] = 1.15

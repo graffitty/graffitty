@@ -3633,10 +3633,15 @@ func title_navigation_scale(point: Vector2) -> float:
 	var view: Control = host.workspace_view
 	if view.uses_navigation_camera():
 		value = _navigation_frame(value, view.navigation_zoom, view.navigation_center)
+	# Titles are drawn on the lifted terminal mesh, not the authored wall;
+	# Flat 2D applies the same lift (Flat2DWorld.title_navigation_scale).
+	var lift := Vector3.ZERO
+	if active >= 0 and active < surfaces.size():
+		lift = surfaces[active].global_basis.z * surfaces[active].surface_lift
 	var projected: Array[Vector2] = []
 	for offset in [Vector2.ZERO, Vector2(0, 20)]:
 		var uv := _saddle_uv((point + offset) / _sheet_size())
-		var delta: Vector3 = uv_origin + uv_du * uv.x + uv_dv * uv.y - value.transform.origin
+		var delta: Vector3 = uv_origin + uv_du * uv.x + uv_dv * uv.y + lift - value.transform.origin
 		var depth: float = delta.dot(-value.transform.basis.z)
 		if depth <= .0001: return 1.0
 		projected.append(Vector2(delta.dot(value.transform.basis.x) / depth / value.rect.z,
@@ -4928,14 +4933,16 @@ func _build_arriving_layers_at_destination() -> void:
 
 ## Departing pieces keep flying on their own clock after the transition ends
 ## or is interrupted; the live surface no longer waits for them.
-func _retire_departing_pieces(leaving: float) -> void:
+## Push/Pull departures stay live until they fade at landing; an interruption
+## freezes them like every other retiring layer (retained-presentation.md).
+func _retire_departing_pieces(leaving: float, interrupted := false) -> void:
 	var group: int = tab_fx_out[0].get_instance_id() if not tab_fx_out.is_empty() else 0
 	for layer in tab_fx_out:
 		var fly: float = _layer_fly(layer, leaving)
 		if fly >= 1.0:
 			layer.queue_free()
 			continue
-		if not layer.get_meta("depth_mode", false): layer.freeze_live_source()
+		if interrupted or not layer.get_meta("depth_mode", false): layer.freeze_live_source()
 		tab_fx_stale.append(
 			{
 				"layer": layer,
@@ -4960,14 +4967,15 @@ func _hand_over_flying_pieces() -> void:
 	# A completed flight still owns its assembled pieces while the live-sheet
 	# handoff waits for frame_post_draw. Retarget those pieces too.
 	var transition_time := tab_fx_dur if tab_fx_t < 0.0 else tab_fx_t
-	_retire_departing_pieces(clampf(transition_time / maxf(_tab_departure_duration(), 0.001), 0.0, 1.0))
+	_retire_departing_pieces(clampf(transition_time / maxf(_tab_departure_duration(), 0.001), 0.0, 1.0), true)
 	# Snapshot each arriving phase. The shader preserves each chunk's actual
 	# velocity and joins the departure speed without replaying a spring backwards.
 	var arrival_duration := _tab_arrival_duration()
 	var arrive_at := _tab_arrival_start()
 	var landing: float = 1.0 - clampf((transition_time - arrive_at) / maxf(arrival_duration, 0.001), 0.0, 1.0)
 	for layer in tab_fx_in:
-		if not layer.get_meta("depth_mode", false): layer.freeze_live_source()
+		# Retain the interrupted arrival's last view before its source is hidden.
+		layer.freeze_live_source()
 		layer._material().set_shader_parameter("retirement_phase", landing)
 		layer._material().set_shader_parameter("retirement_time", 0.0)
 		tab_fx_stale.append(

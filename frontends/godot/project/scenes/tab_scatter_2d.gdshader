@@ -14,11 +14,11 @@ const float NEAR_WEIGHT = 0.2310643640;
 const float FAR_WEIGHT = 0.0243540048;
 const float CENTER_WEIGHT = 1.0 - 2.0 * (NEAR_WEIGHT + FAR_WEIGHT);
 
-vec4 blur_row(sampler2D source, vec2 uv, vec2 dx) {
- return texture(source, uv) * CENTER_WEIGHT
-      + (texture(source, uv - 0.5 * dx) + texture(source, uv + 0.5 * dx)) * NEAR_WEIGHT
-      + (texture(source, uv - dx) + texture(source, uv + dx)) * FAR_WEIGHT;
-}
+// A macro, not a function: passing TEXTURE as a sampler argument fails to
+// compile in the headless renderer (no custom sampler for the builtin).
+#define BLUR_ROW(uv, dx) (texture(TEXTURE, (uv)) * CENTER_WEIGHT \
+      + (texture(TEXTURE, (uv) - 0.5 * (dx)) + texture(TEXTURE, (uv) + 0.5 * (dx))) * NEAR_WEIGHT \
+      + (texture(TEXTURE, (uv) - (dx)) + texture(TEXTURE, (uv) + (dx))) * FAR_WEIGHT)
 
 void fragment() {
  vec4 ink = texture(TEXTURE,UV);
@@ -30,9 +30,9 @@ void fragment() {
                   all(lessThanEqual(UV + reach, vec2(1.0)));
   vec4 sum = vec4(0.0);
   if (interior) {
-   sum = blur_row(TEXTURE, UV, dx) * CENTER_WEIGHT
-       + (blur_row(TEXTURE, UV - 0.5 * dy, dx) + blur_row(TEXTURE, UV + 0.5 * dy, dx)) * NEAR_WEIGHT
-       + (blur_row(TEXTURE, UV - dy, dx) + blur_row(TEXTURE, UV + dy, dx)) * FAR_WEIGHT;
+   sum = BLUR_ROW(UV, dx) * CENTER_WEIGHT
+       + (BLUR_ROW(UV - 0.5 * dy, dx) + BLUR_ROW(UV + 0.5 * dy, dx)) * NEAR_WEIGHT
+       + (BLUR_ROW(UV - dy, dx) + BLUR_ROW(UV + dy, dx)) * FAR_WEIGHT;
   } else {
    float weights = 0.0;
    for (int y = -2; y <= 2; y++) {
