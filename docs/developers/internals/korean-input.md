@@ -54,12 +54,22 @@ sends every jamo the Korean keyboard rewrites. While a terminal owns input,
 - the Hangul syllable before the caret and marked text are drawn as preedit and
   sent once final;
 - padding keeps Backspace working on empty input;
+- autocapitalization, autocorrection, spell checking, smart punctuation,
+  inline predictions (iOS 17+) and Writing Tools (iOS 18+) are off while a
+  terminal owns the view, and restored afterwards;
 - hardware navigation keys and chords reach the terminal in order, except
   while text is marked, when they stay with the candidate list.
 
-Software keyboards are verified in the iPad simulator. Hardware keyboards
-without the on-screen keyboard still use Godot's path and do not compose.
-Set `GRAFFITTY_IME_TRACE=1` to log each text change.
+With a hardware keyboard, the view keeps focus without the on-screen keyboard,
+so a hardware keyboard composes Hangul the same way:
+
+- it takes focus when a keyboard connects, and again within half a second if
+  something releases it;
+- Ctrl+Space stays with iPadOS to switch input sources;
+- Shift, Alt and Ctrl+Return reach the terminal as key commands.
+
+Software keyboards are verified in the iPad simulator. The hardware keyboard
+path is not yet verified on a device.
 
 ## Detailed evidence
 

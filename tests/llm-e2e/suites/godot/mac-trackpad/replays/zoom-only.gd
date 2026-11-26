@@ -1,6 +1,6 @@
 extends "../../../../replay/mac_pinch.gd"
 func play() -> void:
-	for path in ["", "flat-2d"]:
+	for path in ["flat-3d", "flat-2d"]:
 		await prepare(path)
 		await say("Zoom only: keep the content under the mouse fixed")
 		var start_zoom: float = host.workspace_view.navigation_zoom

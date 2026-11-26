@@ -144,6 +144,13 @@ floating controls without a frame loop reading keyboard height. Check Android
 After background/resume, dismissal waits for both resume and window focus, retries
 at most three times at 250 ms intervals, and releases reserved space immediately.
 Explicitly opening the keyboard cancels outstanding dismissal attempts.
+
+On iPadOS there is no height-change notification, so each frame reads the
+current keyboard height and reports a change once. Repeat steps 1–4 with the
+docked, floating and split keyboards. With a hardware keyboard, iPadOS shows
+only its shortcut bar (at most 120 points): the terminal stays above it and
+the touch key row is hidden. Detach the hardware keyboard while typing; the
+key row and the full on-screen keyboard inset must return.
 Opening the installed SwiftKey Polyglot keyboard in Programming Mode must also
 complete its modifier handshake across the two application processes. A private
 keyboard Parcelable must never crash Graffitty; malformed messages are rejected

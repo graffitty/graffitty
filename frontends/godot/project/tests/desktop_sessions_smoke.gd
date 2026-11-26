@@ -51,6 +51,8 @@ func run() -> void:
 		check(app.hosts.size() == 1 and app.hosts[0] == group.host, "Sessions selects the computer in the existing window")
 		check(groups.all(func(g): return g.peer.connected), "Switching computers keeps every transport connected")
 		check(group.host.active_terminal().get_shell_pid() == pids[group.id], "Switching preserves the live shell PID")
+		var composite: Material = group.host.world_container.material
+		check(group.host.world_viewport.use_hdr_2d and composite is ShaderMaterial and composite.shader.resource_path.ends_with("linear_canvas_composite.gdshader"), "Switching keeps the Flat 2D world's color encoding")
 	check(is_equal_approx(local_view.navigation_zoom, .7) and local_view.navigation_center.is_equal_approx(Vector2(880, 460)), "Local pan and zoom survive repeated computer switches")
 	# A deliberate remote disconnect still returns locally without shutting down
 	# that server or removing the other remote connection.

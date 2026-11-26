@@ -14,6 +14,8 @@ var lagging_frames := 0
 var worst := 0.0
 
 func _initialize() -> void:
+	# A background GPU run draws only when asked; the guard keeps frames coming.
+	preload("../../../../tests/llm-e2e/replay/background.gd").install(self)
 	var isolated := OS.get_cache_dir().path_join("graph-port-zoom-%d" % OS.get_process_id())
 	OS.set_environment("XDG_CONFIG_HOME", isolated.path_join("config"))
 	OS.set_environment("XDG_STATE_HOME", isolated.path_join("state"))

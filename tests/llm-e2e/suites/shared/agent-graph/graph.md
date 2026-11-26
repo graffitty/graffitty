@@ -16,6 +16,10 @@ Run graph_editing_smoke.gd. Require create/reconnect/preview, reroute, cut/mute,
 
 Run graph_link_geometry_smoke.gd and graph_link_animation_smoke.gd. Check both directions, reroute tangents, feedback clearance and the queued/sent/failed animation lifecycle. A headless run proves assertions, not visual smoothness.
 
+Run graph_port_zoom_smoke.gd. Every visible port must stay within 1 px of its
+pane on every frame of eased mouse-wheel, pinch and direct zoom; a port that
+trails the camera by one frame fails.
+
 Run graph_compact_ports_smoke.gd with a large UI font: socket resize callbacks
 must settle without exhausting the message queue. A newly pressed dashed output
 with zero drag distance must draw without an empty-multiline error. On touch UI,

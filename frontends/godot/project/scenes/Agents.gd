@@ -549,7 +549,10 @@ func _process(_delta: float) -> void:
 ## server, an unsupported format) is not an error: the sound is just not heard.
 func _report_audio(failure: String) -> void:
 	if failure.is_empty(): return
-	if failure.begins_with("No audio output device") or failure.begins_with("Unsupported audio output format: "):
+	if audio_unavailable(failure):
 		print_verbose("Attention sound: " + failure)
 	else:
 		push_error("Attention sound: " + failure)
+
+static func audio_unavailable(failure: String) -> bool:
+	return failure.begins_with("No audio output device") or failure.begins_with("Unsupported audio output format: ")

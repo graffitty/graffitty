@@ -90,7 +90,7 @@ func exercise_close(path: String, effect: String) -> void:
 	check(has_departure(world), "Closing preserves the outgoing pane capture")
 	await process_frame
 	check(not is_instance_valid(source), "Closed terminal is released while its independent presentation departs")
-	(await screen_image()).save_png(evidence_path(("flat-3d" if path.is_empty() else path.get_file()) + "-" + effect + "-close.png"))
+	(await screen_image()).save_png(evidence_path(path.get_file() + "-" + effect + "-close.png"))
 	await camera_at_rest()
 	await create_timer(.2).timeout
 	check(not is_instance_valid(source), "Closed source is released after animation")
@@ -134,11 +134,11 @@ func exercise_depth(path: String) -> void:
 		# Freeze only the presenter at a middle pose while the GPU captures draw.
 		# Shader compilation/readback time must not move evidence to the endpoint.
 		world.set_process(false)
-		await check_depth_clock(world, ("flat-3d" if path.is_empty() else path) + "-depth-" + str(index))
+		await check_depth_clock(world, path + "-depth-" + str(index))
 		world.tab_fx_t = .17
 		if world.get("camera_2d") != null: world._update_transition_2d(0.0)
 		else: world._update_tab_transition(0.0)
-		(await screen_image()).save_png(evidence_path(("flat-3d" if path.is_empty() else path) + "-depth-" + str(index) + ".png"))
+		(await screen_image()).save_png(evidence_path(path + "-depth-" + str(index) + ".png"))
 		world.set_process(true)
 		await camera_at_rest()
 	# Reverse before arrival, keeping the displayed frame rather than jumping.
@@ -174,7 +174,7 @@ func text_edge_energy(image: Image) -> float:
 
 
 func exercise_close_dof() -> void:
-	await use_world("")
+	await use_world("flat-3d")
 	use_config("res://presets/flat.conf")
 	host.set_tab_transition_effect("push_pull")
 	# Closing the last tab selects its predecessor: the arriving pane starts
@@ -219,8 +219,8 @@ func exercise_close_dof() -> void:
 
 func play() -> void:
 	await exercise_close_dof()
-	for path in ["", "flat-2d", "bistro"]:
+	for path in ["flat-3d", "flat-2d", "bistro"]:
 		await exercise_close(path, "push_pull")
-	for path in ["", "flat-2d"]:
+	for path in ["flat-3d", "flat-2d"]:
 		await exercise_depth(path)
 		await exercise_close(path, "push_pull")

@@ -90,7 +90,7 @@ func run() -> void:
 	await create_timer(.1).timeout
 	check(host.world.effects_2d.particles.sparks.size()>0,"Typing particles run in 2D")
 	await capture("flat-2d-effects")
-	check(host.switch_world(""),"Switch back to Flat")
+	check(host.switch_world("flat-3d"),"Switch back to Flat")
 	await create_timer(.5).timeout
 	check(host.world.cam != null and not host.world.cam.get_viewport().disable_3d,"Restores 3D viewport")
 	check(host.active_terminal()==terminal,"Original terminal retained after round trip")

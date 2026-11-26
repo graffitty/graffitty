@@ -1,4 +1,4 @@
-extends "../../../../tests/llm-e2e/replay/replay.gd"
+extends "../../../../replay/replay.gd"
 
 ## Isolated server required. Selecting a pane of the tab on screen never plays
 ## a tab transition, even after the sheet stayed bound to a pane that is no

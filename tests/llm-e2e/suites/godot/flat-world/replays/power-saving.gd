@@ -33,7 +33,7 @@ func play() -> void:
 	host.power._accept({"available": true, "on_battery": true})
 	await hold(.3)
 	check(host.current_plugin == "flat-2d", "Battery event selects Flat 2D")
-	host.switch_world("")
+	host.switch_world("flat-3d")
 	host.power._accept({"available": true, "on_battery": true})
 	await hold(.3)
 	check(host.current_plugin == "flat-3d", "Repeated snapshots preserve manual selection")

@@ -3,7 +3,7 @@ extends "scatter_interruption_smoke.gd"
 func play() -> void:
 	use_config("res://../../../tests/llm-e2e/suites/godot/flat-world/per-tab-camera-view.conf")
 	await labelled_tabs(["SOURCE", "DESTINATION"])
-	for path in ["", "flat-2d"]:
+	for path in ["flat-3d", "flat-2d"]:
 		# Renderer choice belongs to each tab; exercise the same renderer at
 		# both ends instead of silently switching back to Flat 3D on arrival.
 		for index in 2:

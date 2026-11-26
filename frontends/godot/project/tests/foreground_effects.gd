@@ -23,7 +23,7 @@ func play() -> void:
 	var connection: Node = host.session_backend.connection
 	var terminal: Node = host.sessions[id].term
 	var command := OS.get_environment("GRAFFITTY_TEST_APP_COMMAND")
-	for world_path in ["", "flat-2d"]:
+	for world_path in ["flat-3d", "flat-2d"]:
 		if not check(host.switch_world(world_path), "World loads"): return
 		await tree.create_timer(0.2).timeout
 		# Headless windows may skip Control layout; bind the same signals as refresh().
@@ -52,7 +52,7 @@ func play() -> void:
 		if not check(host.sessions[id].model.foreground_app.get("id", "") != "nvim", "Exiting app publishes shell context"): return
 		print("FOREGROUND_EFFECTS_WORLD_PASS ", world_path)
 	var release: Callable = Actions.disable().call(host)
-	if not check(host.switch_world(""), "World switches under an all-effects hold"): return
+	if not check(host.switch_world("flat-3d"), "World switches under an all-effects hold"): return
 	if not check(not host.world.effect_control.allows("sparks"), "New world inherits the host's hold"): return
 	release.call()
 	if not check(host.world.effect_control.allows("sparks"), "Release reaches the new world"): return

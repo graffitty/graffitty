@@ -121,6 +121,8 @@ func _make_viewport(size: Vector2i) -> SubViewport:
 ## Draw each piece mesh variant (plain, per-instance color, extruded glyph)
 ## and the composite once at the overlay's formats, then free everything.
 func warm() -> void:
+	# Nothing compiles without a GPU, and a headless frame never posts its draw.
+	if DisplayServer.get_name() == "headless": return
 	var target := _make_viewport(Vector2i(16, 16))
 	add_child(target)
 	var source := SubViewport.new()

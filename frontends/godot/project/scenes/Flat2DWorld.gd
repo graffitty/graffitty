@@ -153,6 +153,9 @@ func _ready() -> void:
 
 func _exit_tree() -> void:
 	_cancel_transition_preparation()
+	# Parking a computer or moving to another window reparents the host with
+	# this world and its viewport; _ready does not run again to reapply them.
+	if is_instance_valid(host) and host.moving_window: return
 	if is_instance_valid(get_viewport()):
 		get_viewport().disable_3d = _previous_disable_3d
 		get_viewport().use_hdr_2d = _previous_hdr_2d

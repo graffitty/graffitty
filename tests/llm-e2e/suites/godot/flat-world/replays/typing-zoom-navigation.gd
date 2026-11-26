@@ -2,7 +2,7 @@ extends "../../../../replay/replay.gd"
 
 func play() -> void:
 	await labelled_tabs(["ZOOM"])
-	for path in ["", "flat-2d"]:
+	for path in ["flat-3d", "flat-2d"]:
 		host.switch_world(path)
 		await hold(.2)
 		var world: Node = host.world

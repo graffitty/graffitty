@@ -143,7 +143,7 @@ func play() -> void:
 	var first: String = host.pane_focus
 	await add_window(first, "h")
 	await camera_at_rest()
-	for world in ["", "flat-2d"]:
+	for world in ["flat-3d", "flat-2d"]:
 		host.switch_world(world)
 		await camera_at_rest()
 		await exercise()

@@ -2,8 +2,8 @@ extends "res://tests/session_landing_smoke.gd"
 
 ## Off-canvas graph chrome must be present before the live-view handoff.
 
-func prepare(host: Node, name: String, offset: float) -> void:
-	await super.prepare(host, name, offset)
+func prepare(host: Node, name: String, offset: float, zoom := .55) -> void:
+	await super.prepare(host, name, offset, zoom)
 	var view: Control = host.workspace_view
 	if view.panes.size() == 1:
 		host.create_terminal_window(host.pane_focus)

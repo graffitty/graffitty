@@ -24,6 +24,13 @@ class View extends Control:
 	func canvas_point_at(point: Vector2) -> Vector2: return point
 	func view_point(point: Vector2) -> Vector2: return point
 	func _cancel_main_magnet() -> void: pass
+	# No panels or popups cover this view, and no pane resize border is hit.
+	func graph_pointer_allowed(_point: Vector2) -> bool: return true
+	func resize_window_at(_point: Vector2, _touch := false) -> String: return ""
+	func window_at(point: Vector2) -> String:
+		for key in pane_rects:
+			if pane_rects[key].has_point(point): return key
+		return ""
 	func _apply_navigation() -> void: pass
 	func wake_pane_physics() -> void: pass
 	func refresh() -> void:

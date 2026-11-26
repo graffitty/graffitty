@@ -54,6 +54,9 @@ func focus_with_prefix(key: String, target: String) -> void:
 	await hold(.5)
 
 func play() -> void:
+	# The ink camera and frozen-frame checks belong to Flat 3D; new workspaces
+	# open in Flat 2D.
+	check(host.switch_world("flat-3d"), "Open Flat 3D")
 	await camera_at_rest()
 	var view: Control = host.workspace_view
 	var source: String = host.pane_focus

@@ -11,6 +11,10 @@ func check(ok: bool, message: String) -> void:
 	print("PASS " if ok else "FAIL ", message)
 	if not ok: failures += 1
 
+## Saving the authenticated connection must not fail.
+func save_failed(error: String) -> void:
+	check(false, "Save connection: " + error)
+
 func until(condition: Callable) -> bool:
 	var deadline := Time.get_ticks_msec() + 15000
 	while not condition.call() and Time.get_ticks_msec() < deadline: await process_frame
@@ -39,7 +43,7 @@ func run() -> void:
 		connection.preferred_session = ""
 		root.add_child(connection)
 		connections.append(connection)
-		preload("res://scenes/remote/ClientAuthentication.gd").bind(root, connection, settings.merged({"name":""}), false)
+		preload("res://scenes/remote/ClientAuthentication.gd").bind(root, connection, settings.merged({"name":""}), false, save_failed)
 		connection.connect_remote(settings.url, settings.token)
 		if not await until(func(): return connection.connected and not connection.topology.panes.is_empty()):
 			check(false, "Authenticated attachment: " + str(settings.alias))
@@ -90,7 +94,7 @@ func run() -> void:
 	reconnected.preferred_session = original
 	root.add_child(reconnected)
 	connections.append(reconnected)
-	preload("res://scenes/remote/ClientAuthentication.gd").bind(root, reconnected, fixtures[0].merged({"name":""}), false)
+	preload("res://scenes/remote/ClientAuthentication.gd").bind(root, reconnected, fixtures[0].merged({"name":""}), false, save_failed)
 	reconnected.connect_remote(fixtures[0].url, fixtures[0].token)
 	check(await until(func(): return reconnected.connected and not reconnected.server_alias.is_empty()), "Reconnect with blank alias settings")
 	check(reconnected.server_alias == alias_a, "Reconnect reuses saved alias")

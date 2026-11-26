@@ -51,7 +51,6 @@ static BOOL g_active;
 static BOOL g_session;
 // Nesting count of programmatic edits; their notifications are not user input.
 static int g_handling;
-static BOOL g_trace;
 // The view became first responder for a hardware keyboard, not by Graffitty's
 // keyboard button.
 static BOOL g_auto_shown;
@@ -72,36 +71,6 @@ static void (*original_observe)(id, SEL, NSNotification *);
 static BOOL (*original_become)(id, SEL, NSString *, NSInteger, NSInteger);
 static BOOL (*original_resign)(id, SEL);
 static Class g_class;
-
-static FILE *g_trace_file;
-
-static void trace(NSString *format, ...) NS_FORMAT_FUNCTION(1, 2);
-static void trace(NSString *format, ...) {
-    if (!g_trace) return;
-    va_list args;
-    va_start(args, format);
-    NSString *line = [[NSString alloc] initWithFormat:format arguments:args];
-    va_end(args);
-    fprintf(stderr, "[gft-ime] %s\n", line.UTF8String);
-    if (g_trace_file) {
-        fprintf(g_trace_file, "%.3f %s\n", NSProcessInfo.processInfo.systemUptime, line.UTF8String);
-        fflush(g_trace_file);
-    }
-}
-
-// GRAFFITTY_IME_TRACE, or a file named gft-ime-trace in the app's Caches
-// folder, turns on the trace; with the file it is also written beside it.
-static void open_trace(void) {
-    NSString *caches = NSSearchPathForDirectoriesInDomains(NSCachesDirectory, NSUserDomainMask, YES).firstObject;
-    NSString *flag = [caches stringByAppendingPathComponent:@"gft-ime-trace"];
-    BOOL file = caches && [NSFileManager.defaultManager fileExistsAtPath:flag];
-    g_trace = getenv("GRAFFITTY_IME_TRACE") != NULL || file;
-    if (file) g_trace_file = fopen([caches stringByAppendingPathComponent:@"gft-ime-trace.log"].fileSystemRepresentation, "a");
-}
-
-static NSString *visible(NSString *text) {
-    return [[text stringByReplacingOccurrencesOfString:kPad withString:@"·"] stringByReplacingOccurrencesOfString:@"\n" withString:@"⏎"];
-}
 
 static BOOL is_hangul(unichar c) {
     return (c >= 0xAC00 && c <= 0xD7A3) || (c >= 0x3131 && c <= 0x318E) || (c >= 0x1100 && c <= 0x11FF);
@@ -197,8 +166,6 @@ static Edit read_change(UITextView *view, BOOL finishing) {
         }
     }
     Edit edit = {erased + (NSInteger)characters([g_sent substringFromIndex:common]), [content substringFromIndex:common]};
-    trace(@"text=%@ marked=%@ sent=%@ -> bs=%ld send=%@ hold=%@", visible(text), visible(marked),
-          visible(g_sent), (long)edit.backspaces, visible(edit.text), held);
     g_sent = content;
     g_held = held;
     set_preedit(marked.length > 0 ? marked : held, marked.length > 0 ? caret : -1);
@@ -338,8 +305,6 @@ static NSSet<UIPress *> *route_presses(id self, NSSet<UIPress *> *presses, BOOL 
     for (UIPress *press in presses) {
         int code = 0, mods = 0;
         NSNumber *usage = @(press.key.keyCode);
-        trace(@"press %@ usage=%ld flags=%lx text=%@", began ? @"down" : @"up", (long)press.key.keyCode,
-              (unsigned long)press.key.modifierFlags, visible(press.key.characters ?: @""));
         if (!began) {
             // A release follows its press, whatever the mark state is now.
             if ([g_pressed containsObject:usage]) [g_pressed removeObject:usage];
@@ -354,7 +319,6 @@ static NSSet<UIPress *> *route_presses(id self, NSSet<UIPress *> *presses, BOOL 
         // The composition precedes the key. Both go through Godot's input
         // queue, so later text cannot overtake the key.
         stream(self, finish_composition(self));
-        trace(@"key code=%d mods=%d", code, mods);
         gft_ios_terminal_ime_dispatch_key(code, mods);
     }
     return rest;
@@ -395,7 +359,6 @@ static void gft_terminal_return(id self, SEL command, UIKeyCommand *key) {
     int mods = ((flags & UIKeyModifierControl) ? 1 : 0) | ((flags & UIKeyModifierAlternate) ? 2 : 0)
         | ((flags & UIKeyModifierShift) ? 4 : 0);
     stream(self, finish_composition(self));
-    trace(@"key command Return mods=%d", mods);
     gft_ios_terminal_ime_dispatch_key(4194309, mods);
 }
 
@@ -452,10 +415,12 @@ static BOOL install(void) {
     original_become = (void *)method_setImplementation(become, (IMP)gft_become);
     // Godot's view overrides resignFirstResponder, so this replaces its own.
     original_resign = (void *)method_setImplementation(resign, (IMP)gft_resign);
-    open_trace();
     installed = YES;
     return YES;
 }
+
+static NSInteger g_saved_inline;
+static NSInteger g_saved_writing;
 
 static void set_terminal_traits(UITextView *view, BOOL terminal) {
     if (terminal && !g_saved_traits) {
@@ -468,6 +433,16 @@ static void set_terminal_traits(UITextView *view, BOOL terminal) {
         view.smartQuotesType = UITextSmartQuotesTypeNo;
         view.smartDashesType = UITextSmartDashesTypeNo;
         view.smartInsertDeleteType = UITextSmartInsertDeleteTypeNo;
+        // Predictions are never shown for a terminal; loading their language
+        // model is part of what iPadOS does on each input-language switch.
+        if (@available(iOS 17.0, *)) {
+            g_saved_inline = view.inlinePredictionType;
+            view.inlinePredictionType = UITextInlinePredictionTypeNo;
+        }
+        if (@available(iOS 18.0, *)) {
+            g_saved_writing = view.writingToolsBehavior;
+            view.writingToolsBehavior = UIWritingToolsBehaviorNone;
+        }
     } else if (!terminal && g_saved_traits) {
         view.autocapitalizationType = g_saved_traits[0].integerValue;
         view.autocorrectionType = g_saved_traits[1].integerValue;
@@ -475,6 +450,8 @@ static void set_terminal_traits(UITextView *view, BOOL terminal) {
         view.smartQuotesType = g_saved_traits[3].integerValue;
         view.smartDashesType = g_saved_traits[4].integerValue;
         view.smartInsertDeleteType = g_saved_traits[5].integerValue;
+        if (@available(iOS 17.0, *)) view.inlinePredictionType = g_saved_inline;
+        if (@available(iOS 18.0, *)) view.writingToolsBehavior = g_saved_writing;
         g_saved_traits = nil;
     } else {
         return;
@@ -497,7 +474,6 @@ char *gft_ios_terminal_ime_finish(void) {
 static void show_for_hardware_keyboard(UITextView *view) {
     if (!g_active || view.isFirstResponder || GCKeyboard.coalescedKeyboard == nil) return;
     if (UIApplication.sharedApplication.applicationState != UIApplicationStateActive) return;
-    trace(@"hardware keyboard: taking first responder");
     g_auto_shown = [view becomeFirstResponderWithString:@"" cursorStart:0 cursorEnd:0];
 }
 

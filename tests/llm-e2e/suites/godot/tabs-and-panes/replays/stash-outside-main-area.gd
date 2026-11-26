@@ -136,7 +136,7 @@ func play() -> void:
 	await check_rendered(beta)
 	stash = view.pane_rects[beta]
 	await say("Switch to Flat; the same stash and shell survive")
-	host.switch_world("")
+	host.switch_world("flat-3d")
 	_stay_awake()
 	await wait_landed()
 	await hold(1.0)

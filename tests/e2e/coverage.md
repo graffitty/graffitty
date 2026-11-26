@@ -341,6 +341,16 @@ the word sends only the remainder, and a Japanese composition stays local until
 committed. This replays InputConnection calls; no real keyboard was typed on,
 no terminal bytes were recorded, and the app was not rebuilt or installed.
 
+## iOS keyboard insets and composition (UI-04, IN-11)
+
+Godot unit tests in `tests/unit/android_keyboard_lifecycle_test.gd` check that
+the iOS poll reports each keyboard height change once and that a shortcut-bar
+height hides only the touch key row, never on Android. Run them with
+`godot --headless --path frontends/godot/project --script tests/run.gd`.
+The iOS composition shim was checked with software keyboards in the iPad
+simulator. No physical iPad or hardware-keyboard run is recorded; these do not
+establish UI-04 or IN-11 on iOS.
+
 ## `@graffitty/playwright` launch and placement
 
 `launch()` creates a chromium pane, places it with `pane.place` (which now shows

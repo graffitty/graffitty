@@ -166,13 +166,12 @@ impl Input {
             key::Action::Release
         };
 
-        let mut mods = event_mods(ev.clone().upcast());
-        // The Windows input method commits a syllable with no keycode while the
-        // chord that ends it is held: 가 arrives with Ctrl down before Ctrl+C.
-        // That is text, not Ctrl+가. Alt stays: Alt+é is a deliberate chord.
-        if cfg!(windows) && ev.get_keycode() == GKey::NONE && ev.get_unicode() >= 0x80 {
-            mods.remove(key::Mods::CTRL);
-        }
+        let mods = ime_commit_mods(
+            event_mods(ev.clone().upcast()),
+            ev.get_keycode() == GKey::NONE,
+            ev.get_unicode(),
+            cfg!(windows),
+        );
         // macOS keycode translation may fall back to the physical US key when
         // Option produces a non-ASCII symbol. key_label retains the active
         // layout's unmodified key, including for releases and dead keys.
@@ -445,6 +444,16 @@ fn key_text(unicode: u32, unshifted: char, mods: key::Mods, action: key::Action)
     None
 }
 
+/// The Windows input method commits a syllable with no keycode while the
+/// chord that ends it is held: 가 arrives with Ctrl down before Ctrl+C.
+/// That is text, not Ctrl+가. Alt stays: Alt+é is a deliberate chord.
+fn ime_commit_mods(mut mods: key::Mods, no_keycode: bool, unicode: u32, windows: bool) -> key::Mods {
+    if windows && no_keycode && unicode >= 0x80 {
+        mods.remove(key::Mods::CTRL);
+    }
+    mods
+}
+
 pub fn event_mods(ev: Gd<InputEventWithModifiers>) -> key::Mods {
     let mut mods = key::Mods::empty();
     if ev.is_shift_pressed() {
@@ -592,6 +601,18 @@ mod tests {
                 }
             }
         }
+    }
+
+    #[test]
+    fn windows_ime_commits_drop_ctrl_but_keep_alt_and_real_chords() {
+        let held = key::Mods::CTRL | key::Mods::ALT;
+        // 가 committed while Ctrl is down for the next chord is plain text.
+        assert_eq!(ime_commit_mods(held, true, '가' as u32, true), key::Mods::ALT);
+        // A real Ctrl+C has a keycode; ASCII text keeps its modifiers.
+        assert_eq!(ime_commit_mods(held, false, '가' as u32, true), held);
+        assert_eq!(ime_commit_mods(held, true, 'c' as u32, true), held);
+        // Other platforms never strip it.
+        assert_eq!(ime_commit_mods(held, true, '가' as u32, false), held);
     }
 
     #[test]

@@ -1,5 +1,4 @@
 mod scene;
-mod socket_probe;
 mod remote_client;
 mod font_cache;
 mod workspace_layout;

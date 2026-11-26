@@ -25,7 +25,8 @@ func play() -> void:
  await labelled_tabs(["DENSE", "PLAIN"])
  await type("i=0; while [ $i -lt 45 ]; do printf '\\033[38;2;255;0;255m%03d DUST TRANSITION dense text ABCDEFGHIJKLMNOPQRSTUVWXYZ 0123456789\\033[0m\\n' $i; i=$((i+1)); done{enter}")
  await camera_at_rest()
- for path in ["", "flat-2d"]:
+ # New workspaces open in Flat 2D, so Flat 3D is named explicitly.
+ for path in ["flat-3d", "flat-2d"]:
   check(host.switch_world(path), "Open renderer " + path)
   await camera_at_rest()
   var world: Node = host.world
@@ -42,11 +43,11 @@ func play() -> void:
    var source_count := preload("res://scenes/DustPieces.gd").cells(source, 0).size()
    var source_ratio: float = world.dust_flying_ratio(source)
    check(is_equal_approx(source_ratio, dense_ratio), "Dense tab reaches its configured flying ratio")
-   var label: String = ("3d" if path == "" else "2d") + "-" + str(share)
+   var label: String = ("3d" if path == "flat-3d" else "2d") + "-" + str(share)
    check(await marked_pixels(label + "-live") > 1000, label + ": dense source visible")
    await switch_and_freeze(1)
    # Both renderers fly CellShatter pieces; Flat 2D keeps them in its 3D overlay.
-   var flying: Array = world.tab_fx_out if path == "" else world._transition_out.glyphs
+   var flying: Array = world.tab_fx_out if path == "flat-3d" else world._transition_out.glyphs
    var layers: Array = flying.filter(func(layer): return layer.has_meta("dust"))
    check(layers.is_empty() == (share == 1.0), label + ": creates dust only below a full flying share")
    for layer in layers:
@@ -66,7 +67,7 @@ func play() -> void:
     check(layer.multimesh.instance_count > 8, label + ": dense text retains its proportional whole-letter share")
    check(whole_characters == roundi(source_count * source_ratio), label + ": rendered whole-character count follows density (%d/%d)" % [whole_characters, source_count])
    for phase in [0.0, 0.25, 0.5, 1.0]:
-    if path == "":
+    if path == "flat-3d":
      for layer in world.tab_fx_out: layer.set_fly(world.tab_fx_out_target, phase)
     else: world._transition_out.set_progress(phase)
     var pixels := await marked_pixels(label + "-phase-" + str(phase))

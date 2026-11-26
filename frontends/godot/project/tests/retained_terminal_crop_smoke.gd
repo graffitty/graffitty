@@ -36,7 +36,7 @@ func run() -> void:
 		for frame in range(12):
 			await process_frame
 			RenderingServer.force_draw(false)
-	host.switch_world("")
+	host.switch_world("flat-3d")
 	host.switch_world("bistro")
 	await wrapper.connection.request_action("font_size", {"session": host.active_session_id, "size": 10})
 	for unused in range(150):

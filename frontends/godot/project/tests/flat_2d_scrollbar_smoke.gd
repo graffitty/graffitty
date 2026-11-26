@@ -46,7 +46,7 @@ func run() -> void:
 	await process_frame
 	check(not bar.visible, "Alternate-screen apps hide history scrollbar")
 	host.sessions[host.active_session_id].model = original
-	check(host.switch_world(""), "Switch away from Flat 2D")
+	check(host.switch_world("flat-3d"), "Switch away from Flat 2D")
 	await process_frame
 	check(not is_instance_valid(bar), "World switching removes its host-mounted scrollbar")
 	host.queue_free()

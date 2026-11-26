@@ -48,7 +48,7 @@ func play() -> void:
 	await owner_at_rest()
 	check(host.sessions.size() == 2, "Production split creates two terminal panes")
 	if host.sessions.size() != 2: return
-	for path in ["", "flat-2d", ""]:
+	for path in ["flat-3d", "flat-2d", "flat-3d"]:
 		check(host.switch_world(path), "Switch renderer: " + path)
 		await hold(.5)
 		await camera_at_rest()
@@ -56,7 +56,7 @@ func play() -> void:
 		host.world._settle_camera_at_rest()
 		host.world._apply_camera_fx()
 		var view: Control = host.workspace_view
-		var label: String = "flat-3d" if path.is_empty() else path
+		var label: String = path
 		for opacity in [0.0, .35, .85, 1.0]:
 			host.world.terminal_config.background.alpha = opacity
 			for gap in [8.0, 20.0]:

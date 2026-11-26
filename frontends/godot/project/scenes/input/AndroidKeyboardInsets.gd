@@ -22,11 +22,7 @@ var _reported_height := 0
 # iPadOS shows only its shortcut bar above a hardware keyboard: keep the
 # terminal above it, without the touch key row.
 const SHORTCUT_BAR_MAX := 120.0
-# GRAFFITTY_FRAME_TRACE: log stalled frames and inset updates (iOS console).
-# GRAFFITTY_NO_KEYBOARD_INSETS: ignore keyboard height changes, to compare.
-var _trace: bool = ClassDB.class_exists(&"DebugTrace") and ClassDB.class_call_static(&"DebugTrace", &"enabled", "GRAFFITTY_FRAME_TRACE")
-var _ignore_height: bool = ClassDB.class_exists(&"DebugTrace") and ClassDB.class_call_static(&"DebugTrace", &"enabled", "GRAFFITTY_NO_KEYBOARD_INSETS")
-var _last_frame_usec := 0
+var ios := OS.has_feature("ios")
 
 func _init() -> void:
 	retry.one_shot = true
@@ -61,11 +57,6 @@ func queue_update() -> void:
 	_flush_update.call_deferred()
 
 func _flush_update() -> void:
-	var started := Time.get_ticks_usec()
-	_flush_update_now()
-	if _trace: ClassDB.class_call_static(&"DebugTrace", &"log", "inset update %.1f ms" % ((Time.get_ticks_usec() - started) / 1000.0))
-
-func _flush_update_now() -> void:
 	_pending = false
 	if is_instance_valid(manager.get("terminal_ime")): manager.terminal_ime.check_owner()
 	var next_host: Node = manager.view.host if manager.view != null else null
@@ -75,17 +66,12 @@ func _flush_update_now() -> void:
 	var scale_y := get_tree().root.get_final_transform().get_scale().y
 	update_inset(_recovered_inset(float(keyboard_height()) / maxf(scale_y, 1.0)))
 
+## iOS has no height-change signal: poll the current height.
 func _process(_delta: float) -> void:
-	if _trace:
-		var now := Time.get_ticks_usec()
-		if _last_frame_usec > 0 and now - _last_frame_usec > 50000:
-			ClassDB.class_call_static(&"DebugTrace", &"log", "frame gap %d ms" % ((now - _last_frame_usec) / 1000))
-		_last_frame_usec = now
 	var height := keyboard_height()
 	if height != _reported_height:
-		if _trace: ClassDB.class_call_static(&"DebugTrace", &"log", "keyboard height %d -> %d%s" % [_reported_height, height, " (ignored)" if _ignore_height else ""])
 		_reported_height = height
-		if not _ignore_height: _height_changed(height)
+		_height_changed(height)
 
 func _height_changed(_height: int) -> void:
 	# Android reports zero while another activity owns the IME. That does not
@@ -163,6 +149,11 @@ func _recovered_inset(reported: float) -> float:
 		retry.stop()
 	return 0.0
 
+## Above a hardware keyboard iPadOS shows only its shortcut bar: the terminal
+## stays above it, but the touch key row is not needed.
+func shortcut_bar_only(height: float) -> bool:
+	return ios and height <= SHORTCUT_BAR_MAX
+
 func update_inset(next: float) -> void:
 	var root := get_tree().root
 	root.set_meta(&"keyboard_bottom_inset", next)
@@ -174,7 +165,7 @@ func update_inset(next: float) -> void:
 	var keybar: Control = manager.keybar
 	# Dictation's fields take the keyboard only while they have focus.
 	var dictating: bool = is_instance_valid(manager.get("dictation")) and manager.dictation.owns_keyboard()
-	var shortcut_bar := OS.has_feature("ios") and next <= SHORTCUT_BAR_MAX
+	var shortcut_bar := shortcut_bar_only(next)
 	var show_keys: bool = next > 0 and not shortcut_bar and is_instance_valid(next_host) and not manager.dialog.visible and not manager.chooser.visible and not dictating and (next_host.is_terminal_pane(next_host.pane_focus) or next_host.is_chromium_pane(next_host.pane_focus))
 	# A landscape IME can leave less room than the menu, tabs and accessory row
 	# together. Reclaim the navigation chrome while typing so the main area still
