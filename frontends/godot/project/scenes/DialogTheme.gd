@@ -1,5 +1,6 @@
 extends RefCounted
-## Shared application dialogs; native window decorations remain OS-owned.
+## Shared application dialogs. Native frames stay OS-owned, except on macOS:
+## there MacDialogTitle draws the title bar beside the real traffic lights.
 const Accent := preload("res://scenes/UIAccent.gd")
 
 static func surface(color: Color, radius: int, border: Color) -> StyleBoxFlat:

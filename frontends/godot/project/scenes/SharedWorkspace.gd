@@ -7,10 +7,16 @@ var launch_args: Variant = null
 var launch_directory := ""
 
 func _ready() -> void:
+	# This launch was handed to the running app and is exiting.
+	if get_node("/root/TerminalApplication").forwarded: return
 	var args: PackedStringArray = OS.get_cmdline_user_args() if launch_args == null else launch_args
 	var config_errors := preload("res://config/UserConfig.gd").validate_startup(args)
 	if not config_errors.is_empty():
 		for error in config_errors: printerr("Configuration error: " + error)
+		# A window opened for another launch must not end this app.
+		if launch_args != null:
+			get_window().queue_free()
+			return
 		get_tree().quit(2)
 		return
 	if "--check-config" in args:

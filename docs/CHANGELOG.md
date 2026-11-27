@@ -6,7 +6,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [v0.0.6] - 2026-11-25
 ### :sparkles: New Features
-- control terminals in every session, fly Flat 2D letters in 3D and fix IME input ([#7](https://github.com/graffitty/graffitty/pull/7)).
+- run one app per server, control terminals in every session, smooth macOS dialog drags and fix IME input ([#7](https://github.com/graffitty/graffitty/pull/7)).
 
 ## [v0.0.5] - 2026-11-25
 ### :sparkles: New Features

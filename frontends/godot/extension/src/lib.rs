@@ -3,6 +3,8 @@ mod remote_client;
 mod font_cache;
 mod workspace_layout;
 mod agent_socket;
+#[cfg(not(any(target_os = "android", target_os = "ios")))]
+mod app_instance;
 mod session_transport;
 mod session_client;
 mod terminal_scene;

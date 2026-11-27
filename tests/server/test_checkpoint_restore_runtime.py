@@ -163,16 +163,31 @@ class RestoreRuntime(unittest.TestCase):
             base = f"http://127.0.0.1:{web.server_address[1]}"
             template = root / "profile template"
             (template / "Default").mkdir(parents=True)
-            fixture["windows"][0]["chromiums"] = [{"id": 20, "owner": fixture["windows"][0]["panes"][0]["id"], "title": "Docs", "profile": "",
+            chromium = 1 << 32  # Chromium IDs follow every terminal ID.
+            fixture["windows"][0]["chromiums"] = [{"id": chromium + 20, "owner": fixture["windows"][0]["panes"][0]["id"], "title": "Docs", "profile": "",
                                                   "urls": [base + "/second.html", base + "/first.html"]}]
             fixture["windows"][0]["tabs"][0]["tree"]["windows"].append(
-                {"pane": "t20", "shown": True, "rect": {"rect2": [920, 80, 420, 500]}})
-            fixture["windows"][1]["chromiums"] = [{"id": 21, "owner": None, "title": "", "profile_template": str(template),
+                {"pane": "c20", "shown": True, "rect": {"rect2": [920, 80, 420, 500]}})
+            fixture["windows"][1]["chromiums"] = [{"id": chromium + 21, "owner": None, "title": "", "profile_template": str(template),
                                                   "urls": [base + "/third.html"]}]
-            fixture["windows"][1]["tabs"].append({"id": 21, "focused": "t21",
-                "tree": {"windows": [{"pane": "t21", "shown": True, "rect": {"rect2": [20, 80, 600, 400]}}],
+            fixture["windows"][1]["tabs"].append({"id": 21, "focused": "c21",
+                "tree": {"windows": [{"pane": "c21", "shown": True, "rect": {"rect2": [20, 80, 600, 400]}}],
                          "physics": False, "tiling_gap": 8.0},
                 "graph_visual": {"reroutes": {}, "routes": {}, "serial": 0}})
+            # A third saved session: restore opens no window for it, yet it
+            # keeps both tabs, the one it shows, and the wire inside a tab.
+            def third_tab(tab, panes):
+                return {"id": tab, "title": f"Third {tab}", "focused": f"t{panes[-1]}",
+                        "tree": {"windows": [{"pane": f"t{pane}", "shown": True, "rect": {"rect2": [20 + 450 * i, 80, 400, 400]}}
+                                             for i, pane in enumerate(panes)], "physics": False, "tiling_gap": 8.0},
+                        "graph_visual": {"reroutes": {}, "routes": {}, "serial": 0}}
+            fixture["windows"].append({"active": 32, "position": [180, 140], "size": [900, 640], "mode": 0, "plugin": "",
+                "panes": [{"id": i, "pid": -1, "cwd": "/tmp", "title": f"Pane {i}", "font_size": 15} for i in (30, 31, 32)],
+                "tabs": [third_tab(30, [30, 31]), third_tab(32, [32])],
+                "chromiums": [],
+                "graph": {"nodes": [{"node": f"t{i}", "manifest": ports} for i in (30, 31)],
+                          "edges": [{"from": "t30", "to": "t31", "from_port": "out", "to_port": "in", "outcome": "success"}],
+                          "run_messages": 7}})
             # An opted-in node relaunches with its command, directory,
             # environment and reported state.
             node_log = root / "node.txt"
@@ -208,6 +223,11 @@ class RestoreRuntime(unittest.TestCase):
             self.assertGreater(json.loads(result.stdout)["pid"], 0)
             # Nothing live had these IDs, so every pane, chromium and filetree kept its own.
             self.assertEqual(json.loads(result.stdout)["renumbered"], {}, result.stdout)
+            # Every saved session runs on the server; the smoke checks that
+            # only the first one has a window.
+            listed = subprocess.run([str(binary), "session", "list", "--json"], env=env, capture_output=True, text=True, timeout=10)
+            self.assertEqual(listed.returncode, 0, listed.stderr)
+            self.assertEqual(len(json.loads(listed.stdout)), 3, listed.stdout)
             deadline = time.monotonic() + 10
             while (
                 time.monotonic() < deadline

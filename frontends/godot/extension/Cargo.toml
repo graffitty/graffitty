@@ -64,6 +64,10 @@ terminal-resource-monitor = { path = "../../../crates/platform/resource-monitor"
 [target.'cfg(not(target_os = "android"))'.dependencies]
 cpal = "0.18.2"
 
+# Desktop apps keep one process per session server (see app_instance.rs).
+[target.'cfg(not(any(target_os = "android", target_os = "ios")))'.dependencies]
+graffitty-graph-protocol = { path = "../../../crates/graph-protocol" }
+
 [target.'cfg(unix)'.dependencies]
 libc = "0.2.190"
 rustix = { version = "1.1.5", features = ["fs", "event", "process"] }

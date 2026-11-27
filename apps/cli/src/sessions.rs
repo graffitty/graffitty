@@ -762,6 +762,19 @@ impl Relaunch {
         }
     }
 }
+/// The desktop app already running against this server, release before
+/// development (see graffitty_graph_protocol::application).
+fn running_app() -> Result<Option<(graffitty_graph_protocol::application::Instance, graffitty_graph_protocol::application::Descriptor)>> {
+    use graffitty_graph_protocol::application::{self, Instance};
+    let directory = application::directory(None)?;
+    for name in [application::RELEASE, application::DEVELOPMENT] {
+        let app = Instance::new(&directory, name);
+        if let Some(descriptor) = app.running()? {
+            return Ok(Some((app, descriptor)));
+        }
+    }
+    Ok(None)
+}
 /// Only checkpoints from this history relaunch node commands or resume
 /// agents: a file from elsewhere is data, so those panes come back as shells.
 fn prepare(mut v: Value, dir: &Path, trusted: bool) -> Result<PathBuf> {
@@ -984,36 +997,52 @@ pub fn run(command: CheckpointCommand) -> Result<Value> {
             if args.prepare_only {
                 return Ok(json!({"prepared":prepared}));
             }
-            let mut gui = if let Some(frontend) = args.frontend {
-                let path=PathBuf::from(frontend);
-                if !path.is_absolute() || !path.is_file() {
-                    return Err("Frontend must be an absolute executable file path".into());
-                }
-                Command::new(path)
-            } else if cfg!(any(windows, target_os = "linux")) {
-                // Use the packaged launcher on both desktop platforms.
-                let mut launcher = Command::new(std::env::current_exe()?);
-                launcher.arg("gui");
-                launcher
-            } else {
-                Command::new(std::env::current_exe()?.with_file_name("gft-gui"))
-            };
-            let mut child = gui
-                .args([
-                    "--",
-                    &format!("--restore-checkpoint={}", prepared.display()),
-                ])
-                .stdin(Stdio::null())
-                .stdout(Stdio::null())
-                .stderr(Stdio::null())
-                .spawn()?;
             let receipt = prepared.parent().unwrap().join("ready.json");
+            // A running app restores into one new window of its own; only
+            // without one does this start the app.
+            let (pid, mut child) = if let Some((app, descriptor)) = running_app()? {
+                graffitty_graph_protocol::application::forward(&descriptor, "application.restore_checkpoint",
+                    &json!({"path":prepared}))?;
+                (descriptor.pid, Err(app))
+            } else {
+                let mut gui = if let Some(frontend) = args.frontend {
+                    let path=PathBuf::from(frontend);
+                    if !path.is_absolute() || !path.is_file() {
+                        return Err("Frontend must be an absolute executable file path".into());
+                    }
+                    Command::new(path)
+                } else if cfg!(any(windows, target_os = "linux")) {
+                    // Use the packaged launcher on both desktop platforms.
+                    let mut launcher = Command::new(std::env::current_exe()?);
+                    launcher.arg("gui");
+                    launcher
+                } else {
+                    Command::new(std::env::current_exe()?.with_file_name("gft-gui"))
+                };
+                let child = gui
+                    .args([
+                        "--",
+                        &format!("--restore-checkpoint={}", prepared.display()),
+                    ])
+                    .stdin(Stdio::null())
+                    .stdout(Stdio::null())
+                    .stderr(Stdio::null())
+                    .spawn()?;
+                (child.id(), Ok(child))
+            };
             let started = std::time::Instant::now();
             while !receipt.is_file() {
-                if let Some(status) = child.try_wait()? {
-                    return Err(
-                        format!("restore application exited before restoring: {status}").into(),
-                    );
+                match &mut child {
+                    // A launch that found another app already starting hands
+                    // the restore to it and exits successfully.
+                    Ok(process) => if let Some(status) = process.try_wait()? {
+                        if !status.success() {
+                            return Err(format!("restore application exited before restoring: {status}").into());
+                        }
+                    },
+                    Err(app) => if app.running()?.is_none() {
+                        return Err("the running Graffitty exited before restoring".into());
+                    },
                 }
                 if started.elapsed() > Duration::from_secs(60) {
                     return Err("restore did not report readiness within 60 seconds; inspect the application log".into());
@@ -1028,7 +1057,7 @@ pub fn run(command: CheckpointCommand) -> Result<Value> {
             let renumbered: serde_json::Map<String, Value> = result["panes"].as_object().into_iter().flatten()
                 .filter(|(saved, restored)| restored.as_u64().map(|id| id.to_string()).as_ref() != Some(*saved))
                 .filter_map(|(saved, restored)| Some((graffitty_protocol::pane_id::address(saved.parse().ok()?), json!(graffitty_protocol::pane_id::address(restored.as_u64()?))))).collect();
-            Ok(json!({"pid":child.id(),"checkpoint":path,"renumbered":renumbered}))
+            Ok(json!({"pid":pid,"checkpoint":path,"renumbered":renumbered}))
         }
     }
 }

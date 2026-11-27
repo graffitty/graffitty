@@ -713,7 +713,8 @@ pub struct CheckpointRestore {
     /// History index (0 is newest) or a checkpoint file path.
     #[usage(long, default = "0")]
     pub checkpoint: String,
-    /// Native frontend executable; omitted uses the standard Graffitty GUI.
+    /// Native frontend to start when no Graffitty app is running (a running
+    /// app restores into one new window instead); omitted uses the standard GUI.
     #[usage(long)]
     pub frontend: Option<String>,
     /// Prepare a validated restore document without launching a window.

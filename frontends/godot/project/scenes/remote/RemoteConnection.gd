@@ -53,6 +53,11 @@ var shared_options: Dictionary = {}
 var authentication: RefCounted
 var password_verified := false
 var socket: RefCounted
+## False for a connection that only sends owner actions and shows nothing,
+## such as a checkpoint restore finishing a session without a window. It
+## never registers as the session's presentation, records it as last viewed,
+## negotiates GPU frames or publishes its graph to the app.
+var presents := true
 ## A request belongs to one transport, even if reconnect finishes before it resumes.
 var transport_generation := 0
 var workspace := ""
@@ -623,7 +628,7 @@ func _receive(message: Dictionary) -> void:
 			connected = true
 			if is_inside_tree():
 				get_node("/root/Localization").set_server_language(self, str(message.get("localization", {}).get("language", "auto")))
-			_begin_terminal_gpu()
+			if presents: _begin_terminal_gpu()
 			if url == "shared://local":
 				shared_options.workspace = workspace
 				shared_options.get_or_add("capabilities", {}).erase("new_session")
@@ -639,7 +644,7 @@ func _receive(message: Dictionary) -> void:
 				var control_error: String = _core.controller_start(preload("res://graffitty/paths.gd").stdpath("state"), server_alias, controller_identity if not controller_identity.is_empty() else url)
 				if not control_error.is_empty(): push_error(control_error)
 			subscribe(subscriptions)
-			if url == "shared://local":
+			if url == "shared://local" and presents:
 				frontend_generation += 1
 				socket.send_text(JSON.stringify({"type": "frontend_register", "generation": frontend_generation}))
 		"session_list":
@@ -675,7 +680,7 @@ func _receive(message: Dictionary) -> void:
 			# topology replaces the presentation before subscribing to new panes.
 			_main_view.clear()
 			session_switched.emit()
-			if url == "shared://local":
+			if url == "shared://local" and presents:
 				frontend_generation += 1
 				socket.send_text(JSON.stringify({"type": "frontend_register", "generation": frontend_generation}))
 		"session_closed":
@@ -709,7 +714,7 @@ func _receive(message: Dictionary) -> void:
 					frames.erase(id)
 			changed.emit()
 			var api: Node = get_node("/root/TerminalApplication").agent_api
-			if api != null and graph_changed and message.get("graph") is Dictionary:
+			if api != null and presents and graph_changed and message.get("graph") is Dictionary:
 				api.graph.import_remote(self, message.graph)
 		"pane_update":
 			_apply_pane_update(message)
@@ -977,7 +982,9 @@ func map_graph(value: Variant, incoming: bool, field := "") -> Variant:
 
 
 func _complete_session_close(peer: RefCounted) -> void:
-	if socket != peer: return
+	# The owner can exit right after its last session_closed. A send that fails
+	# before this deferred call drops the transport, but the session still closed.
+	if socket != peer and socket != null: return
 	if url == "shared://local" and peer.get_ready_state() == WebSocketPeer.STATE_OPEN and not fallback_session([]).is_empty():
 		# Another live session remains. Its window decides whether to switch
 		# there (session_switch) or retire; the owner keeps this client attached.

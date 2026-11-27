@@ -112,8 +112,18 @@ func _open_startup_servers(local: Node) -> void:
 		# Each connection becomes available in Sessions; keep one normal window.
 		# An empty server is still a complete connection and can be parked.
 		source = open_remote_server(source, settings)
-		while is_instance_valid(source) and source.connection.enabled and not source.connection.connected:
+		# Parking stops the view applying topology, so wait for its first view.
+		while is_instance_valid(source) and source.connection.enabled and not _startup_server_ready(source):
 			await get_tree().process_frame
+
+## A startup remote can be parked once it shows its session or has none to show.
+func _startup_server_ready(client: Node) -> bool:
+	var peer: Node = client.connection
+	if not peer.connected: return false
+	if is_instance_valid(client.host): return true
+	# An empty server is still a complete connection and can be parked.
+	if peer.sessions_known and peer.available_sessions.is_empty(): return true
+	return peer.topology_generation > 0 and peer.fonts_ready() and peer.topology.get("tabs", []).is_empty()
 
 func open_remote_server(source: Node, settings: Dictionary, in_new_window := false) -> Node:
 	var window: Window = source.get_window()
@@ -199,9 +209,90 @@ class DragInput extends Node:
 var drag_preview: Window
 var _closing := false
 var responsive_dialogs: Node
+## This process holds the desktop app role for its session server and
+## publishes its API socket for later launches.
+var primary_app := false
+## This launch was handed to the app already running and is exiting before it
+## shows a window or attaches to the server.
+var forwarded := false
+
+
+## Desktop runs one app per session server (crates/graph-protocol/src/application.rs).
+##
+## A later launch hands its request to the running app: a plain launch opens a
+## new window there, `--restore-checkpoint=` restores there.
+##
+## Returns this process's exit code when it handed over, or -1 to run as the app.
+func _hand_over_launch() -> int:
+	if OS.has_feature("mobile") or not ClassDB.class_exists(&"AppInstance"): return -1
+	# A test script drives its own scene tree; it is never the app.
+	if get_tree().get_script() != null: return -1
+	var args := OS.get_cmdline_user_args()
+	# Invalid configuration and --check-config report here, as a first launch does.
+	if "--check-config" in args or not preload("res://config/UserConfig.gd").validate_startup(args).is_empty(): return -1
+	var server := ""
+	var request := {"method": "application.open_window", "params": {"fresh_session": true, "args": Array(args), "cwd": ""}}
+	for argument in args:
+		if argument.begins_with("--session-connection="): server = argument.trim_prefix("--session-connection=")
+		elif argument.begins_with("--restore-checkpoint="):
+			request = {"method": "application.restore_checkpoint", "params": {"path": argument.trim_prefix("--restore-checkpoint=")}}
+	# Development runs never open their windows in the installed app.
+	var role := "app" if OS.has_feature("template") else "dev-app"
+	var gate: Dictionary = ClassDB.class_call_static(&"AppInstance", &"launch", server, role, JSON.stringify(request))
+	match str(gate.get("role", "")):
+		"primary":
+			primary_app = true
+			return -1
+		"forwarded":
+			print("Graffitty is already running; opened there.")
+			return 0
+		"rejected":
+			printerr("Graffitty is already running and refused this launch: " + str(gate.message))
+			return 1
+	# Not answered: run on our own rather than leave the user with nothing.
+	push_warning("The running Graffitty did not answer (%s); starting another app" % str(gate.message))
+	return -1
+
+
+## The private API socket. A primary app starts it at once so later launches
+## reach it while the first window is still connecting.
+func _start_agent_api() -> void:
+	if agent_api != null: return
+	agent_api = preload("res://scenes/AgentAPI.gd").new()
+	agent_api.application = self
+	add_child(agent_api)
+
+
+## Restore the prepared checkpoint at `path` into one new window.
+##
+## The checkpoint's other saved sessions keep running without a window (see
+## Checkpoints._import_shared). The restore finishes later and writes the
+## receipt the prepared checkpoint names.
+func restore_checkpoint(path: String) -> Dictionary:
+	if not opens_windows():
+		return {"error": {"code": "unsupported", "message": "This client presents a single window"}}
+	if not FileAccess.file_exists(path):
+		return {"error": {"code": "invalid_params", "message": "No checkpoint at " + path}}
+	var pending: bool = checkpoints != null and (checkpoints.importing or checkpoints.busy)
+	# The first window has not started its own command-line restore yet.
+	pending = pending or ((checkpoints == null or not checkpoints.startup_loaded)
+		and Array(OS.get_cmdline_user_args()).any(func(arg): return str(arg).begins_with("--restore-checkpoint=")))
+	for client in get_tree().get_nodes_in_group("shared_presentations"):
+		var args: Variant = client.get("launch_args")
+		pending = pending or (args is PackedStringArray and Array(args).any(func(arg): return str(arg).begins_with("--restore-checkpoint=")))
+	if pending:
+		return {"error": {"code": "busy", "message": "Checkpoint action already in progress"}}
+	open_local_session(PackedStringArray(["--restore-checkpoint=" + path]), "")
+	return {"result": {"accepted": true}}
 
 
 func _ready() -> void:
+	var handed_over := _hand_over_launch()
+	if handed_over >= 0:
+		forwarded = true
+		get_tree().quit(handed_over)
+		return
+	if primary_app: _start_agent_api()
 	# Cache the app and CLI paths now, before an upgrade can rename the files.
 	preload("res://graffitty/executables.gd").app()
 	preload("res://graffitty/executables.gd").cli()
@@ -294,6 +385,8 @@ func _prepare_dialog(dialog: AcceptDialog) -> void:
 		configure_window_scale(dialog)
 	elif not OS.has_feature("movie"):
 		dialog.content_scale_factor = 1.0
+	# After scaling: the macOS title bar height depends on the content scale.
+	preload("res://scenes/MacDialogTitle.gd").attach(dialog)
 	# Apply at popup time too, after callers have added actions such as Detach.
 	preload("res://scenes/DialogActionLayout.gd").apply(dialog)
 
@@ -392,10 +485,8 @@ func register_host(host: Node) -> void:
 		checkpoints = preload("res://scenes/Checkpoints.gd").new()
 		checkpoints.application = self
 		add_child(checkpoints)
-	if agent_api == null:
-		agent_api = preload("res://scenes/AgentAPI.gd").new()
-		agent_api.application = self
-		add_child(agent_api)
+	if agents == null:
+		_start_agent_api()
 		agents = preload("res://scenes/Agents.gd").new()
 		agents.application = self
 		add_child(agents)
@@ -1233,6 +1324,10 @@ func _vacate_window(window: Window) -> void:
 func leave_for_update(relaunch: bool) -> void:
 	if _closing: return
 	_closing = true
+	# The relaunched app must become the app, not hand its window to this one.
+	if primary_app:
+		primary_app = false
+		ClassDB.class_call_static(&"AppInstance", &"release", agent_api.session_token if agent_api != null else "")
 	if relaunch:
 		# Drop the user arguments (`--cwd`). They would open their pane a second time.
 		var arguments := OS.get_cmdline_args()

@@ -17,6 +17,9 @@ var document: Dictionary = { }
 var importing := false
 var restored_ids: Dictionary = {}
 var restored_tabs: Dictionary = {}
+## The session each saved window was restored into, in saved order. Only the
+## first has a window.
+var restored_sessions: Array = []
 var startup_loaded := false
 var worker: Thread
 var busy := false
@@ -187,11 +190,21 @@ static func graph_checkpoint(graph: Dictionary, panes: Array) -> Dictionary:
 	return {"nodes": nodes, "edges": edges, "run_messages": int(graph.get("limits", {}).get("run_messages", 10000))}
 
 
+## Start the restore a window was opened for: `--restore-checkpoint=` in its
+## launch arguments (`application.restore_checkpoint`), or in the app's
+## command line for the first window.
 func prepare_startup(host: Node) -> void:
-	if startup_loaded:
-		return
-	startup_loaded = true
-	for arg in OS.get_cmdline_user_args():
+	var client: Node = host.get_parent()
+	var args: Variant = client.get("launch_args") if client != null else null
+	if args == null:
+		if startup_loaded:
+			return
+		startup_loaded = true
+		args = OS.get_cmdline_user_args()
+	else:
+		# Restore once, not again when this window's host is rebuilt.
+		client.launch_args = PackedStringArray(Array(args).filter(func(arg): return not str(arg).begins_with("--restore-checkpoint=")))
+	for arg in args:
 		if arg.begins_with("--restore-checkpoint="):
 			var parsed = JSON.parse_string(FileAccess.get_file_as_string(arg.trim_prefix("--restore-checkpoint=")))
 			if (
@@ -362,31 +375,33 @@ func _import_shared(first: Node) -> void:
 		"edit": {"op": "reorder", "tabs": order}})
 	if reordered.get("type") == "error": _abort_import(); return
 	await _checked(connection, "sync", {})
-	var windows: Array = [first]
+	# Only the first saved session gets a window. Every later one becomes a
+	# running session without a window, reachable from the Sessions menu: its
+	# tabs move into a new session, and a connection that shows nothing
+	# finishes it there (chromiums, layout, graph wiring).
+	var links: Array = [connection]
+	var hidden: Array = []
+	restored_sessions = [str(connection.workspace)]
 	for saved in document.windows.slice(1):
 		var tabs: Array = []
 		for tab in saved.tabs:
 			if restored_tabs.has(int(tab.id)): tabs.append(int(restored_tabs[int(tab.id)]))
-		var target: Node = await application.detach_workspace(first, tabs[0], Vector2i(int(saved.position[0]), int(saved.position[1])))
-		if target == null: _abort_import("could not open a saved window"); return
-		var deadline := Time.get_ticks_msec() + 10000
-		while not target.session_backend.connection.connected and Time.get_ticks_msec() < deadline:
-			await get_tree().process_frame
-		if not target.session_backend.connection.connected:
-			_abort_import("detached window did not attach to the session owner")
+		var session := await _split_session(first, tabs)
+		var link: Node = null if session.is_empty() else await _session_link(first.get_parent(), session)
+		if link == null:
+			_close_links(hidden)
+			_abort_import("could not restore a saved session")
 			return
-		for id in tabs.slice(1):
-			if not await application.move_workspace(first, target, id):
-				_abort_import("could not restore tab to its window")
-				return
-		windows.append(target)
-	for i in windows.size():
-		if not await _open_chromiums(windows[i].session_backend.connection, document.windows[i]):
+		hidden.append(link)
+		links.append(link)
+		restored_sessions.append(session)
+	for i in links.size():
+		if not await _open_chromiums(links[i], document.windows[i]):
+			_close_links(hidden)
 			_abort_import(); return
 	var ids := {}
 	for old in restored_ids: ids[PaneAddress.key(int(old))] = PaneAddress.key(int(restored_ids[old]))
-	for i in windows.size():
-		var target: Node = windows[i]
+	for i in links.size():
 		var saved: Dictionary = document.windows[i]
 		var spawned: Array = []
 		for pane in saved.panes:
@@ -395,29 +410,93 @@ func _import_shared(first: Node) -> void:
 		if saved.has("graph") or not spawned.is_empty():
 			var graph: Variant = saved.graph.duplicate(true) if saved.has("graph") else null
 			if graph is Dictionary and graph.has("run_messages"): graph.run_messages = int(graph.run_messages)
-			var reply := await _checked(target.session_backend.connection, "restore_graph", {"graph": graph, "ids": ids, "spawned": spawned})
-			if reply.get("type") == "error": _abort_import(); return
-		target.switch_world(str(saved.get("plugin", "")))
-		# Navigation belongs to this frontend, not the owner's tiling schema.
-		for tab in saved.tabs:
-			if tab.has("navigation"):
-				target.workspace_layout.tab(int(restored_tabs[int(tab.id)]))["navigation"] = tab.navigation.duplicate(true)
-		target.select_workspace(int(restored_tabs[int(saved.active)]), true)
-		var window: Window = target.get_window()
-		preload("res://scenes/NativeWindowFrame.gd").resize_window(window, Vector2i(int(saved.size[0]), int(saved.size[1])))
-		preload("res://scenes/NativeWindowFrame.gd").move_window(window, Vector2i(int(saved.position[0]), int(saved.position[1])))
-		window.mode = int(saved.get("mode", Window.MODE_WINDOWED))
-		target._refresh_workspace_layout()
-		target.workspace_view.restore_navigation(int(restored_tabs[int(saved.active)]))
-		target.workspace_view._apply_navigation()
+			var reply := await _checked(links[i], "restore_graph", {"graph": graph, "ids": ids, "spawned": spawned})
+			if reply.get("type") == "error":
+				_close_links(hidden)
+				_abort_import(); return
+		if i > 0:
+			# The owner remembers which tab a windowless session shows first.
+			await _checked(links[i], "sync", {})
+			var shown := await _checked(links[i], "workspace_edit", {"expected_revision": int(links[i].topology.workspace_revision),
+				"edit": {"op": "activate", "tab": int(restored_tabs[int(saved.active)])}})
+			if shown.get("type") == "error":
+				_close_links(hidden)
+				_abort_import(); return
+	_close_links(hidden)
+	var saved: Dictionary = document.windows[0]
+	first.switch_world(str(saved.get("plugin", "")))
+	# Navigation belongs to this frontend, not the owner's tiling schema.
+	for tab in saved.tabs:
+		if tab.has("navigation"):
+			first.workspace_layout.tab(int(restored_tabs[int(tab.id)]))["navigation"] = tab.navigation.duplicate(true)
+	first.select_workspace(int(restored_tabs[int(saved.active)]), true)
+	var window: Window = first.get_window()
+	preload("res://scenes/NativeWindowFrame.gd").resize_window(window, Vector2i(int(saved.size[0]), int(saved.size[1])))
+	preload("res://scenes/NativeWindowFrame.gd").move_window(window, Vector2i(int(saved.position[0]), int(saved.position[1])))
+	window.mode = int(saved.get("mode", Window.MODE_WINDOWED))
+	first._refresh_workspace_layout()
+	first.workspace_view.restore_navigation(int(restored_tabs[int(saved.active)]))
+	first.workspace_view._apply_navigation()
 	importing = false
-	# Claim the shared main area after the restored windows finish layout.
+	# Claim the shared main area after the restored window finishes layout.
 	# Import suppresses resize claims. An existing client may also have
 	# used its initial attach claim before the restore began.
-	for target in windows:
-		target.session_backend.claim_area(target)
-	_receipt({"ok": true, "panes": restored_ids, "tabs": restored_tabs})
+	first.session_backend.claim_area(first)
+	_receipt({"ok": true, "panes": restored_ids, "tabs": restored_tabs, "sessions": restored_sessions})
 	document.clear()
+
+
+## Move a saved session's restored tabs out of the restore window into one
+## new session that no window shows. Returns its ID, or "" on failure.
+func _split_session(first: Node, tabs: Array) -> String:
+	var client: Node = first.get_parent()
+	var connection: Node = first.session_backend.connection
+	var deadline := Time.get_ticks_msec() + 10000
+	while first.session_backend.work_pending() and Time.get_ticks_msec() < deadline:
+		await get_tree().process_frame
+	# The window drops the moved tabs once, from the topology after the last move.
+	client.transferring = true
+	client.applying = true
+	var session := ""
+	for tab in tabs:
+		var request := {"tab": int(tab)}
+		if not session.is_empty(): request.destination = session
+		var moved := await _checked(connection, "session_transfer", request)
+		if moved.get("type") == "error":
+			session = ""
+			break
+		session = str(moved.workspace)
+	if is_instance_valid(client): application._finish_transfer(client)
+	return session
+
+
+## A connection to `session` that presents nothing, for finishing its restore.
+func _session_link(source: Node, session: String) -> Node:
+	var link: Node = preload("res://scenes/remote/RemoteConnection.gd").new()
+	link.presents = false
+	add_child(link)
+	var options: Dictionary = source.settings.duplicate(true)
+	options.workspace = session
+	var capabilities: Dictionary = options.get_or_add("capabilities", {})
+	for field in ["new_session", "workspace_fallback", "saved"]: capabilities.erase(field)
+	capabilities.require_workspace = true
+	link.connect_shared(options)
+	var deadline := Time.get_ticks_msec() + 10000
+	while not link.connected and link.enabled and Time.get_ticks_msec() < deadline:
+		await get_tree().process_frame
+	if not link.connected:
+		failure = "could not attach to a restored session"
+		_close_links([link])
+		return null
+	await _checked(link, "sync", {})
+	return link
+
+
+func _close_links(links: Array) -> void:
+	for link in links:
+		if is_instance_valid(link):
+			link.disconnect_remote()
+			link.queue_free()
 
 ## Lay out a saved tab and set its title once all of its panes exist.
 ## The caller is any terminal of the tab's session.
@@ -543,7 +622,8 @@ func _ready() -> void:
 ## one submenu per tag listing every saved checkpoint as "<age> ago, N
 ## sessions, N tabs, N panes".
 ##
-## Choosing one restores it into new windows; no dialog.
+## Choosing one restores it into one new window; no dialog. Its other saved
+## sessions keep running without a window, listed under Sessions.
 func menu_entries() -> Array[Dictionary]:
 	if OS.has_feature("mobile"):
 		return []
@@ -651,7 +731,8 @@ func menu_action(host: Node, entry: Dictionary) -> void:
 		file.close()
 		args.append_array(["save", "--input", input])
 	else:
-		args.append_array(["restore", "--checkpoint", str(entry.get("checkpoint", "0"))])
+		# The CLI only prepares the restore; this app opens its one window.
+		args.append_array(["restore", "--checkpoint", str(entry.get("checkpoint", "0")), "--prepare-only"])
 	args.append_array(["--tag", str(entry.get("tag", "manual"))])
 	busy = true
 	worker = Thread.new()
@@ -682,11 +763,15 @@ func _complete(host: Node, entry: Dictionary, input: String, code: int, output: 
 				host,
 				"Checkpoint saved, but the layout changed during save. Save again before quitting.",
 			)
-	elif is_instance_valid(host):
-		show_result(
-			host,
-			("Checkpoint saved" if entry.action == "SaveCheckpoint" else "Restore launched") if code == 0 else (errors if not errors.strip_edges().is_empty() else output),
-		)
+	elif code != 0:
+		if is_instance_valid(host): show_result(host, errors if not errors.strip_edges().is_empty() else output)
+	elif entry.action == "SaveCheckpoint":
+		if is_instance_valid(host): show_result(host, "Checkpoint saved")
+	else:
+		# The restored window is the feedback; only a failure needs a dialog.
+		var prepared: Variant = JSON.parse_string(output)
+		var started: Dictionary = application.restore_checkpoint(str(prepared.get("prepared", "")) if prepared is Dictionary else "")
+		if started.has("error") and is_instance_valid(host): show_result(host, str(started.error.message))
 	if code == 0 and entry.action in ["SaveCheckpoint", "SaveCheckpointAndQuit"]:
 		refresh_history()
 

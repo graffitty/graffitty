@@ -1,6 +1,7 @@
 //! Custom nodes use the same authenticated JSON API as `gft`.
 //! No UI, provider integration, or graph execution lives in this crate.
 #![doc = include_str!("../README.md")]
+pub mod application;
 mod claim;
 mod client;
 mod models;

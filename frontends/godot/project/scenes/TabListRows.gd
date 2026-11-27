@@ -15,6 +15,8 @@ var _scroll_anchor := 0.0
 ## against. Laying rows out moves the scroll too.
 var _anchor_layout := -Vector2.ONE
 var _revealing_selection := false
+## A reveal requested before layout waits for the list's real height.
+var _reveal_pending := false
 const TOUCH_SLOP := 12.0
 var _touches: Dictionary = {}
 var _touch_origin := Vector2.ZERO
@@ -34,6 +36,7 @@ func _ready() -> void:
  box.add_theme_constant_override("separation", 2)
  add_child(box)
  get_v_scroll_bar().value_changed.connect(_scrolled)
+ resized.connect(func(): if _reveal_pending: ensure_current_is_visible())
  # Exports ship the imported texture, not the raw SVG.
  icon = preload("res://scenes/AgentStatusBadge.gd").icon("layout-template.svg")
 
@@ -233,6 +236,10 @@ func get_item_rect(index: int) -> Rect2:
  return Rect2(rows[index].global_position - global_position, rows[index].size)
 
 func ensure_current_is_visible() -> void:
+ # A list opened for the first time has no height yet. Revealing then would
+ # scroll past the row, and the later resize would move the highlight.
+ _reveal_pending = size.y <= 0
+ if _reveal_pending: return
  if selected >= 0 and selected < rows.size():
   _revealing_selection = true
   ensure_control_visible(rows[selected])

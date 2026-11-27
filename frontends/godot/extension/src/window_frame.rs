@@ -114,6 +114,18 @@ impl NativeWindowFrame {
         let _ = window;
     }
 
+    /// Disables a macOS dialog's minimize and zoom traffic lights.
+    #[func]
+    fn dialog_buttons(&self, window: i64) {
+        #[cfg(target_os = "macos")]
+        unsafe {
+            unsafe extern "C" { fn graffitty_window_dialog_buttons(window: u64); }
+            graffitty_window_dialog_buttons(window as u64);
+        }
+        #[cfg(not(target_os = "macos"))]
+        let _ = window;
+    }
+
     #[func]
     fn resize_client(&self, window: i64, size: Vector2i) -> bool {
         #[cfg(windows)]

@@ -1,6 +1,7 @@
 [project]
 site_name = "Graffitty"
 site_description = "A terminal workspace for your shells, browsers and coding agents"
+site_url = "https://docs.graffitty.com/"
 docs_dir = "docs"
 site_dir = "site"
 # Local test evidence is maintained in the repository, not the user guide.

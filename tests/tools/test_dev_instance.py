@@ -62,11 +62,12 @@ class DevInstanceTests(unittest.TestCase):
                 "--reload",
             ]
             descriptor = root / "state/graffitty/remote.json"
-            activation = root / "state/graffitty/dev-instance.json"
             log = root / "test.log"
             client = None
             with PrivateServer(env, root, "/bin/sh") as owner, log.open("w") as output:
                 descriptor = owner.descriptor
+                # The app publishes its socket beside the server it presents.
+                activation = descriptor.parent / "dev-app.json"
                 first = subprocess.Popen(
                     command,
                     cwd=ROOT,
@@ -86,8 +87,11 @@ class DevInstanceTests(unittest.TestCase):
                         result = subprocess.run([ROOT / "target/release/gft", "session", "list", "--json"], env=env, capture_output=True, text=True, timeout=10)
                         self.assertEqual(result.returncode, 0, result.stderr)
                         return json.loads(result.stdout)
-                    initial_sessions = sessions()
-                    self.assertEqual(len(initial_sessions), 1)
+                    # The app publishes its socket before its first window attaches.
+                    deadline = time.monotonic() + 25
+                    while len(initial_sessions := sessions()) != 1:
+                        self.assertLess(time.monotonic(), deadline, log.read_text())
+                        time.sleep(0.05)
                     # The connection file holds the listener URL and the local capability.
                     client = Client(json.loads(descriptor.read_text()), initial_sessions[0]["id"])
                     initial_pane = client.topology["panes"][0]["id"]

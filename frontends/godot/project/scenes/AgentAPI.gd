@@ -47,14 +47,9 @@ func _ready() -> void:
 		if OS.get_name() != "Windows": FileAccess.set_unix_permissions(directory.path_join("session.json"), 384)
 		descriptor.store_string(JSON.stringify({ "socket": socket_path, "token": session_token }))
 		descriptor.close()
-	for argument in OS.get_cmdline_user_args():
-		if argument.begins_with("--launch-descriptor="):
-			var path := argument.trim_prefix("--launch-descriptor=")
-			# Create privately before copying the capability into it.
-			var launch_file := FileAccess.open(path, FileAccess.WRITE)
-			if launch_file != null:
-				FileAccess.set_unix_permissions(path, 384)
-				launch_file.store_string(JSON.stringify({"socket": socket_path, "token": session_token}))
+	# Later launches of the app find this socket and hand their request to it.
+	if application.primary_app:
+		ClassDB.class_call_static(&"AppInstance", &"publish", socket_path, session_token)
 
 
 func environment_for(tab_id: int) -> Dictionary:
@@ -163,7 +158,14 @@ func dispatch(tab_id: int, method: String, params: Dictionary) -> Dictionary:
 				host.create_native_window()
 				return {"result": {"opened": true}}
 		return error("busy", "No window is ready to open a workspace")
+	if method == "application.restore_checkpoint":
+		if tab_id >= 0: return error("forbidden", "Application capability required")
+		if not params.get("path") is String or params.path.is_empty():
+			return error("invalid_params", "path must name a prepared checkpoint")
+		return application.restore_checkpoint(params.path)
 	if method == "session.capture" and params.get("layout", false):
+		# The API starts before the first window has attached.
+		if application.checkpoints == null: return error("busy", "No window is ready yet")
 		return await application.checkpoints.capture()
 	if tab_id < 0:
 		return error("forbidden", "Application capability cannot control individual panes")
@@ -575,6 +577,8 @@ func dom(chromium: Node, action: String, params: Dictionary) -> Dictionary:
 
 func _exit_tree() -> void:
 	if not socket_path.is_empty():
+		if application.primary_app:
+			ClassDB.class_call_static(&"AppInstance", &"withdraw", session_token)
 		var directory := runtime_directory
 		DirAccess.remove_absolute(directory.path_join("session.json"))
 		for file in DirAccess.get_files_at(directory):

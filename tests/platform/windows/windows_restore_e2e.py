@@ -95,8 +95,10 @@ def main():
                 assert code == 0 and "CHECKPOINT RESTORE SMOKE: PASS" in output and "SCRIPT ERROR" not in output, output
                 captured = json.loads((directory / "captured.json").read_text(encoding="utf-8"))
                 requested = json.loads(checkpoint.read_text(encoding="utf-8"))
-                restored_windows = captured["windows"][-len(requested["windows"]):]
-                for actual_window, saved_window in zip(restored_windows, requested["windows"]):
+                # Restore opens one window, for the first saved session; the
+                # others run without a window, so only it has a frame to check.
+                restored_windows = captured["windows"][-1:]
+                for actual_window, saved_window in zip(restored_windows, requested["windows"][:1]):
                     assert actual_window["size"] == saved_window["size"], (actual_window["size"], saved_window["size"])
                     assert actual_window["position"] == saved_window["position"], (actual_window["position"], saved_window["position"])
                 ready = json.loads(Path(requested["receipt"]).read_text(encoding="utf-8"))

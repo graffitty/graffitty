@@ -61,8 +61,18 @@ static func popup_centered(dialog: AcceptDialog, logical_size: Vector2i) -> void
 	dialog.popup_centered(Vector2i(wanted.ceil()))
 	await dialog.get_tree().process_frame
 	if not is_instance_valid(dialog): return
+	# Wrapping resizes the window to its contents' minimum: the narrowest
+	# button row, which then wraps the text into a tall column. Keep the width.
+	dialog.min_size.x = maxi(dialog.min_size.x, ceili(wanted.x))
 	dialog.wrap_controls = wrap
 	if not dialog.visible: return
+	_fit_height(dialog, logical_size)
+	# The text re-wraps at the restored width only on the next frame.
+	await dialog.get_tree().process_frame
+	if is_instance_valid(dialog) and dialog.visible: _fit_height(dialog, logical_size)
+
+
+static func _fit_height(dialog: AcceptDialog, logical_size: Vector2i) -> void:
 	var previous := dialog.size
 	dialog.size.y = ceili(maxf(logical_size.y, dialog.get_contents_minimum_size().y) * dialog.content_scale_factor)
 	dialog.position.y += (previous.y - dialog.size.y) / 2

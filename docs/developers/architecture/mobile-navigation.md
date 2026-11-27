@@ -55,4 +55,4 @@ motion. An overlay absorbs input until completion. Resize, focus loss, and a
 new destination dispose of the retained views. The live destination is already
 in place when the overlay disappears; no session or connection is closed.
 
-Acceptance steps: [UI-09](../../../tests/e2e/controls.md#ui-09--workspace-manager-connections-and-mobile-start).
+Acceptance steps: [UI-09](https://github.com/graffitty/graffitty/blob/main/tests/e2e/controls.md#ui-09--workspace-manager-connections-and-mobile-start).

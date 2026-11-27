@@ -3,6 +3,7 @@ extends Window
 ## Native window placement and local-session return remain desktop responsibilities.
 const Authentication := preload("res://scenes/remote/ClientAuthentication.gd")
 const Page := preload("res://scenes/remote/ConnectionPage.gd")
+const MacDialogTitle := preload("res://scenes/MacDialogTitle.gd")
 const Card := preload("res://scenes/remote/ServerCard.gd")
 var application: Node
 var client: Node
@@ -87,10 +88,14 @@ func _ready() -> void:
 			confirmation.hide()
 			for row in cards: row.card.actions.hide())
 	get_node("/root/Localization").changed.connect(_refresh_status)
+	MacDialogTitle.attach(self, Page.BACKGROUND)
 
 func _fit_page() -> void:
+	# Below the title bar Graffitty draws on macOS; 0 elsewhere.
+	var top := MacDialogTitle.height(self)
+	for page in [chooser, form]: page.offset_top = top
 	if chooser.visible:
-		chooser.set_deferred("size", get_visible_rect().size)
+		chooser.set_deferred("size", get_visible_rect().size - Vector2(0, top))
 
 func present(source: Node) -> void:
 	if not is_embedded():
