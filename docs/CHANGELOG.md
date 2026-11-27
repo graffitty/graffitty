@@ -4,6 +4,10 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [v0.0.6] - 2026-11-25
+### :sparkles: New Features
+- run one app per computer, control terminals in every session, smooth macOS dialog drags and fix IME input ([#7](https://github.com/graffitty/graffitty/pull/7)).
+
 ## [v0.0.5] - 2026-11-25
 ### :sparkles: New Features
 - improve remote connections, file transfers and workspace navigation ([#6](https://github.com/graffitty/graffitty/pull/6)).

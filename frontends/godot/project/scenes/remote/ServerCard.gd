@@ -12,6 +12,8 @@ var heading := Label.new()
 var address := Label.new()
 var status := Label.new()
 var indicator := PanelContainer.new()
+## Replaces the status dot while connecting or signing in.
+var spinner := preload("res://scenes/BusySpinner.gd").new(14.0)
 var os_icon := TextureRect.new()
 var select := Button.new()
 var more := Button.new()
@@ -70,6 +72,8 @@ func _init() -> void:
 	indicator.custom_minimum_size = Vector2(8, 8)
 	indicator.size_flags_vertical = Control.SIZE_SHRINK_CENTER
 	details.add_child(indicator)
+	spinner.hide()
+	details.add_child(spinner)
 	status.size_flags_horizontal = Control.SIZE_EXPAND_FILL
 	status.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
 	status.add_theme_font_size_override("font_size", DesktopText.size(14))
@@ -134,6 +138,9 @@ func update_state(state: String, has_transport: bool) -> void:
 	indicator.add_theme_stylebox_override("panel", _surface(color, 4, 0))
 	status.modulate = color
 	action.disabled = state in ["connecting", "authenticating"]
+	spinner.visible = action.disabled
+	spinner.modulate = color
+	indicator.visible = not action.disabled
 	select.disabled = action.disabled
 	action.text = {"connected": "Connected", "offline": "Retry now", "error": "Retry now", "password": "Enter current password", "connecting": "Connecting…", "authenticating": "Signing in…", "verification": "Try sign-in again"}.get(state, "Connect")
 	disconnect_button.disabled = not has_transport

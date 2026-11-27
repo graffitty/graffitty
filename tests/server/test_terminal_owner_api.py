@@ -158,9 +158,33 @@ class TerminalOwnerApiTests(unittest.TestCase):
         self.assertEqual(self.peer.sync()["workspace"], original_workspace)
         listed = control("pane.list", {"target": "project"})["result"]["panes"]
         self.assertEqual([p["id"] for p in listed], [f"t{pane['id']}"])
-        # The same address on a pane capability still cannot cross its scope.
-        self.assertIn("error", self.api("internal.terminal.demo_type", {"target":f"t{pane['id']}", "text":"denied"}))
+        # A viewer capability has no session of its own to resolve `:1.1` in.
         self.assertIn("error", control("internal.terminal.demo_type", {"target":":1.1", "text":"no implicit GUI focus"}))
+
+    def test_pane_capability_reaches_every_session_on_the_server(self):
+        other = self.connect("project")
+        pane = other.topology["panes"][0]
+        target_file = self.directory / f"{pane['pid']}.input"
+        self.eventually(lambda: "@@READY@@" in self.rpc("terminal.get_text", pane=pane["id"], peer=other)["result"]["text"])
+        # Every session is listed, each row naming its session.
+        listed = self.cli("pane", "list")["panes"]
+        self.assertEqual({(p["id"], p["session_name"]) for p in listed},
+                         {(f"t{self.id}", "main"), (f"t{pane['id']}", "project")})
+        self.assertEqual([p["id"] for p in self.cli("pane", "list", "-t", "project")["panes"]], [f"t{pane['id']}"])
+        # The same input, capture and PID calls reach a pane in another session,
+        # by ID or by session-qualified position, without touching the caller.
+        self.cli("terminal", "send-text", "-t", f"t{pane['id']}", "--text", "cross")
+        self.eventually(lambda: target_file.exists() and target_file.read_bytes() == b"cross")
+        self.assertEqual(self.cli("terminal", "press", "-t", "project:1.1", "Enter")["keys_sent"], 1)
+        self.eventually(lambda: target_file.read_bytes() == b"cross\r")
+        self.assertIn("@@READY@@", self.cli("terminal", "get-text", "-t", f"t{pane['id']}")["text"])
+        pids = self.api("terminal.pid", {"target": f"t{pane['id']}"})["result"]["terminals"]
+        self.assertEqual([p["root_pid"] for p in pids], [pane["pid"]])
+        # Positions without a session stay in the caller's session.
+        self.assertIn("@@READY@@", self.api("terminal.get_text", {"target": ":1.1"})["result"]["text"])
+        self.assertEqual(self.received(), b"")
+        for target in ["missing:1.1", "t999999", "project:1.9"]:
+            self.assertEqual(self.api("terminal.get_text", {"target": target})["error"]["code"], "invalid_target")
 
     def test_controller_rejects_versions_methods_and_invalid_targets_before_input(self):
         for version, method, params in [
@@ -216,15 +240,12 @@ class TerminalOwnerApiTests(unittest.TestCase):
 
     def test_validation_scope_and_pid_targets_without_gui(self):
         sibling = self.peer.action("create", self.id, kind="pane")["created"]
-        foreign = self.connect("foreign").topology["panes"][0]["id"]
         for method, params, code in [
             ("internal.terminal.demo_type", {"text":"partial\x01", "interval_ms":0}, "invalid_params"),
             ("terminal.press", {"key":"Hyper+x"}, "invalid_key"),
             ("internal.terminal.demo_type", {"text":"ab", "interval_ms":1001}, "invalid_params"),
             ("terminal.get_text", {"scrollback":1}, "invalid_params"),
             ("terminal.get_text", {"unknown":True}, "invalid_params"),
-            ("terminal.get_text", {"target":f"t{sibling}"}, "forbidden"),
-            ("terminal.get_text", {"target":f"t{foreign}"}, "invalid_target"),
             ("terminal.press", {"key":"a", "tab_id":sibling}, "forbidden"),
         ]:
             self.assertEqual(self.api(method, params)["error"]["code"], code)

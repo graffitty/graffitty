@@ -140,6 +140,11 @@ func run() -> void:
 	if not failures.is_empty(): quit(1); return
 	root.tree_exiting.connect(func(): print("TAB_CLOSE_SELECTION_PASS"), CONNECT_ONE_SHOT)
 	await command_w()
+	# Ending the server's last session always asks first.
+	deadline = Time.get_ticks_msec() + 10000
+	while host.close_dialog == null and Time.get_ticks_msec() < deadline: await process_frame
+	check(host.close_dialog != null and host.close_dialog.title == "Stop server?", "Closing the final pane asks before stopping the server")
+	if host.close_dialog != null: host.close_dialog.get_ok_button().pressed.emit()
 	await create_timer(5).timeout
 	check(false, "Closing the final pane quits normally")
 	quit(1)

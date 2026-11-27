@@ -51,7 +51,7 @@ toml = "1.2.1"
 sha2 = "0.11.1"
 fancy-regex = "0.20.1"
 base64 = "0.23.1"
-godot = { version = "0.5.5", features = ["api-4-7"] }
+godot = { version = "0.5.6", features = ["api-4-7"] }
 # wcwidth for the preedit: a composing syllable is not in the grid yet, so its
 # cell advance cannot come from the vt the way every other cell's does.
 unicode-width = "0.2.2"
@@ -64,6 +64,10 @@ terminal-resource-monitor = { path = "../../../crates/platform/resource-monitor"
 [target.'cfg(not(target_os = "android"))'.dependencies]
 cpal = "0.18.2"
 
+# Desktop apps keep one process per session server (see app_instance.rs).
+[target.'cfg(not(any(target_os = "android", target_os = "ios")))'.dependencies]
+graffitty-graph-protocol = { path = "../../../crates/graph-protocol" }
+
 [target.'cfg(unix)'.dependencies]
 libc = "0.2.190"
 rustix = { version = "1.1.5", features = ["fs", "event", "process"] }
@@ -71,14 +75,14 @@ rustix = { version = "1.1.5", features = ["fs", "event", "process"] }
 [target.'cfg(target_os = "linux")'.dependencies]
 # ChromiumGpuReceiver is called on Godot's render thread, which may differ from
 # the main thread. Its native Vulkan state remains confined to that thread.
-godot = { version = "0.5.5", features = ["experimental-threads"] }
+godot = { version = "0.5.6", features = ["experimental-threads"] }
 x11-dl = "2.21.0"
 
 [target.'cfg(target_os = "android")'.dependencies]
 libloading = "0.9.0"
 # The video decoder prepares immutable packed bytes on its worker. No scene,
 # resource or rendering objects are accessed from that thread.
-godot = { version = "0.5.5", features = ["experimental-threads"] }
+godot = { version = "0.5.6", features = ["experimental-threads"] }
 
 [build-dependencies]
 cc = "1.6.0"
@@ -103,7 +107,7 @@ libghostty-vt-sys = { git = "https://github.com/uzaaft/libghostty-rs", rev = "76
 [target.'cfg(target_os = "ios")'.dependencies]
 security-framework = "3.7"
 # Immutable NV12 packed arrays are prepared on the video decoder worker.
-godot = { version = "0.5.5", features = ["experimental-threads"] }
+godot = { version = "0.5.6", features = ["experimental-threads"] }
 
 [target.'cfg(target_os = "macos")'.dependencies]
 keyring = { version = "4.2.0", features = ["v1"] }

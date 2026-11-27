@@ -3,8 +3,37 @@ extends "res://tests/unit/test_case.gd"
 class Insets extends "res://scenes/input/AndroidKeyboardInsets.gd":
 	var hides := 0
 	var height := 700
+	var changes: Array[int] = []
 	func _hide_keyboard() -> void: hides += 1
 	func keyboard_height() -> int: return height
+
+class Polled extends Insets:
+	func _height_changed(value: int) -> void: changes.append(value)
+
+## iOS has no height signal; each frame's poll reports a change once.
+func test_ios_poll_reports_each_height_change_once() -> void:
+	var insets := Polled.new()
+	insets.height = 0
+	insets._process(0.0)
+	expect(insets.changes.is_empty(), "No report while the height stays at zero")
+	insets.height = 320
+	insets._process(0.0)
+	insets._process(0.0)
+	insets.height = 0
+	insets._process(0.0)
+	expect(insets.changes == [320, 0], "Shown and hidden are each reported once: %s" % [insets.changes])
+	insets.free()
+
+## A hardware keyboard leaves only iPadOS's shortcut bar: keep the terminal
+## above it without the touch key row. Android never has that bar.
+func test_ios_shortcut_bar_hides_only_the_key_row() -> void:
+	var insets := Insets.new()
+	insets.ios = true
+	expect(insets.shortcut_bar_only(55.0) and insets.shortcut_bar_only(insets.SHORTCUT_BAR_MAX), "A shortcut-bar height hides the key row")
+	expect(not insets.shortcut_bar_only(320.0), "The on-screen keyboard keeps the key row")
+	insets.ios = false
+	expect(not insets.shortcut_bar_only(55.0), "Android keeps the key row at any height")
+	insets.free()
 
 func test_background_zero_height_does_not_cancel_resume_dismissal() -> void:
 	var insets := Insets.new()

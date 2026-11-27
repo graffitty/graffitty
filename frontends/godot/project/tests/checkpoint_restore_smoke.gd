@@ -24,63 +24,92 @@ func _run() -> void:
 	while not await chromium_pages_restored(app, expected) and Time.get_ticks_msec() < deadline:
 		await create_timer(.25).timeout
 	var response: Dictionary = await app.checkpoints.capture()
-	var ok: bool = response.has("result") and app.hosts.size() == expected.windows.size() + previous_hosts.size()
+	var restore: Node = app.checkpoints
+	# One window for the whole restore; the other saved sessions run without one.
+	var ok: bool = response.has("result") and app.hosts.size() == previous_hosts.size() + 1
+	ok = ok and restore.restored_sessions.size() == expected.windows.size()
+	if not ok:
+		print("RESTORE WINDOWS: ", app.hosts.size() - previous_hosts.size(), " sessions: ", restore.restored_sessions)
 	if ok:
-		for i in expected.windows.size():
-			var actual: Dictionary = JSON.parse_string(JSON.stringify(response.result.windows[i + previous_hosts.size()]))
-			var saved: Dictionary = expected.windows[i]
-			var restore: Node = app.checkpoints
-			ok = ok and int(actual.active) == int(restore.restored_tabs[int(saved.active)])
-			ok = ok and actual.tabs.size() == saved.tabs.size()
-			for index in mini(actual.tabs.size(), saved.tabs.size()):
-				var wanted: Dictionary = preload("res://scenes/session/ServerWorkspace.gd").map_value(restore.decode(saved.tabs[index]), func(id): return restore.restored_ids[int(id)])
-				wanted.id = restore.restored_tabs[int(saved.tabs[index].id)]
-				var found: Dictionary = restore.decode(actual.tabs[index])
-				ok = ok and int(found.id) == int(wanted.id)
-				ok = ok and tab_matches(found, wanted)
-				if wanted.has("navigation"):
-					ok = ok and found.get("navigation", {}) == wanted.navigation
-			ok = ok and actual.panes.size() == saved.panes.size()
-			for pane in actual.panes:
-				ok = ok and int(pane.pid) > 0
-			for pane in saved.panes:
-				var found_panes: Array = actual.panes.filter(func(p): return int(p.id) == int(restore.restored_ids[int(pane.id)]))
-				ok = ok and found_panes.size() == 1
-				if found_panes.size() == 1:
-					ok = ok and str(found_panes[0].title) == str(pane.title)
-					if pane.has("font_size"): ok = ok and int(found_panes[0].font_size) == int(pane.font_size)
-				if pane.has("filetree"):
-					var found: Array = actual.panes.filter(func(p): return int(p.id) == int(restore.restored_ids[int(pane.id)]))
-					ok = ok and found.size() == 1 and found[0].get("filetree") is Dictionary
-					if found.size() == 1 and found[0].get("filetree") is Dictionary:
-						ok = ok and int(found[0].filetree.owner) == int(restore.restored_ids[int(pane.filetree.owner)])
-						ok = ok and found[0].filetree.root == pane.filetree.root
-			ok = ok and actual.chromiums.size() == saved.chromiums.size()
-			for chromium in saved.chromiums:
-				var found: Array = actual.chromiums.filter(func(c): return int(c.id) == int(restore.restored_ids[int(chromium.id)]))
-				ok = ok and found.size() == 1
-				if found.size() == 1:
-					ok = ok and found[0].urls == chromium.urls and str(found[0].title) == str(chromium.title)
-					for field in ["profile", "profile_template"]:
-						ok = ok and found[0].get(field) == chromium.get(field)
-					# Without a saved owner, its window's first terminal opens it.
-					var terminals: Array = saved.panes.filter(func(pane): return not pane.has("filetree"))
-					var owner: int = int(restore.restored_ids[int(chromium.owner if chromium.owner != null else terminals[0].id)])
-					ok = ok and int(found[0].owner) == owner
-			if saved.has("graph"):
-				var wanted: Dictionary = preload("res://scenes/session/ServerWorkspace.gd").map_value(saved.graph, func(id): return restore.restored_ids[int(id)])
-				ok = ok and int(actual.graph.run_messages) == int(wanted.run_messages)
-				ok = ok and actual.graph.edges.size() == wanted.edges.size()
-				for edge in wanted.edges:
-					var matches: Array = actual.graph.edges.filter(func(e): return e.from == edge.from and e.to == edge.to)
-					ok = ok and matches.size() == 1
-					if matches.size() == 1:
-						for field in edge: ok = ok and matches[0].get(field) == edge[field]
+		var first: Dictionary = JSON.parse_string(JSON.stringify(response.result.windows[previous_hosts.size()]))
+		ok = matches_saved(first, expected.windows[0], restore, true)
+		for i in range(1, expected.windows.size()):
+			var actual := await windowless_session(app, restore, i, expected.windows[i])
+			ok = not actual.is_empty() and matches_saved(actual, expected.windows[i], restore, false) and ok
 	if ok:
 		ok = await observe_restore(app, response.result) and ok
 	ok = await save_restored_checkpoint(app, expected) and ok
 	print("CHECKPOINT RESTORE SMOKE: ", "PASS" if ok else JSON.stringify(response))
 	quit(0 if ok else 1)
+
+
+## The live owner checkpoint of the session restored from saved window `index`,
+## read through a connection that shows nothing.
+func windowless_session(app: Node, restore: Node, index: int, saved: Dictionary) -> Dictionary:
+	var link: Node = await restore._session_link(app.hosts.back().get_parent(), str(restore.restored_sessions[index]))
+	if link == null:
+		print("RESTORED SESSION MISSING: ", restore.restored_sessions[index])
+		return {}
+	var terminals: Array = saved.panes.filter(func(pane): return not pane.has("filetree"))
+	var reply: Dictionary = await restore._remote(link, int(restore.restored_ids[int(terminals[0].id)]), "session.capture", {"layout": true})
+	restore._close_links([link])
+	if not reply.has("result") or reply.result.windows.size() != 1:
+		print("RESTORED SESSION CAPTURE: ", reply)
+		return {}
+	return JSON.parse_string(JSON.stringify(reply.result.windows[0]))
+
+
+func matches_saved(actual: Dictionary, saved: Dictionary, restore: Node, presented: bool) -> bool:
+	var ok := int(actual.active) == int(restore.restored_tabs[int(saved.active)])
+	ok = ok and actual.tabs.size() == saved.tabs.size()
+	for index in mini(actual.tabs.size(), saved.tabs.size()):
+		var wanted: Dictionary = preload("res://scenes/session/ServerWorkspace.gd").map_value(restore.decode(saved.tabs[index]), func(id): return restore.restored_ids[int(id)])
+		wanted.id = restore.restored_tabs[int(saved.tabs[index].id)]
+		var found: Dictionary = restore.decode(actual.tabs[index])
+		ok = ok and int(found.id) == int(wanted.id)
+		ok = ok and tab_matches(found, wanted)
+		# Navigation belongs to the window that shows the session.
+		if presented and wanted.has("navigation"):
+			ok = ok and found.get("navigation", {}) == wanted.navigation
+	ok = ok and actual.panes.size() == saved.panes.size()
+	for pane in actual.panes:
+		ok = ok and int(pane.pid) > 0
+	for pane in saved.panes:
+		var found_panes: Array = actual.panes.filter(func(p): return int(p.id) == int(restore.restored_ids[int(pane.id)]))
+		ok = ok and found_panes.size() == 1
+		if found_panes.size() == 1:
+			ok = ok and str(found_panes[0].title) == str(pane.title)
+			if pane.has("font_size"): ok = ok and int(found_panes[0].font_size) == int(pane.font_size)
+		if pane.has("filetree"):
+			var found: Array = actual.panes.filter(func(p): return int(p.id) == int(restore.restored_ids[int(pane.id)]))
+			ok = ok and found.size() == 1 and found[0].get("filetree") is Dictionary
+			if found.size() == 1 and found[0].get("filetree") is Dictionary:
+				ok = ok and int(found[0].filetree.owner) == int(restore.restored_ids[int(pane.filetree.owner)])
+				ok = ok and found[0].filetree.root == pane.filetree.root
+	ok = ok and actual.chromiums.size() == saved.chromiums.size()
+	for chromium in saved.chromiums:
+		var found: Array = actual.chromiums.filter(func(c): return int(c.id) == int(restore.restored_ids[int(chromium.id)]))
+		ok = ok and found.size() == 1
+		if found.size() == 1:
+			ok = ok and found[0].urls == chromium.urls and str(found[0].title) == str(chromium.title)
+			for field in ["profile", "profile_template"]:
+				ok = ok and found[0].get(field) == chromium.get(field)
+			# Without a saved owner, its window's first terminal opens it.
+			var terminals: Array = saved.panes.filter(func(pane): return not pane.has("filetree"))
+			var owner: int = int(restore.restored_ids[int(chromium.owner if chromium.owner != null else terminals[0].id)])
+			ok = ok and int(found[0].owner) == owner
+	if saved.has("graph"):
+		var wanted: Dictionary = preload("res://scenes/session/ServerWorkspace.gd").map_value(saved.graph, func(id): return restore.restored_ids[int(id)])
+		ok = ok and int(actual.graph.run_messages) == int(wanted.run_messages)
+		ok = ok and actual.graph.edges.size() == wanted.edges.size()
+		for edge in wanted.edges:
+			var matches: Array = actual.graph.edges.filter(func(e): return e.from == edge.from and e.to == edge.to)
+			ok = ok and matches.size() == 1
+			if matches.size() == 1:
+				for field in edge: ok = ok and matches[0].get(field) == edge[field]
+	if not ok:
+		print("RESTORE MISMATCH: ", JSON.stringify({"actual": actual, "saved": saved, "ids": restore.restored_ids, "tabs": restore.restored_tabs}))
+	return ok
 
 
 func save_restored_checkpoint(app: Node, expected: Dictionary) -> bool:
@@ -116,8 +145,13 @@ func chromium_pages_restored(app: Node, expected: Dictionary) -> bool:
 	var response: Dictionary = await app.checkpoints.capture()
 	if not response.has("result"):
 		return false
+	var windows: Array = response.result.windows.duplicate()
+	for i in range(1, app.checkpoints.restored_sessions.size()):
+		var session := await windowless_session(app, app.checkpoints, i, expected.windows[i])
+		if session.is_empty(): return false
+		windows.append(session)
 	var pages := {}
-	for window in response.result.windows:
+	for window in windows:
 		for chromium in window.chromiums:
 			pages[int(chromium.id)] = chromium.urls
 	for window in expected.windows:

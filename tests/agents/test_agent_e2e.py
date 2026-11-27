@@ -22,9 +22,15 @@ GODOT_ROOT = REPO / "frontends/godot/project"
 WINDOWS = os.name == 'nt'
 CASES = ('graph', 'codex-daemon', 'claude', 'cross', 'codex-local')
 # Graph-link geometry now lives in the unit suite run by run.gd.
-GRAPH = ('graph_editing_smoke.gd', 'run.gd', 'graph_link_animation_smoke.gd', 'agent_graph_smoke.gd')
+GRAPH = ('graph_editing_smoke.gd', 'run.gd', 'graph_link_animation_smoke.gd', 'graph_port_zoom_smoke.gd', 'agent_graph_smoke.gd')
+# Arguments a graph smoke needs beyond --shell.
+GRAPH_ARGS = {'graph_port_zoom_smoke.gd': ['--no-focus-skip']}
+# Smokes that sample drawn frames: a headless run draws none, so they run on
+# the GPU in the background (macOS) or are blocked.
+GRAPH_GPU = {'graph_port_zoom_smoke.gd'}
 sys.path[:0] = [str(Path(__file__).resolve().parents[2] / d) for d in ("tests/support",)]
 from e2e_server import PrivateServer
+from e2e_background import background_failures, prepare_background
 
 
 def shell_command(command):
@@ -142,7 +148,7 @@ def execute_godot(command, env, logfile, timeout, shell):
     # Drop the caller's session, keep what this runner set for the replay.
     env = {key: value for key, value in env.items()
            if not key.startswith('GRAFFITTY_')
-           or key in ('GRAFFITTY_E2E_MANIFEST', 'GRAFFITTY_TEST_SERVER')}
+           or key.startswith('GRAFFITTY_E2E_') or key == 'GRAFFITTY_TEST_SERVER'}
     directory = logfile.parent / (logfile.stem + '-runtime')
     directory.mkdir(mode=0o700)
     if WINDOWS and env.get('LOCALAPPDATA'):
@@ -361,10 +367,18 @@ def main():
         if case == 'graph':
             for script in GRAPH:
                 blockers = preflight(directory) if script == 'agent_graph_smoke.gd' else []
+                if script in GRAPH_GPU and sys.platform != 'darwin':
+                    blockers = ['Samples drawn frames; run it with a GPU window']
+                env = {key: value for key, value in os.environ.items() if not key.startswith(('GRAFFITTY_', 'CODEX_THREAD', 'CODEX_SESSION'))}
+                render = ['--headless']
+                if script in GRAPH_GPU and not blockers:
+                    render = prepare_background(env, directory / (script + '-guard'))
                 result = ({'status': 'BLOCKED', 'reasons': blockers} if blockers else
-                          execute_godot([args.godot, '--headless', '--path', str(GODOT_ROOT), '--script', 'tests/' + script, '--', '--shell=' + args.shell],
-                                  {key: value for key, value in os.environ.items() if not key.startswith(('GRAFFITTY_', 'CODEX_THREAD', 'CODEX_SESSION'))},
-                                  directory / (script + '.log'), 90, args.shell))
+                          execute_godot([args.godot, *render, '--path', str(GODOT_ROOT), '--script', 'tests/' + script, '--', '--shell=' + args.shell, *GRAPH_ARGS.get(script, [])],
+                                  env, directory / (script + '.log'), 90, args.shell))
+                if script in GRAPH_GPU and not blockers and result['status'] == 'PASS':
+                    guard = background_failures(directory / (script + '-guard'))
+                    if guard: result = {'status': 'FAIL', 'reasons': guard}
                 results[script] = result
                 print(script, result['status'], flush=True)
         else:

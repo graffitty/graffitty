@@ -1035,8 +1035,6 @@ pub fn send(server: &mut Server, caller: u64, params: &Value) -> Result<Value, E
         .ok_or("Calling terminal closed")?;
     let name = source.workspace.clone();
     let tab = source.tab;
-    workspace::sync(server, &name)?;
-    let state = server.workspace_state.snapshot(&name);
     let own = format!("t{caller}");
     let target = target.unwrap_or(&own);
     let target = if target == "connected" {
@@ -1054,8 +1052,9 @@ pub fn send(server: &mut Server, caller: u64, params: &Value) -> Result<Value, E
     } else {
         target.into()
     };
-    let key = crate::terminal_api::resolve(&state, &target).ok_or("Unknown target pane")?;
-    let pane = graffitty_workspace_core::pane_id::parse(&key).ok_or("Invalid target pane")?;
+    // Any terminal on this server, as with tmux, WezTerm and herdr.
+    let pane = crate::terminal_api::terminal_target(server, &name, &target)?;
+    let key = format!("t{pane}");
     let text = params["text"]
         .as_str()
         .filter(|s| s.len() <= 1024 * 1024 && !s.contains('\0'))
@@ -1063,12 +1062,7 @@ pub fn send(server: &mut Server, caller: u64, params: &Value) -> Result<Value, E
     let enter = params
         .get("enter")
         .map_or(Ok(false), |v| v.as_bool().ok_or("enter must be a boolean"))?;
-    let session = server
-        .sessions
-        .get(&pane)
-        .filter(|s| s.workspace == name)
-        .ok_or("Target is not a terminal in this session")?;
-    session.send_paste(text, enter)?;
+    server.sessions[&pane].send_paste(text, enter)?;
     Ok(json!({"pane":key,"bytes":text.len(),"enter":enter}))
 }
 

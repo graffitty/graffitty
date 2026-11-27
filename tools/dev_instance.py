@@ -1,4 +1,11 @@
-"""Keep development windows in one application (and one remote listener)."""
+"""Keep development windows in one application (and one remote listener).
+
+The app itself elects one process per session server: it holds
+`dev-app.lock` and publishes `dev-app.json` beside the server's
+`server.json` (crates/graph-protocol/src/application.rs). This launcher only
+checks startup options and opens the window itself, so a second launch never
+starts Godot or rewrites the running app's log.
+"""
 
 import fcntl
 import json
@@ -66,53 +73,70 @@ def open_window(descriptor: Path, args: list[str], timeout: float = 10) -> None:
             time.sleep(0.05)
 
 
-def run(command: list[str], directory: Path) -> int:
+def run(command: list[str], directory: Path, logs: Path) -> int:
     directory.mkdir(parents=True, exist_ok=True)
-    descriptor = directory / "dev-instance.json"
-    with (directory / "dev-instance.lock").open("a") as lock:
+    descriptor = directory / "dev-app.json"
+    with (directory / "dev-app.lock").open("a") as lock:
         try:
             fcntl.flock(lock, fcntl.LOCK_EX | fcntl.LOCK_NB)
+            running = False
         except BlockingIOError:
-            args = command[command.index("--") + 1 :] if "--" in command else []
-            allowed = ("--workspace=", "--cwd=", "--working-directory=", "--shell=")
-            if any(arg not in ("--attach-session", "--reload") and not arg.startswith(allowed) for arg in args):
-                raise RuntimeError("Close the running GUI before changing rendering or configuration startup options.")
-            open_window(descriptor, args)
-            print(
-                "[dev] Opened a window in the running Graffitty (shared remote listener)."
-            )
-            return 0
-        descriptor.unlink(missing_ok=True)
-        log = directory / "graffitty.log"
-        if log.is_file():
-            shutil.copyfile(log, log.with_suffix(".log.1"))
-        if "--" not in command:
-            command.append("--")
-        command.append(f"--launch-descriptor={descriptor}")
-        child = subprocess.Popen(command)
-        handlers = {}
+            running = True
+        # Never hold the app's lock past this probe: the app takes it itself.
+        fcntl.flock(lock, fcntl.LOCK_UN)
+    if running:
+        args = command[command.index("--") + 1 :] if "--" in command else []
+        allowed = ("--workspace=", "--cwd=", "--working-directory=", "--shell=")
+        if any(arg not in ("--attach-session", "--reload") and not arg.startswith(allowed) for arg in args):
+            raise RuntimeError("Close the running GUI before changing rendering or configuration startup options.")
+        open_window(descriptor, args)
+        print("[dev] Opened a window in the running Graffitty (shared remote listener).")
+        return 0
+    log = logs / "graffitty.log"
+    if log.is_file():
+        shutil.copyfile(log, log.with_suffix(".log.1"))
+    child = subprocess.Popen(command)
+    handlers = {}
 
-        def forward(signum, _frame):
-            if child.poll() is None:
-                child.send_signal(signum)
+    def forward(signum, _frame):
+        if child.poll() is None:
+            child.send_signal(signum)
 
-        for signum in (signal.SIGINT, signal.SIGTERM, signal.SIGHUP):
-            handlers[signum] = signal.signal(signum, forward)
-        try:
-            result = child.wait()
-            return result if result >= 0 else 128 - result
-        finally:
-            for signum, handler in handlers.items():
-                signal.signal(signum, handler)
-            descriptor.unlink(missing_ok=True)
+    for signum in (signal.SIGINT, signal.SIGTERM, signal.SIGHUP):
+        handlers[signum] = signal.signal(signum, forward)
+    try:
+        result = child.wait()
+        return result if result >= 0 else 128 - result
+    finally:
+        for signum, handler in handlers.items():
+            signal.signal(signum, handler)
+        # An app stopped by a signal cannot withdraw its own descriptor.
+        with (directory / "dev-app.lock").open("a") as lock:
+            try:
+                fcntl.flock(lock, fcntl.LOCK_EX | fcntl.LOCK_NB)
+                descriptor.unlink(missing_ok=True)
+                fcntl.flock(lock, fcntl.LOCK_UN)
+            except BlockingIOError:
+                pass
 
 
-def main() -> int:
+def user_state() -> Path:
     base = Path(os.environ.get("XDG_STATE_HOME", ""))
     if not base.is_absolute():
         base = Path.home() / ".local/state"
+    return base / "graffitty"
+
+
+def server_directory() -> Path:
+    """Where the session server keeps `server.json`, and the app its lock."""
+    if os.environ.get("GRAFFITTY_SERVER_DESCRIPTOR"):
+        return Path(os.environ["GRAFFITTY_SERVER_DESCRIPTOR"]).absolute().parent
+    return user_state()
+
+
+def main() -> int:
     try:
-        return run(sys.argv[1:], base / "graffitty")
+        return run(sys.argv[1:], server_directory(), user_state())
     except RuntimeError as error:
         print(f"[dev] {error}", file=sys.stderr)
         return 1

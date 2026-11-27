@@ -45,8 +45,6 @@ pub fn dispatch(
         .ok_or_else(|| api::error("workspace_closed", "Terminal no longer exists"))?
         .workspace
         .clone();
-    workspace::sync(server, &name)?;
-    let state = server.workspace_state.snapshot(&name);
     let target = params
         .get("target")
         .map(|v| {
@@ -57,44 +55,39 @@ pub fn dispatch(
     if method == "terminal.pid" {
         let details = boolean(params, "details")?;
         return Ok(api::Reply::Ready(
-            json!({"result":pids(server, &name, &state, target, details)?}),
+            json!({"result":pids(server, &name, target, details)?}),
         ));
     }
-    if let Some(target) = target {
-        let key = resolve_in_workspace(&state, &name, target)
-            .ok_or_else(|| unknown_target(target, "Unknown pane target"))?;
-        if key != pane_address(caller) {
-            return Err(api::error(
-                "forbidden",
-                "Terminal access is scoped to the calling terminal",
-            ));
-        }
-    }
+    // Any terminal on this server, as with tmux, WezTerm and herdr.
+    let pane = match target {
+        None => caller,
+        Some(target) => terminal_target(server, &name, target)?,
+    };
     if method == "terminal.put" {
-        if server.sessions[&caller].exited { return Err(api::error("workspace_closed", "Terminal has exited")); }
+        if server.sessions[&pane].exited { return Err(api::error("workspace_closed", "Terminal has exited")); }
         let chunk = serde_json::from_value::<graffitty_protocol::file_transfer::Chunk>(params["upload"].clone())
             .map_err(|e| api::error("invalid_params", &e.to_string()))?;
         use graffitty_protocol::file_transfer::{Progress, TransferState};
-        let mut progress = server.uploads.progress(caller, &chunk.id).unwrap_or_else(|| Progress {
+        let mut progress = server.uploads.progress(pane, &chunk.id).unwrap_or_else(|| Progress {
             id: chunk.id.clone(), name: chunk.name.clone(), received: 0,
             total: chunk.size, state: TransferState::Failed });
-        let result = server.uploads.receive(&server.owner_runtime.join("files"), caller, chunk)
+        let result = server.uploads.receive(&server.owner_runtime.join("files"), pane, chunk)
             .and_then(|(receipt, paste)| {
                 progress.received = receipt.received;
                 if paste {
-                    server.sessions[&caller].paste(&crate::file_transfer::quoted_path(receipt.path.as_deref().unwrap()))?;
+                    server.sessions[&pane].paste(&crate::file_transfer::quoted_path(receipt.path.as_deref().unwrap()))?;
                 }
                 progress.state = if receipt.path.is_some() { TransferState::Complete } else { TransferState::Receiving };
                 Ok(receipt)
             });
-        if result.is_err() { server.uploads.abort(caller, &progress.id); }
+        if result.is_err() { server.uploads.abort(pane, &progress.id); }
         // Invalid input must not become an arbitrarily large notification.
         if progress.id.len() == 36 && progress.name.len() <= 255 && progress.total <= graffitty_protocol::file_transfer::MAX_BYTES {
-            server.sessions.get_mut(&caller).unwrap().upload_progress(progress);
+            server.sessions.get_mut(&pane).unwrap().upload_progress(progress);
         }
         return Ok(api::Reply::Ready(json!({"result":result?})));
     }
-    let session = server.sessions.get_mut(&caller).unwrap();
+    let session = server.sessions.get_mut(&pane).unwrap();
     if method == "terminal.get_text" {
         let text = session
             .text(boolean(params, "scrollback")?)
@@ -135,6 +128,43 @@ fn tab(state: &Snapshot, value: &str) -> Option<u64> {
         .and_then(|n| n.checked_sub(1))
         .and_then(|n| state.order.get(usize::try_from(n).ok()?).copied())
 }
+/// A pane anywhere on this server, with the session that owns it.
+///
+/// - `tN` and `cN` name a pane in any session.
+/// - `session:tab.pane` is a position in that session (name or `$N`).
+/// - `:tab.pane` and `@tab.pane` are positions in the caller's session.
+pub(crate) fn resolve_on_server(
+    server: &mut Server,
+    caller_workspace: &str,
+    value: &str,
+) -> Result<Option<(String, String)>, Error> {
+    let (workspace, local) = if let Some(id) = graffitty_protocol::pane_id::parse(value) {
+        let owner = server.sessions.get(&id).map(|s| s.workspace.clone())
+            .or_else(|| server.chromiums.get(&id).map(|b| b.workspace.clone()));
+        let Some(owner) = owner else { return Ok(None) };
+        (owner, value.to_owned())
+    } else if value.starts_with([':', '@']) {
+        (caller_workspace.to_owned(), value.to_owned())
+    } else {
+        let Some((session, rest)) = value.rsplit_once(':').filter(|(s, r)| !s.is_empty() && !r.is_empty())
+        else { return Ok(None) };
+        let Ok(owner) = server.workspaces.resolve(session) else { return Ok(None) };
+        (owner, format!(":{rest}"))
+    };
+    workspace::sync(server, &workspace)?;
+    let state = server.workspace_state.snapshot(&workspace);
+    Ok(resolve(&state, &local).map(|key| (workspace, key)))
+}
+
+/// A terminal (not Chromium) pane anywhere on this server.
+pub(crate) fn terminal_target(server: &mut Server, caller_workspace: &str, value: &str) -> Result<u64, Error> {
+    let (_, key) = resolve_on_server(server, caller_workspace, value)?
+        .ok_or_else(|| unknown_target(value, "Unknown pane target"))?;
+    graffitty_protocol::pane_id::parse(&key)
+        .filter(|id| server.sessions.contains_key(id))
+        .ok_or_else(|| api::error("no_terminal", "Target is a Chromium pane, not a terminal"))
+}
+
 /// Session-qualified and positional addresses share one pane resolver.
 pub(crate) fn resolve_in_workspace(
     state: &Snapshot,
@@ -191,23 +221,27 @@ fn unknown_target(value: &str, message: &str) -> Error {
     }
 }
 
+/// The caller's session, one of its tabs (`:N`, `@N`), or one pane anywhere.
 fn pids(
-    server: &Server,
-    name: &str,
-    state: &Snapshot,
+    server: &mut Server,
+    caller_workspace: &str,
     target: Option<&str>,
     details: bool,
 ) -> Result<Value, Error> {
     let group = target.filter(|s| (s.starts_with('@') || s.starts_with(':')) && !s.contains('.'));
+    let (name, selected_pane) = match target.filter(|_| group.is_none()) {
+        Some(s) => {
+            let (name, key) = resolve_on_server(server, caller_workspace, s)?
+                .ok_or_else(|| unknown_target(s, "Unknown pane target"))?;
+            (name, Some(key))
+        }
+        None => (caller_workspace.to_owned(), None),
+    };
+    workspace::sync(server, &name)?;
+    let name = name.as_str();
+    let state = &server.workspace_state.snapshot(name);
     let selected_tab = group
         .map(|s| tab(state, s).ok_or_else(|| api::error("no_tab", "Unknown tab target")))
-        .transpose()?;
-    let selected_pane = target
-        .filter(|_| group.is_none())
-        .map(|s| {
-            resolve_in_workspace(state, name, s)
-                .ok_or_else(|| unknown_target(s, "No matching pane in this workspace"))
-        })
         .transpose()?;
     if selected_pane.as_ref().is_some_and(|key| {
         key.strip_prefix('t')

@@ -249,3 +249,27 @@ Expected: produced punctuation selects the split direction. Shift, Option, and
 AltGr used to produce the character do not change that direction. Explicit
 user-defined modifier shortcuts retain priority. Physical-device acceptance is
 pending; shared Rust and Godot key-event tests are supporting checks.
+
+## IN-11 — iOS and iPadOS composition and hardware keyboards
+
+1. On an iPad, open the on-screen keyboard in a terminal. Type `한글 입력`
+   with the Korean keyboard, then a Japanese and a Chinese word, choosing
+   candidates from the list.
+2. Attach a hardware keyboard without opening the on-screen keyboard. Type the
+   same Korean text, switch input sources with Ctrl+Space, and press
+   arrow keys, Ctrl+C, Cmd shortcuts and Shift/Alt/Ctrl+Return.
+3. Disconnect and reconnect the hardware keyboard, background and resume the
+   app, and switch panes between words.
+
+Expected: the terminal receives each syllable once. The open syllable and
+marked text show as preedit only, and nothing is sent before a candidate is
+chosen. A hardware keyboard composes Hangul without the on-screen keyboard and
+takes focus back within half a second after it is lost. Ctrl+Space stays with
+iPadOS. Arrow keys stay with the candidate list while text is marked, and
+otherwise reach the terminal in order with the text typed before them.
+Autocapitalization, autocorrection and smart punctuation never change terminal
+input. Switching panes sends the previous pane's open syllable to that pane.
+
+Software keyboards were checked in the iPad simulator; physical-device and
+hardware-keyboard acceptance is pending. See
+[Korean input](../../docs/developers/internals/korean-input.md#ios-and-ipados).

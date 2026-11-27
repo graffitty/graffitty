@@ -7,11 +7,27 @@ var moving_frames := 0
 var mismatched_frames := 0
 var raster_samples := 0
 var stretched_rasters := 0
+var glow_samples := 0
+var stale_glow_frames := 0
+var _glow_tween: Tween
+var _glow_tween_frames := 0
 
 func sample_render_camera() -> void:
 	var view: Control = host.workspace_view
 	if view._inspect_tween == null or not view._inspect_tween.is_running(): return
 	moving_frames += 1
+	# The blue focus glow follows keyboard focus while the camera moves. The
+	# first frame of a reveal may still show the glow painted before it.
+	if view._inspect_tween != _glow_tween:
+		_glow_tween = view._inspect_tween
+		_glow_tween_frames = 0
+	_glow_tween_frames += 1
+	var links: Control = view.agent_links
+	var glow: Array = links.wire_layer.selection_commands
+	if _glow_tween_frames > 2 and links.editing and not glow.is_empty() and view.panes.has(host.pane_focus):
+		glow_samples += 1
+		var focused: Control = view.panes[host.pane_focus]
+		if not Rect2(glow[0][1][1]).is_equal_approx(focused.get_transform() * Rect2(Vector2.ZERO, focused.size)): stale_glow_frames += 1
 	var world: Node = host.world
 	if not world.ink_cam.global_transform.is_equal_approx(world.cam.global_transform) \
 			or not world.ink_cam.frustum_offset.is_equal_approx(world.cam.frustum_offset) \
@@ -38,6 +54,9 @@ func focus_with_prefix(key: String, target: String) -> void:
 	await hold(.5)
 
 func play() -> void:
+	# The ink camera and frozen-frame checks belong to Flat 3D; new workspaces
+	# open in Flat 2D.
+	check(host.switch_world("flat-3d"), "Open Flat 3D")
 	await camera_at_rest()
 	var view: Control = host.workspace_view
 	var source: String = host.pane_focus
@@ -94,6 +113,7 @@ func play() -> void:
 			check(moving_frames > 0, "%s: sampled live pane-navigation animation frames" % direction.name)
 			check(mismatched_frames == 0, "%s: ink and scenery use the same camera on every moving frame (%d sampled)" % [direction.name, moving_frames])
 			check(raster_samples > 0 and stretched_rasters == 0, "%s: terminal sampling stays uniform while cropped (%d/%d stretched rasters)" % [direction.name, stretched_rasters, raster_samples])
+			check(glow_samples > 0 and stale_glow_frames == 0, "%s: the focus glow moves with focus during the pan (%d/%d stale frames)" % [direction.name, stale_glow_frames, glow_samples])
 			await check_frozen_motion_frame(source, outside, direction.name)
 	RenderingServer.frame_pre_draw.disconnect(sample_render_camera)
 

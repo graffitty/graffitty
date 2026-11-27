@@ -76,6 +76,7 @@ try {
 
     $script:mode = 'ok'
     $script:calls = @()
+    $script:processes = @()
     $script:integrated = @()
     $script:tempDirectories = @()
     $script:tempFiles = @()
@@ -131,20 +132,25 @@ try {
     }
     function Start-Process {
         param($FilePath, $ArgumentList, [switch]$Wait, [switch]$PassThru, $WindowStyle)
-        Assert ($Wait -and $PassThru) 'Tools must be awaited'
+        # -Wait would also wait for the server that `finish` starts, forever.
+        Assert ($PassThru -and -not $Wait) 'Tools must be awaited by their own process only'
         $call = (Split-Path $FilePath -Leaf) + ' ' + ($ArgumentList -join ' ')
         $script:calls += $call
+        $code = 0
         if ($call -eq 'gft.exe internal update prepare') {
             if ($script:prepareCode -eq 0 -and $script:parks) { Write-Fixture $record '{}' }
-            return @{ ExitCode = $script:prepareCode }
-        }
-        if ($call -eq 'gft.exe internal update finish') {
+            $code = $script:prepareCode
+        } elseif ($call -eq 'gft.exe internal update finish') {
             Remove-Item -LiteralPath $record -Force -ErrorAction SilentlyContinue
-            return @{ ExitCode = 0 }
+        } else {
+            Assert ($call.StartsWith('icacls.exe ')) "Unexpected program: $call"
+            Assert ($ArgumentList -contains ('"' + (Join-Path $destination 'chromium-windows') + '"')) 'Sandbox path must be quoted'
+            if ($script:mode -eq 'icacls-failure') { $code = 5 }
         }
-        Assert ($call.StartsWith('icacls.exe ')) "Unexpected program: $call"
-        Assert ($ArgumentList -contains ('"' + (Join-Path $destination 'chromium-windows') + '"')) 'Sandbox path must be quoted'
-        return @{ ExitCode = $(if ($script:mode -eq 'icacls-failure') { 5 } else { 0 }) }
+        $process = [pscustomobject]@{ ExitCode = $code; Handle = [IntPtr]::Zero; Awaited = $false }
+        $process | Add-Member -MemberType ScriptMethod -Name WaitForExit -Value { $this.Awaited = $true }
+        $script:processes += $process
+        return $process
     }
     function Add-GraffittyPath {
         param($Tools)
@@ -227,6 +233,7 @@ try {
     foreach ($case in $cases) {
         $script:mode = $case
         $script:calls = @()
+        $script:processes = @()
         $script:integrated = @()
         $script:prepareCode = 0
         $script:parks = $false
@@ -291,6 +298,7 @@ try {
                     Assert ($script:calls[0] -eq 'gft.exe internal update prepare') 'Files changed before Graffitty was parked'
                     Assert ($script:calls[-1] -eq 'gft.exe internal update finish') 'A parked Graffitty was not resumed last'
                     Assert (@($script:calls | Where-Object { $_ -like '*finish' }).Count -eq 1) 'Resumed more than once'
+                    Assert (@($script:processes | Where-Object { -not $_.Awaited }).Count -eq 0) 'A tool was not awaited before the installer went on'
                 }
                 'upgrade-idle' {
                     Install-Previous

@@ -25,22 +25,36 @@ def run(*args, cwd=ROOT, **kwargs):
     subprocess.run(list(map(str, args)), cwd=cwd, check=True, **kwargs)
 
 
-def clean_at(tag, destination):
-    described = subprocess.run(["git", "describe", "--tags", "--exact-match"], cwd=destination, capture_output=True, text=True)
+def clean_at(tag, destination, commit=None):
+    if commit:
+        described = subprocess.run(["git", "rev-parse", "HEAD"], cwd=destination, capture_output=True, text=True)
+    else:
+        described = subprocess.run(["git", "describe", "--tags", "--exact-match"], cwd=destination, capture_output=True, text=True)
     status = subprocess.run(["git", "status", "--porcelain"], cwd=destination, capture_output=True, text=True)
-    return described.returncode == 0 and described.stdout.strip() == tag and status.returncode == 0 and not status.stdout
+    return described.returncode == 0 and described.stdout.strip() == (commit or tag) and status.returncode == 0 and not status.stdout
 
 
-def checkout(url, tag, destination):
+def checkout(url, tag, destination, commit=None):
+    """Check out a tag, or a commit for sources whose release has no tag."""
     # A cached checkout keeps its build objects; one that is not clean at the
     # pinned tag (an interrupted clone, a stray edit) is cloned again.
-    if destination.exists() and not clean_at(tag, destination):
+    if destination.exists() and not clean_at(tag, destination, commit):
         print(f"Replacing {destination}: not clean at {tag}", flush=True)
         shutil.rmtree(destination)
     if not destination.exists():
-        run("git", "clone", "--depth=1", "--branch", tag, url, destination)
-    if not clean_at(tag, destination):
+        if commit:
+            run("git", "init", "-q", destination)
+            run("git", "fetch", "--depth=1", url, commit, cwd=destination)
+            run("git", "checkout", "-q", "--detach", "FETCH_HEAD", cwd=destination)
+        else:
+            run("git", "clone", "--depth=1", "--branch", tag, url, destination)
+    if not clean_at(tag, destination, commit):
         raise SystemExit(f"Source must be clean at {tag}: {destination}")
+
+
+def godot_engine(platform_name):
+    """The Godot release for one desktop platform (packaging/godot-engines.toml)."""
+    return tomllib.loads((ROOT / "packaging/godot-engines.toml").read_text())[platform_name]
 
 
 def sources_for(cache, build, name, version):
@@ -172,18 +186,32 @@ def main():
     extension = ROOT / f"frontends/godot/project/addons/graffitty/bin/libgraffitty.linux.{arch}.so"
     extension.parent.mkdir(parents=True, exist_ok=True)
     shutil.copy2(cargo_target / f"{target}/release/libgraffitty.so", extension)
-    godot = sources_for(cache, build, "godot", config["godot"])
-    checkout("https://github.com/godotengine/godot.git", config["godot"], godot)
+    engine = godot_engine("linux")
+    godot = sources_for(cache, build, "godot", engine["version"])
+    checkout("https://github.com/godotengine/godot.git", engine["version"], godot, engine.get("commit"))
     sdk = build_accesskit(godot, build, cache, cargo_target, target, arch)
-    frame_patch = ROOT / "frontends/godot/modules/graffitty_wayland_frame/wayland-decorations.patch"
-    run("git", "apply", frame_patch, cwd=godot)
+    patches = (
+        ROOT / "frontends/godot/modules/graffitty_wayland_frame/wayland-decorations.patch",
+        # Input methods (X11 and Wayland): keep IME across window focus changes,
+        # and on X11 keep commits made while the next syllable is composing.
+        ROOT / "packaging/linux/godot-linux-ime.patch",
+    )
+    applied = []
     try:
+        for patch in patches:
+            run("git", "apply", patch, cwd=godot)
+            applied.append(patch)
+        # A snapshot reports its own status (4.8.beta5), so the editor finds
+        # the export template built beside it.
+        status = engine["version"].partition("-")[2] or "stable"
         for kind in ("editor", "template_release"):
             run("scons", f"-j{args.jobs}", "platform=linuxbsd", f"arch={arch}", f"target={kind}",
                 f"custom_modules={ROOT / 'frontends/godot/modules'}",
-                "production=yes", "lto=none", "accesskit=yes", f"accesskit_sdk_path={sdk}", cwd=godot)
+                "production=yes", "lto=none", "accesskit=yes", f"accesskit_sdk_path={sdk}", cwd=godot,
+                env=dict(os.environ, GODOT_VERSION_STATUS=status))
     finally:
-        run("git", "apply", "--reverse", frame_patch, cwd=godot)
+        for patch in reversed(applied):
+            run("git", "apply", "--reverse", patch, cwd=godot)
     # Pages render in the session server's Chromium.
     chromium = build_chromium_host(arch, build, cache, args.jobs)
     lock = json.loads((ROOT / "packaging/filetree/lock.json").read_text())

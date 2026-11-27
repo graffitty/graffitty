@@ -484,6 +484,9 @@ func _focus_away(target: Dictionary) -> void:
 				host.get_window().show()
 				host.get_window().grab_focus()
 			host.reveal_pane(key)
+			# The arrival normally lands framed on the pane already; pan if not.
+			if is_instance_valid(host.workspace_view):
+				host.workspace_view.reveal_navigation_target(key)
 			return
 		await get_tree().process_frame
 
@@ -532,17 +535,24 @@ func _play(kind: String) -> void:
 		playback.stop()
 		_pcm[kind] = frames
 	if _audio == null: _audio = ClassDB.instantiate("AttentionAudio")
-	var error: String = _audio.play(_pcm[kind], int(AudioServer.get_mix_rate()))
-	if not error.is_empty(): push_error("Attention sound: " + error)
+	_report_audio(_audio.play(_pcm[kind], int(AudioServer.get_mix_rate())))
 	set_process(true)
 
 func _process(_delta: float) -> void:
 	if _audio == null: return
 	audio_state = _audio.poll()
 	if audio_state.skipped > 0: print_verbose("Attention sound skipped because audio output stopped responding")
-	var failure: String = audio_state.error
-	if failure == "No audio output device" or failure.begins_with("Unsupported audio output format: "):
-		print_verbose("Attention sound: " + failure)
-	elif not failure.is_empty():
-		push_error("Attention sound: " + failure)
+	_report_audio(audio_state.error)
 	if audio_state.active == 0: set_process(false)
+
+## A machine without usable audio output (no device, no reachable sound
+## server, an unsupported format) is not an error: the sound is just not heard.
+func _report_audio(failure: String) -> void:
+	if failure.is_empty(): return
+	if audio_unavailable(failure):
+		print_verbose("Attention sound: " + failure)
+	else:
+		push_error("Attention sound: " + failure)
+
+static func audio_unavailable(failure: String) -> bool:
+	return failure.begins_with("No audio output device") or failure.begins_with("Unsupported audio output format: ")

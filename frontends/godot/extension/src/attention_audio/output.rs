@@ -28,7 +28,9 @@ pub fn play(pcm: Vec<[f32; 2]>, rate: u32) -> Result<Playback, String> {
 fn play_once(pcm: Arc<[[f32; 2]]>, rate: u32) -> Result<Attempt, String> {
     use cpal::traits::{DeviceTrait, HostTrait};
     let device = cpal::default_host().default_output_device().ok_or("No audio output device")?;
-    let supported = device.default_output_config().map_err(|e| e.to_string())?;
+    // A device that cannot be opened is no output at all: ALSA without a
+    // reachable sound server reports snd_pcm_open failing with EHOSTDOWN.
+    let supported = device.default_output_config().map_err(|e| format!("No audio output device: {e}"))?;
     let config = supported.config();
     match supported.sample_format() {
         cpal::SampleFormat::F32 => desktop::<f32>(&device, &config, pcm, rate),
@@ -69,8 +71,9 @@ fn desktop<T: cpal::SizedSample + cpal::FromSample<f32>>(
             finished = true;
             let _ = tx.send(Ok(()));
         }
-    }, move |e| { let _ = errors.send(Err(e.to_string())); }, None).map_err(|e| e.to_string())?;
-    stream.play().map_err(|e| e.to_string())?;
+    }, move |e| { let _ = errors.send(Err(e.to_string())); }, None)
+        .map_err(|e| format!("No audio output device: {e}"))?;
+    stream.play().map_err(|e| format!("No audio output device: {e}"))?;
     if !wait_for_output(rx, &progress, Duration::from_secs(3))? {
         // Close before deciding to retry: the callback may have run during teardown.
         drop(stream);

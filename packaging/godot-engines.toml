@@ -1,0 +1,19 @@
+# Godot engine for each desktop release that does not use the `godot` pin in
+# mise.toml. Development tools and the macOS, Android and iOS packages stay on
+# that pin (4.7.2).
+#
+# Linux and Windows ship 4.8 for its input method fixes:
+# - Windows: IME message handling and popup activation (godotengine/godot
+#   #123274, #121033), not in 4.7.
+# - Linux: packaging/linux/godot-linux-ime.patch is made against this source.
+#
+# Snapshot releases are not tagged in godotengine/godot; `commit` pins the
+# source the snapshot was built from (see its godot-builds release notes).
+# `version` is the snapshot name; Godot reports it as e.g. 4.8.beta5.
+
+[linux]
+version = "4.8-beta5"
+commit = "a661dfdbccc664ccca57ad76c2bb5dcd8f3fc768"
+
+[windows]
+version = "4.8-beta5"

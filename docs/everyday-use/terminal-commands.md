@@ -1,6 +1,18 @@
 # Read and send terminal text
 
-Use pane IDs from `gft pane list`. Commands address the pane without changing frontend focus.
+Any terminal on this server can be read or typed into, in any session, like
+`tmux send-keys`. Commands leave frontend focus unchanged.
+
+`gft pane list` lists every session's panes; `-t work` lists only session `work`.
+
+| Target | Pane |
+| --- | --- |
+| `t3` | Pane `t3`, in any session |
+| `work:1.2` | Tab 1, pane 2 of session `work` (name or `$N`) |
+| `:1.2` | Tab 1, pane 2 of your own session |
+
+To message an agent with permissions and turn tracking, use a
+[graph wire](../agents/connect-agents.md) instead.
 
 ## Capture and send
 

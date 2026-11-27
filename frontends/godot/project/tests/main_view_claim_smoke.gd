@@ -1,5 +1,5 @@
 extends "../../../../tests/llm-e2e/replay/replay.gd"
-## Two clients on one workspace: whichever was used last sizes the main area.
+## Two clients on one workspace: the one that got input last sizes the main area.
 ## A second local connection stands in for a phone that claims a portrait area.
 const PORTRAIT := Rect2(0, 34, 412, 846)
 
@@ -12,7 +12,8 @@ func tab_state(connection: Node) -> Dictionary:
 
 
 func area_of(connection: Node) -> Rect2:
-	var area: Array = tab_state(connection).get("area", [0, 0, 0, 0])
+	var tabs: Dictionary = connection.topology.get("workspace_state", {}).get("tabs", {})
+	var area: Array = tabs.get(str(host.workspace_layout.active), {}).get("area", [0, 0, 0, 0])
 	return Rect2(area[0], area[1], area[2], area[3])
 
 
@@ -64,9 +65,17 @@ func play() -> void:
 	check(await until(func(): return owner_of(desktop) == "other"), "The phone claims again")
 	root.size = Vector2i(1100, 760)
 	root.content_scale_size = Vector2i(1100, 760)
+	await hold(0.5)
+	check(owner_of(desktop) == "other" and area_of(desktop).is_equal_approx(PORTRAIT),
+		"Resizing the idle desktop window leaves the phone's area")
+	for pressed in [true, false]:
+		var key := InputEventKey.new()
+		key.keycode = KEY_SHIFT
+		key.pressed = pressed
+		Input.parse_input_event(key)
 	check(await until(func(): return (owner_of(desktop) == "self"
 			and area_of(desktop).is_equal_approx(host.workspace_view.window_fit_rect())
 			and not area_of(desktop).is_equal_approx(PORTRAIT))),
-		"Resizing the desktop window is the latest activity and takes the area")
+		"Input takes the area back at the resized window's size")
 	phone.disconnect_remote()
 	phone.queue_free()

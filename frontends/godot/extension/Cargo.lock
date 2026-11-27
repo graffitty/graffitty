@@ -448,6 +448,12 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "4e7648175b45a9a48536d676f68d918270699102aa8dab5496df06904c914600"
 
 [[package]]
+name = "cfg_aliases"
+version = "0.2.2"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "f079e83a288787bcd14a6aea84cee5c87a67c5a3e660c30f557a3d24761b3527"
+
+[[package]]
 name = "chacha20"
 version = "0.9.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -758,6 +764,17 @@ dependencies = [
 ]
 
 [[package]]
+name = "ctrlc"
+version = "3.5.3"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "11247e6c4f83c2b15748f4873805483deaa2bbc855e773817c07a9f987f55c62"
+dependencies = [
+ "dispatch2",
+ "nix",
+ "windows-sys 0.61.2",
+]
+
+[[package]]
 name = "ctutils"
 version = "0.4.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -864,6 +881,8 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "1e0e367e4e7da84520dedcac1901e4da967309406d1e51017ae1abfb97adbd38"
 dependencies = [
  "bitflags",
+ "block2",
+ "libc",
  "objc2",
 ]
 
@@ -1247,9 +1266,9 @@ checksum = "e4eba85ea1d0a966a983acd07deee566e67395d2d96b6fb39e62b5a833f1eb0b"
 
 [[package]]
 name = "godot"
-version = "0.5.5"
+version = "0.5.6"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "e21dfe3a0c8c253cb293a4f915f2359fdb4cf45a4d0557cb1841ea99aae4edfb"
+checksum = "ba96a0ad41a2e44b0e8cfa7b92af0e23af1f69469ac3f84d3777967ef14c90cc"
 dependencies = [
  "godot-core",
  "godot-macros",
@@ -1257,24 +1276,24 @@ dependencies = [
 
 [[package]]
 name = "godot-bindings"
-version = "0.5.5"
+version = "0.5.6"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "7ce6fed360f27cc44ee188246880bb842cdb96bf13aec1d0ec31cccfa50b1cf6"
+checksum = "2e2ffeedd7b97d594425503b3963eb772e11932068c3c01e1d440bd71af50209"
 dependencies = [
  "gdextension-api",
 ]
 
 [[package]]
 name = "godot-cell"
-version = "0.5.5"
+version = "0.5.6"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "edc4695597110f27de8f0adbdf3afd01692e3596cc89de2aaa2a42d31b93bfc4"
+checksum = "8902909b791acd45474d90882274bb38a1b0b43da5863b7d92e161a7b95db210"
 
 [[package]]
 name = "godot-codegen"
-version = "0.5.5"
+version = "0.5.6"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "08409103fba47d9cb5b64dcb0b679b06ba3153d9c96d5e918bb97f065d553c60"
+checksum = "a749924f046f12bbe674423ac58bebad680e061c81b34d6b2f88c20b413bd19e"
 dependencies = [
  "godot-bindings",
  "heck",
@@ -1285,9 +1304,9 @@ dependencies = [
 
 [[package]]
 name = "godot-core"
-version = "0.5.5"
+version = "0.5.6"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "40ab630dbc7ce797f09eda29025ebadab1b700778c988ad19c47bddc51874a90"
+checksum = "7ca3c5dcd5da917ef916a8dc6f94ed0da22a5c37e26643e43021611f7d7f65e2"
 dependencies = [
  "glam",
  "godot-bindings",
@@ -1298,9 +1317,9 @@ dependencies = [
 
 [[package]]
 name = "godot-ffi"
-version = "0.5.5"
+version = "0.5.6"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "18c296047c042d74828b2cb2e71bbadd22dd4ff98346c696b6c0a4a5decbf57f"
+checksum = "84a796eeb5f0674e59eaf8803cd56dea152afd481d4571a6286a6e0bdb9dd223"
 dependencies = [
  "godot-bindings",
  "godot-codegen",
@@ -1309,9 +1328,9 @@ dependencies = [
 
 [[package]]
 name = "godot-macros"
-version = "0.5.5"
+version = "0.5.6"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "c9ffca7ec0dfad5885a96b3819b3dafc1014c36d2931464f96d9ab0bee87b52e"
+checksum = "84baa19adf89dbdcef06d82ff126e05eb80cfee56592d34b14d9d2fe5e4a1752"
 dependencies = [
  "godot-bindings",
  "proc-macro2",
@@ -1393,6 +1412,7 @@ dependencies = [
  "graffitty-client-core",
  "graffitty-dictation-audio",
  "graffitty-fuzzy-rank",
+ "graffitty-graph-protocol",
  "graffitty-mods",
  "graffitty-protocol",
  "graffitty-remote-auth",
@@ -1418,6 +1438,19 @@ dependencies = [
  "windows",
  "windows-core",
  "x11-dl",
+]
+
+[[package]]
+name = "graffitty-graph-protocol"
+version = "0.0.1"
+dependencies = [
+ "ctrlc",
+ "graffitty-protocol",
+ "graffitty-session-transport",
+ "libc",
+ "serde",
+ "serde_json",
+ "uuid",
 ]
 
 [[package]]
@@ -2208,6 +2241,18 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "ee6cda3051665f1fb8d9e08fc35c96d5a244fb1be711a03b71118828afc9a873"
 dependencies = [
  "jni-sys 0.3.1",
+]
+
+[[package]]
+name = "nix"
+version = "0.32.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "77730ed34f01f4990cb2ea67fec715ecebc6fab9a6396cf83c5529b13f581bdc"
+dependencies = [
+ "bitflags",
+ "cfg-if",
+ "cfg_aliases",
+ "libc",
 ]
 
 [[package]]

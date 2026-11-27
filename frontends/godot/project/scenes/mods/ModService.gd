@@ -597,11 +597,8 @@ func run(terminal_host: Node, name: String, args: Variant, origin: Node = null) 
 			if not error.is_empty(): host.publish("sessions_error", JSON.stringify(tr("Could not reorder servers.")))
 		"FocusAgent": application.agents.focus(str(params.get("id", "")))
 		"PinAgent": application.agents.pin(str(params.get("id", "")), bool(params.get("pinned", true)))
-		"FocusPane":
-			var owner: Object = instance_from_id(int(params.get("host", 0)))
-			if is_instance_valid(owner):
-				if owner.is_inside_tree(): owner.get_window().grab_focus()
-				owner.focus_pane(str(params.get("key", "")))
+		# Pan to the pane like prefix navigation; focus alone leaves it offscreen.
+		"FocusPane": application.agents.focus_key(int(params.get("host", 0)), str(params.get("key", "")))
 		_: push_warning("Unknown mod action: " + name)
 
 

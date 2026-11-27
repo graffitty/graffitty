@@ -470,127 +470,123 @@ impl TerminalPanel {
 #[godot_api]
 impl IEditorPlugin for TerminalPanel {
     fn enter_tree(&mut self) {
-        if let Some(mut palette) = EditorInterface::singleton().get_command_palette() {
-            let this = self.to_gd();
-            palette.add_command(
-                "Terminal: New Terminal in Dock",
-                "graffitty/new_dock",
-                &this.callable("cmd_new_dock_terminal"),
-            );
-            palette.add_command(
-                "Terminal: New Terminal in Bottom Panel",
-                "graffitty/new_panel",
-                &this.callable("cmd_new_panel_terminal"),
-            );
-            palette.add_command(
-                "Terminal: New Terminal in Main Screen",
-                "graffitty/new_main",
-                &this.callable("cmd_new_main_terminal"),
-            );
-        }
-        if let Some(mut settings) = EditorInterface::singleton().get_editor_settings() {
-            // Registration order is display order.
-            ensure_setting(&mut settings, SHELL_SETTING, &GString::new().to_variant());
-            add_hint(
-                &mut settings,
-                SHELL_SETTING,
-                VariantType::STRING,
-                PropertyHint::PLACEHOLDER_TEXT,
-                "program, no arguments; empty = auto",
-            );
-            ensure_setting(&mut settings, FONT_SIZE_SETTING, &14i64.to_variant());
-            add_hint(
-                &mut settings,
-                FONT_SIZE_SETTING,
-                VariantType::INT,
-                PropertyHint::RANGE,
-                "6,32,1",
-            );
-            ensure_setting(&mut settings, COLOR_SCHEME_SETTING, &0i64.to_variant());
-            add_hint(
-                &mut settings,
-                COLOR_SCHEME_SETTING,
-                VariantType::INT,
-                PropertyHint::ENUM,
-                "Auto,Dark,Light",
-            );
-            ensure_setting(&mut settings, LIGATURES_SETTING, &true.to_variant());
-            ensure_setting(
-                &mut settings,
-                DOCK_SLOT_SETTING,
-                &DOCK_SLOT_DEFAULT.to_variant(),
-            );
-            add_hint(
-                &mut settings,
-                DOCK_SLOT_SETTING,
-                VariantType::INT,
-                PropertyHint::ENUM,
-                DOCK_SLOT_NAMES,
-            );
-            ensure_setting(
-                &mut settings,
-                PASSTHROUGH_SETTING,
-                &GString::from(PASSTHROUGH_DEFAULT).to_variant(),
-            );
-            ensure_setting(&mut settings, SYNC_SETTING, &true.to_variant());
-            ensure_shortcut(&mut settings, TOGGLE_SHORTCUT, GKey::QUOTELEFT, true, false);
-            // Standard zoom chords, Cmd on macOS.
-            let meta = cfg!(target_os = "macos");
-            ensure_shortcut(
-                &mut settings,
-                INCREASE_FONT_SHORTCUT,
-                GKey::EQUAL,
-                !meta,
-                meta,
-            );
-            ensure_shortcut(
-                &mut settings,
-                DECREASE_FONT_SHORTCUT,
-                GKey::MINUS,
-                !meta,
-                meta,
-            );
-            ensure_shortcut(&mut settings, RESET_FONT_SHORTCUT, GKey::KEY_0, !meta, meta);
-        }
-
+        let this = self.to_gd();
         let mut panel = TerminalTabs::new_alloc();
         panel.set_custom_minimum_size(Vector2::new(0.0, 300.0));
-        self.base_mut()
-            .add_control_to_bottom_panel(&panel, "Terminal");
-        self.panel = Some(panel);
-
         let mut main = TerminalTabs::new_alloc();
         main.set_v_size_flags(SizeFlags::EXPAND_FILL);
         main.set_h_size_flags(SizeFlags::EXPAND_FILL);
         main.set_visible(false);
-        if let Some(mut screen) = EditorInterface::singleton().get_editor_main_screen() {
-            screen.add_child(&main);
-        }
-        self.main = Some(main);
-
-        self.base_mut().set_process_shortcut_input(true);
-        if let Some(mut viewport) = self.base().get_viewport() {
-            // Deferred: focus changes we cause arrive while self is bound.
-            viewport.connect_flags(
-                "gui_focus_changed",
-                &self.to_gd().callable("on_focus_changed"),
-                ConnectFlags::DEFERRED,
-            );
-        }
-
-        let on_saved = self.to_gd().callable("on_scene_saved");
-        self.base_mut().connect("scene_saved", &on_saved);
-        if let Some(mut settings) = EditorInterface::singleton().get_editor_settings() {
-            settings.connect(
-                "settings_changed",
-                &self.to_gd().callable("on_editor_settings_changed"),
-            );
-        }
-        self.update_sync();
-
         let export_plugin = GraffittyExportPlugin::new_gd();
-        self.base_mut().add_export_plugin(&export_plugin);
+        {
+            // Godot 4.8 asks this plugin for its name and icon while its
+            // controls are added. Holding base_mut() lets those calls bind it.
+            let mut base = self.base_mut();
+            if let Some(mut palette) = EditorInterface::singleton().get_command_palette() {
+                palette.add_command(
+                    "Terminal: New Terminal in Dock",
+                    "graffitty/new_dock",
+                    &this.callable("cmd_new_dock_terminal"),
+                );
+                palette.add_command(
+                    "Terminal: New Terminal in Bottom Panel",
+                    "graffitty/new_panel",
+                    &this.callable("cmd_new_panel_terminal"),
+                );
+                palette.add_command(
+                    "Terminal: New Terminal in Main Screen",
+                    "graffitty/new_main",
+                    &this.callable("cmd_new_main_terminal"),
+                );
+            }
+            if let Some(mut settings) = EditorInterface::singleton().get_editor_settings() {
+                // Registration order is display order.
+                ensure_setting(&mut settings, SHELL_SETTING, &GString::new().to_variant());
+                add_hint(
+                    &mut settings,
+                    SHELL_SETTING,
+                    VariantType::STRING,
+                    PropertyHint::PLACEHOLDER_TEXT,
+                    "program, no arguments; empty = auto",
+                );
+                ensure_setting(&mut settings, FONT_SIZE_SETTING, &14i64.to_variant());
+                add_hint(
+                    &mut settings,
+                    FONT_SIZE_SETTING,
+                    VariantType::INT,
+                    PropertyHint::RANGE,
+                    "6,32,1",
+                );
+                ensure_setting(&mut settings, COLOR_SCHEME_SETTING, &0i64.to_variant());
+                add_hint(
+                    &mut settings,
+                    COLOR_SCHEME_SETTING,
+                    VariantType::INT,
+                    PropertyHint::ENUM,
+                    "Auto,Dark,Light",
+                );
+                ensure_setting(&mut settings, LIGATURES_SETTING, &true.to_variant());
+                ensure_setting(
+                    &mut settings,
+                    DOCK_SLOT_SETTING,
+                    &DOCK_SLOT_DEFAULT.to_variant(),
+                );
+                add_hint(
+                    &mut settings,
+                    DOCK_SLOT_SETTING,
+                    VariantType::INT,
+                    PropertyHint::ENUM,
+                    DOCK_SLOT_NAMES,
+                );
+                ensure_setting(
+                    &mut settings,
+                    PASSTHROUGH_SETTING,
+                    &GString::from(PASSTHROUGH_DEFAULT).to_variant(),
+                );
+                ensure_setting(&mut settings, SYNC_SETTING, &true.to_variant());
+                ensure_shortcut(&mut settings, TOGGLE_SHORTCUT, GKey::QUOTELEFT, true, false);
+                // Standard zoom chords, Cmd on macOS.
+                let meta = cfg!(target_os = "macos");
+                ensure_shortcut(
+                    &mut settings,
+                    INCREASE_FONT_SHORTCUT,
+                    GKey::EQUAL,
+                    !meta,
+                    meta,
+                );
+                ensure_shortcut(
+                    &mut settings,
+                    DECREASE_FONT_SHORTCUT,
+                    GKey::MINUS,
+                    !meta,
+                    meta,
+                );
+                ensure_shortcut(&mut settings, RESET_FONT_SHORTCUT, GKey::KEY_0, !meta, meta);
+            }
+
+            base.add_control_to_bottom_panel(&panel, "Terminal");
+            if let Some(mut screen) = EditorInterface::singleton().get_editor_main_screen() {
+                screen.add_child(&main);
+            }
+            base.set_process_shortcut_input(true);
+            if let Some(mut viewport) = base.get_viewport() {
+                // Deferred: focus changes we cause arrive while self is bound.
+                viewport.connect_flags(
+                    "gui_focus_changed",
+                    &this.callable("on_focus_changed"),
+                    ConnectFlags::DEFERRED,
+                );
+            }
+            base.connect("scene_saved", &this.callable("on_scene_saved"));
+            if let Some(mut settings) = EditorInterface::singleton().get_editor_settings() {
+                settings.connect("settings_changed", &this.callable("on_editor_settings_changed"));
+            }
+            base.add_export_plugin(&export_plugin);
+        }
+        self.panel = Some(panel);
+        self.main = Some(main);
         self.export_plugin = Some(export_plugin);
+        self.update_sync();
     }
 
     fn exit_tree(&mut self) {

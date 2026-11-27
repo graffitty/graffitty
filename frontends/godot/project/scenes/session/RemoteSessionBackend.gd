@@ -14,9 +14,10 @@ var editing_host: WeakRef
 var requested_grids: Dictionary = {}
 ## "Fit main view to this client" (true) or "Follow server" (false).
 ##
-## A fitting client sizes the shared main area while it holds a tab's claim,
-## and its latest activity (attaching, resizing or rotating, input) takes the
-## claim.
+## A fitting client sizes the shared main area while it holds a tab's claim.
+## Only input here (keys, clicks, touches, switching tabs) takes a claim from
+## another client. Attaching, resizing or the soft keyboard refits only tabs
+## this client owns or nobody owns.
 ##
 ## A client without the claim letterboxes the area the server keeps.
 var fit_main_view := true
@@ -233,15 +234,19 @@ func sync_window_area(host: Node) -> void:
 	var roles: Array = tabs.map(size_owner)
 	if "self" in roles: held_claim = true
 	elif "other" in roles: held_claim = false
-	if attach_claim or resized or switched:
-		# Attaching, resizing or rotating this window is the latest activity.
+	if switched:
+		# Switching tabs here is input: this window takes the tab it opened.
 		claim_area(host)
 		return
-	if not claiming.is_empty() or not ("self" in roles or (held_claim and not "other" in roles)):
+	# Attaching, reconnecting, resizing, rotating or the soft keyboard is not
+	# input. It refits only tabs this window owns or nobody owns, so an idle
+	# device never resizes what another device is working on.
+	var refit := attach_claim or resized
+	if not refit and (not claiming.is_empty() or not ("self" in roles or (held_claim and not "other" in roles))):
 		return
 	# The claimant also fits tabs created or moved here, and takes back a claim
 	# that only its own disconnection vacated. A newer claim elsewhere stays.
-	var stale := tabs.filter(func(id): return size_owner(id) != "other" and not _same_area(_presented_area(id), rect))
+	var stale := tabs.filter(func(id): return size_owner(id) != "other" and (refit or not _same_area(_presented_area(id), rect)))
 	if not stale.is_empty(): claim_area(host, stale)
 
 

@@ -6,7 +6,7 @@ func run() -> void:
 	var host := TestHost.new()
 	root.add_child(host)
 	await create_timer(0.5).timeout
-	for path in ["", "bistro"]:
+	for path in ["flat-3d", "bistro"]:
 		check(host.switch_world(path), "World loads: " + path)
 		await create_timer(0.5).timeout
 		var world: Node = host.world
@@ -15,6 +15,9 @@ func run() -> void:
 		world._apply_camera_fx()
 		world.set_process(false)
 		world.scenery_vp.render_target_update_mode = SubViewport.UPDATE_ALWAYS
+		# Bistro's TAA jitters each scenery render: two renders of the same
+		# scene differ by ~0.3 at edges. Compare clipping, not jitter phases.
+		world.scenery_vp.use_taa = false
 		var view: Control = host.workspace_view
 		var marker := ColorRect.new()
 		marker.color = Color(0.9, 0.15, 0.4)
@@ -23,8 +26,8 @@ func run() -> void:
 		view.canvas_root.add_child(marker)
 		var viewport: SubViewport = host.world_viewport
 		var wall: MeshInstance3D = world.walls[world.surfaces[world.active].id]
-		for opacity in ([1.0, 0.35] if path.is_empty() else [1.0]):
-			if path.is_empty():
+		for opacity in ([1.0, 0.35] if path == "flat-3d" else [1.0]):
+			if path == "flat-3d":
 				viewport.transparent_bg = opacity < 1.0
 				world.scenery_vp.transparent_bg = true
 				RenderingServer.set_default_clear_color(Color.TRANSPARENT)
@@ -49,7 +52,7 @@ func run() -> void:
 				check(region_error(full, background, top) > 0.1, "Foreground reaches tab area: " + label)
 				check(region_error(clipped, background, top) < 0.015, "Tab area retains background pixels and alpha: " + label)
 				check(region_error(clipped, full, bottom) < 0.015, "Clipping preserves content below tabs: " + label)
-		if path.is_empty():
+		if path == "flat-3d":
 			wall.hide()
 			world._set_ink_active(false)
 			world.cam.position = Vector3(150, -90, 40)

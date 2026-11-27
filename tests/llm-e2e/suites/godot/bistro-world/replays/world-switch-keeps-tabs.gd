@@ -97,7 +97,7 @@ func play() -> void:
 
 	await say("Choose View > World > Flat")
 	overlay.key("View › World › Flat")
-	host.switch_world("")
+	host.switch_world("flat-3d")
 	_stay_awake()
 	await wait_landed()
 	check_kept(with_new, "Back in the flat world")

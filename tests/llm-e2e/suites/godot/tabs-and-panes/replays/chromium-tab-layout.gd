@@ -53,7 +53,7 @@ func play() -> void:
 	var browser_key := PaneAddress.key(browser.session_id)
 	var browser_tab: int = host.workspace_layout.containing(browser_key)
 	var first_tab: int = host.get_tabs()[0].id
-	for path in ["", "flat-2d"]:
+	for path in ["flat-3d", "flat-2d"]:
 		for tab in host.get_tabs():
 			host.select_workspace(tab.id, true)
 			check(host.switch_world(path), "Set renderer for browser tab transition")

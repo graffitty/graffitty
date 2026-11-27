@@ -13,9 +13,15 @@
 - Terminals carry their attached browsers with them.
 - For pane arrangement, see [tabs and panes](workspaces.md).
 
+## Open another window
+
+Graffitty runs as one app per computer. Launching it again, from the command
+line or a shortcut, opens a new window in the app that is already running.
+
 ## Close a window
 
-Clicking × in a connected window asks first:
+With another Graffitty window open, clicking × detaches without asking: the
+window closes and its session keeps running. Closing the last window asks first:
 
 - **Detach:** close the window; its session and programs keep running.
 - **Kill Server:** stop the local server and end every session it hosts. Available in windows connected directly to that server.

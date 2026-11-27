@@ -1,6 +1,6 @@
 extends Node
-## Android overlays its IME without resizing Godot's surface. Offer the
-## remaining space to the shared layout.
+## Android and iPadOS overlay the on-screen keyboard without resizing Godot's
+## surface. Offer the remaining space to the shared layout.
 ##
 ## Main View refits into it; navigated content stays where it is on screen
 ## while the keyboard covers the part below.
@@ -18,6 +18,11 @@ var recovering := false
 var hide_attempts := 0
 var retry := Timer.new()
 var _pending := false
+var _reported_height := 0
+# iPadOS shows only its shortcut bar above a hardware keyboard: keep the
+# terminal above it, without the touch key row.
+const SHORTCUT_BAR_MAX := 120.0
+var ios := OS.has_feature("ios")
 
 func _init() -> void:
 	retry.one_shot = true
@@ -26,7 +31,10 @@ func _init() -> void:
 	add_child(retry)
 
 func _ready() -> void:
-	manager.terminal_ime.keyboard_height_changed.connect(_height_changed)
+	# Android reports height changes; iOS only exposes the current height.
+	if is_instance_valid(manager.get("terminal_ime")):
+		manager.terminal_ime.keyboard_height_changed.connect(_height_changed)
+	set_process(not is_instance_valid(manager.get("terminal_ime")))
 	manager.view.host_ready.connect(queue_update)
 	manager.dialog.visibility_changed.connect(queue_update)
 	manager.chooser.visibility_changed.connect(queue_update)
@@ -50,13 +58,20 @@ func queue_update() -> void:
 
 func _flush_update() -> void:
 	_pending = false
-	manager.terminal_ime.check_owner()
+	if is_instance_valid(manager.get("terminal_ime")): manager.terminal_ime.check_owner()
 	var next_host: Node = manager.view.host if manager.view != null else null
 	if is_instance_valid(next_host):
 		for event in [&"ui_changed", &"presentation_changed"]:
 			if not next_host.is_connected(event, queue_update): next_host.connect(event, queue_update)
 	var scale_y := get_tree().root.get_final_transform().get_scale().y
 	update_inset(_recovered_inset(float(keyboard_height()) / maxf(scale_y, 1.0)))
+
+## iOS has no height-change signal: poll the current height.
+func _process(_delta: float) -> void:
+	var height := keyboard_height()
+	if height != _reported_height:
+		_reported_height = height
+		_height_changed(height)
 
 func _height_changed(_height: int) -> void:
 	# Android reports zero while another activity owns the IME. That does not
@@ -134,6 +149,11 @@ func _recovered_inset(reported: float) -> float:
 		retry.stop()
 	return 0.0
 
+## Above a hardware keyboard iPadOS shows only its shortcut bar: the terminal
+## stays above it, but the touch key row is not needed.
+func shortcut_bar_only(height: float) -> bool:
+	return ios and height <= SHORTCUT_BAR_MAX
+
 func update_inset(next: float) -> void:
 	var root := get_tree().root
 	root.set_meta(&"keyboard_bottom_inset", next)
@@ -145,7 +165,8 @@ func update_inset(next: float) -> void:
 	var keybar: Control = manager.keybar
 	# Dictation's fields take the keyboard only while they have focus.
 	var dictating: bool = is_instance_valid(manager.get("dictation")) and manager.dictation.owns_keyboard()
-	var show_keys: bool = next > 0 and is_instance_valid(next_host) and not manager.dialog.visible and not manager.chooser.visible and not dictating and (next_host.is_terminal_pane(next_host.pane_focus) or next_host.is_chromium_pane(next_host.pane_focus))
+	var shortcut_bar := shortcut_bar_only(next)
+	var show_keys: bool = next > 0 and not shortcut_bar and is_instance_valid(next_host) and not manager.dialog.visible and not manager.chooser.visible and not dictating and (next_host.is_terminal_pane(next_host.pane_focus) or next_host.is_chromium_pane(next_host.pane_focus))
 	# A landscape IME can leave less room than the menu, tabs and accessory row
 	# together. Reclaim the navigation chrome while typing so the main area still
 	# has real terminal rows.

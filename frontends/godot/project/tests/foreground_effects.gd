@@ -1,6 +1,6 @@
 extends "../../../../tests/llm-e2e/replay/replay.gd"
-## Real-frontend foreground-app rules, launched by tests/server/test_foreground_apps.py
-## against a private server. Prints FOREGROUND_EFFECTS_REPLAY_PASS.
+## Real-frontend foreground-app rules against a private server, launched by
+## tests/server/test_foreground_apps.py or the dashboard driver. Prints FOREGROUND_EFFECTS_REPLAY_PASS.
 const Flat2D := preload("res://scenes/Flat2DWorld.gd")
 const Rule := preload("res://graffitty/rule.gd")
 const Actions := preload("res://graffitty/actions.gd")
@@ -22,8 +22,16 @@ func play() -> void:
 	var id: int = host.active_session_id
 	var connection: Node = host.session_backend.connection
 	var terminal: Node = host.sessions[id].term
-	var command := OS.get_environment("GRAFFITTY_TEST_APP_COMMAND")
-	for world_path in ["", "flat-2d"]:
+	# Stage the fake foreground app here so any launcher (unittest or dashboard) runs it:
+	# a copy of `sleep` named nvim, in the harness's private scratch cache.
+	var base := OS.get_environment("XDG_CACHE_HOME")
+	var app_dir := (base if base else OS.get_temp_dir()).path_join("gft-fg-%d" % OS.get_process_id())
+	var app_path := app_dir.path_join("nvim")
+	DirAccess.make_dir_recursive_absolute(app_dir)
+	OS.execute("/bin/cp", ["/bin/sleep", app_path])
+	if not check(FileAccess.file_exists(app_path), "Fake foreground app is staged"): return
+	var command := "'%s' 3" % app_path
+	for world_path in ["flat-3d", "flat-2d"]:
 		if not check(host.switch_world(world_path), "World loads"): return
 		await tree.create_timer(0.2).timeout
 		# Headless windows may skip Control layout; bind the same signals as refresh().
@@ -52,7 +60,7 @@ func play() -> void:
 		if not check(host.sessions[id].model.foreground_app.get("id", "") != "nvim", "Exiting app publishes shell context"): return
 		print("FOREGROUND_EFFECTS_WORLD_PASS ", world_path)
 	var release: Callable = Actions.disable().call(host)
-	if not check(host.switch_world(""), "World switches under an all-effects hold"): return
+	if not check(host.switch_world("flat-3d"), "World switches under an all-effects hold"): return
 	if not check(not host.world.effect_control.allows("sparks"), "New world inherits the host's hold"): return
 	release.call()
 	if not check(host.world.effect_control.allows("sparks"), "Release reaches the new world"): return

@@ -7696,19 +7696,6 @@
       "sv": "Kontrollpunkt sparad",
       "da": "Kontrolpunkt gemt"
     },
-    "Restore launched": {
-      "en-US": "Restore launched",
-      "fr": "Restauration lancée",
-      "pt-BR": "Restauração iniciada",
-      "es": "Restauración iniciada",
-      "it": "Ripristino avviato",
-      "ko": "복원 시작됨",
-      "ja": "復元を開始しました",
-      "de": "Wiederherstellung gestartet",
-      "nb": "Gjenoppretting startet",
-      "sv": "Återställning startad",
-      "da": "Gendannelse startet"
-    },
     "Checkpoint saved, but the layout changed during save. Save again before quitting.": {
       "en-US": "Checkpoint saved, but the layout changed during save. Save again before quitting.",
       "fr": "Point de contrôle enregistré, mais la disposition a changé pendant l’enregistrement. Enregistrez à nouveau avant de quitter.",

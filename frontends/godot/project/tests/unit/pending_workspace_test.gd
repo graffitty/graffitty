@@ -18,6 +18,8 @@ class Host extends Node:
 	var current_plugin := "bistro"
 	var application := {"checkpoints":{"importing":false}}
 	var workspace_layout := {"active":1,"tabs":[{"id":1,"focused":"t1","tree":{"windows":[{"pane":"t1","rect":Rect2(8,42,1000,700)}]}}]}
+	# No view: the tab's focused pane is the one on screen.
+	var workspace_view: Node = null
 func fixture() -> Dictionary:
 	var host := Host.new()
 	var transport := Transport.new()
@@ -167,7 +169,7 @@ func test_final_graph_commit_preserves_other_clients_different_node_move() -> vo
 class GraphView extends Node:
 	var agent_links: Node
 class GraphHost extends Host:
-	var workspace_view: Node
+	pass
 
 func test_graph_drag_preview_is_not_sent_by_incidental_commit() -> void:
 	var f := fixture()

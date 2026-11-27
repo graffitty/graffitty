@@ -25,8 +25,7 @@ class ForegroundApps(unittest.TestCase):
                    if not k.startswith(("GRAFFITTY_", "CODEX_"))}
             for kind in ("CONFIG", "STATE", "DATA", "CACHE"):
                 env[f"XDG_{kind}_HOME"] = str(root / kind.lower())
-            shutil.copy(shutil.which("sleep"), root / "nvim")
-            env["GRAFFITTY_TEST_APP_COMMAND"] = shlex.quote(str(root / "nvim")) + " 3"
+            # The replay stages its own fake nvim under XDG_CACHE_HOME.
             env["ZDOTDIR"] = str(root)
             with PrivateServer(env, root, shutil.which("zsh") or shutil.which("bash")):
                 # A replay drives the real frontend; packaged apps omit test scripts.

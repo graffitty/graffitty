@@ -1,3 +1,7 @@
+// 1 blows the wind left (a later session); -1 mirrors every lateral path
+// right (an earlier session). Tab switches keep 1.
+uniform float flight_side = 1.0;
+
 // Each arrival group gets 1.2 seconds, with the last starting 333 ms later.
 const float SCATTER_ARRIVAL = 1.2 + 1.0 / 3.0;
 
@@ -92,7 +96,7 @@ vec3 scatter_travel(float flight, vec2 screen_offset, vec2 wind, vec2 drift, boo
 	vec2 lateral = drift * flight + wind * scatter_wind_distance(flight);
 	// Mirror only the arc; the camera ray still ends at the same character.
 	// Retiring arrivals retain this side instead of jumping to a departure path.
-	if (arriving) { lateral.x = -lateral.x; }
+	lateral.x *= arriving ? -flight_side : flight_side;
 	return vec3(-screen_offset * depth + lateral, depth);
 }
 

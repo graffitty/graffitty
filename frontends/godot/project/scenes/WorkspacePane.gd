@@ -36,7 +36,6 @@ var find_bar: PanelContainer
 var _title_source: Node
 var _chromium_source: Node
 var compact_header := false
-var touch_header := false
 var _pressed := false
 var _press := Vector2.ZERO
 var _dragging := false
@@ -97,19 +96,15 @@ func _ready() -> void:
 	column.mouse_filter = Control.MOUSE_FILTER_IGNORE
 	add_child(column)
 	column.set_anchors_and_offsets_preset(Control.PRESET_FULL_RECT)
-	var header_margin := MarginContainer.new()
-	header_margin.mouse_filter = Control.MOUSE_FILTER_IGNORE
-	header_margin.add_theme_constant_override("margin_left", 10)
-	header_margin.add_theme_constant_override("margin_right", 6)
-	column.add_child(header_margin)
-	touch_header = preload("res://scenes/input/InteractionProfile.gd").touch_controls()
-	if touch_header:
-		# Keep the body reservation fixed; scale client chrome without resizing VT.
-		header_margin.custom_minimum_size.y = 30
-		add_child(header)
-		header.position = Vector2(10, 0)
-	else:
-		header_margin.add_child(header)
+	# Keep the body reservation fixed. The header floats over it and scales
+	# with the readable title (WorkspaceView), so its icons stay in proportion
+	# to the title at every zoom, without resizing the VT.
+	var header_row := Control.new()
+	header_row.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	header_row.custom_minimum_size.y = 30
+	column.add_child(header_row)
+	add_child(header)
+	header.position = Vector2(10, 0)
 	header.configure(host.is_terminal_pane(key))
 	header.title_input.connect(_handle_input)
 	header.action_requested.connect(_header_action)

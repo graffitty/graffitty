@@ -349,7 +349,7 @@ void vertex() {
 		vec2 jitter = vec2(0.5) + (vec2(random, fract(random * 13.7)) - 0.5) * 0.16;
 		vec2 wind = scatter_wind(sheet_uv, jitter);
 		vec3 displacement = scatter_travel(flight, eye_centre.xy * vec2(1.0,-1.0) / depth, wind, scatter_drift(sheet_uv, jitter, wind), arrival_flight);
-		displacement.xy += dust_turbulence(flight, random) * vec2(arrival_flight ? -1.0 : 1.0, 1.0);
+		displacement.xy += dust_turbulence(flight, random) * vec2(arrival_flight ? -flight_side : flight_side, 1.0);
 		float angle = flight * (random - 0.5) * 2.4;
 		// Keep dust fine as it approaches the eye, instead of inflating into slabs.
 		vec3 relative = (assembled - centre) * max(0.015, 1.0 - 1.5 * flight);

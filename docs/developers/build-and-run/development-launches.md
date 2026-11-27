@@ -17,6 +17,19 @@ If a session server is already running:
 - A [checkpoint](../../everyday-use/checkpoints.md) can restore layouts and agent conversations, not running programs.
 - Failed checkpoints or server handovers cancel the launch.
 
+## One app per server
+
+A second launch never starts a second app. It opens a window in the app
+already presenting that server, or restores a checkpoint there, then exits.
+
+- The running app holds `<name>.lock` and publishes `<name>.json` (socket,
+  token, pid; mode 0600) beside the server's `server.json`.
+- `<name>` is `app` for exported builds and `dev-app` for `mise run dev`, so a
+  development launch never opens its window in the installed app.
+- Test scripts run with `--script` never take part.
+
+See `crates/graph-protocol/src/application.rs`.
+
 ## Restart the server manually
 
 Build or install to the running server's executable path first. Launching a development client does not switch an installed server to a development build.

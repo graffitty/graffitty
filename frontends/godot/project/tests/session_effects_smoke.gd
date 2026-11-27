@@ -68,9 +68,9 @@ func frozen_textures(world: Node, path: String, arriving: bool) -> Array[Texture
 		var layer: Node = world._transition_in if arriving else world._transition_out
 		if not is_instance_valid(layer): return textures
 		check(layer.live_panels.is_empty(), "Glyph flight has no live terminal panels")
-		for key: String in layer.terminal_captures:
-			if int(key.get_slice(":", 1)) & (1 << 18):
-				textures.append(layer.terminal_captures[key].get_texture())
+		for piece in layer.glyphs:
+			if piece.get_meta("glyph_layer", false):
+				textures.append(piece._material().get_shader_parameter("terminal_tex"))
 	else:
 		for layer in (world.tab_fx_in if arriving else world.tab_fx_out):
 			check(layer.live_source == null, "Glyph flight has no live terminal source")
@@ -92,7 +92,7 @@ func run() -> void:
 		quit(1)
 		return
 	var host: Node = client.host
-	for path in ["flat-2d", ""]:
+	for path in ["flat-2d", "flat-3d"]:
 		check(host.switch_world(path), "Open world " + path)
 		await create_timer(0.5).timeout
 		var world: Node = host.world

@@ -23,6 +23,26 @@ extern "C" void graffitty_window_fullscreen_content(uint64_t handle) {
     window.titleVisibility = NSWindowTitleHidden;
 }
 
+// Godot's custom traffic lights ignore the window's minimize/zoom flags.
+// Dialogs keep them visible but disabled, like AppKit's own dialogs.
+extern "C" void graffitty_window_dialog_buttons(uint64_t handle) {
+    NSWindow *window = (__bridge NSWindow *)(void *)handle;
+    Class cls = objc_getClass("GodotButtonView");
+    if (!window || !cls || ![NSThread isMainThread])
+        return;
+    for (NSView *view in window.contentView.subviews) {
+        if (![view isKindOfClass:cls])
+            continue;
+        static const char *const names[] = {"miniaturize_button", "zoom_button"};
+        for (const char *name : names) {
+            Ivar ivar = class_getInstanceVariable(cls, name);
+            id button = ivar ? object_getIvar(view, ivar) : nil;
+            if ([button isKindOfClass:[NSButton class]])
+                [(NSButton *)button setEnabled:NO];
+        }
+    }
+}
+
 static void display_buttons(id object, SEL selector) {
     original_display_buttons(object, selector);
     SEL refresh = sel_registerName("mouseEnteredOrExited");

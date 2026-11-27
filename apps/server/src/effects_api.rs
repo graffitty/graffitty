@@ -4,7 +4,7 @@
 //! Any pane in the caller's workspace may be targeted, so a stale hold can be
 //! cleared from another pane. See
 //! `docs/developers/automation-and-extensions/effect-holds.md`.
-use crate::{Error, Server, api, terminal_api, workspace};
+use crate::{Error, Server, api, terminal_api};
 use graffitty_protocol::osc::{Effects, Hold, Scope};
 use serde_json::{Value, json};
 
@@ -55,19 +55,17 @@ pub fn dispatch(server: &mut Server, caller: u64, method: &str, params: &Value) 
     Ok(json!({"pane":format!("t{pane}"),"holds":session.effect_holds.snapshot()}))
 }
 
-/// The caller's pane, or another terminal pane in the same workspace.
+/// The caller's pane, or another terminal pane anywhere on this server.
 fn target(server: &mut Server, caller: u64, params: &Value) -> Result<u64, Error> {
     let name = server.sessions.get(&caller)
         .ok_or_else(|| api::error("workspace_closed", "Terminal no longer exists"))?
         .workspace.clone();
     let Some(target) = string(params, "target")? else { return Ok(caller) };
-    workspace::sync(server, &name)?;
-    let state = server.workspace_state.snapshot(&name);
-    let key = terminal_api::resolve_in_workspace(&state, &name, &target)
-        .ok_or_else(|| api::error("invalid_target", "Unknown pane target"))?;
-    let id = key.strip_prefix('t').and_then(|s| s.parse::<u64>().ok())
-        .filter(|id| server.sessions.get(id).is_some_and(|s| s.workspace == name && !s.exited))
-        .ok_or_else(|| api::error("no_terminal", "Effect holds require a terminal pane"))?;
+    let id = terminal_api::terminal_target(server, &name, &target)
+        .map_err(|_| api::error("invalid_target", "Unknown pane target"))?;
+    if server.sessions[&id].exited {
+        return Err(api::error("no_terminal", "Effect holds require a running terminal pane"));
+    }
     Ok(id)
 }
 

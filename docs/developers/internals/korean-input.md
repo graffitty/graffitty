@@ -2,6 +2,7 @@
 
 The macOS extension preserves committed Korean text and the command key that follows it.
 The investigation below concerns Godot 4.7.2 and the project's native shim.
+Linux, Windows and iOS have their own fixes, described after it.
 
 ## Current input path
 
@@ -23,6 +24,52 @@ feedback is not a formal shell acknowledgement.
 `tests/platform/macos/test_macos_terminal_alt.py` checks native callback ordering.
 A simulated callback pass does not establish live Korean IME acceptance.
 The shared world kit also projects the cursor anchor for the native candidate window.
+
+## Linux
+
+Linux packages patch Godot 4.8 (`packaging/linux/godot-linux-ime.patch`):
+
+- X11: the input context follows the window manager's focus changes, and
+  commits made while the next syllable starts are kept.
+- Wayland: text input is enabled again after each focus change, per window, and
+  window focus follows the keyboard instead of the pointer.
+
+Verified against xterm and a GTK terminal with ibus-hangul, libpinyin and Mozc
+on GNOME (X11 and Wayland).
+
+## Windows
+
+Godot 4.7.2 drops each syllable the Microsoft IME commits when the next one
+starts. Windows packages use Godot 4.8, which fixes that without a patch. The
+IME also commits a syllable while Ctrl is held for the next chord, so the
+encoder sends that text without Ctrl on Windows. See
+[Windows testing](../build-and-run/windows-testing.md#known-runtime-issues).
+
+## iOS and iPadOS
+
+Godot diffs one hidden `UITextView` into Backspace and character keys, which
+sends every jamo the Korean keyboard rewrites. While a terminal owns input,
+`frontends/godot/extension/src/ios_terminal_ime.m` takes over that view:
+
+- the Hangul syllable before the caret and marked text are drawn as preedit and
+  sent once final;
+- padding keeps Backspace working on empty input;
+- autocapitalization, autocorrection, spell checking, smart punctuation,
+  inline predictions (iOS 17+) and Writing Tools (iOS 18+) are off while a
+  terminal owns the view, and restored afterwards;
+- hardware navigation keys and chords reach the terminal in order, except
+  while text is marked, when they stay with the candidate list.
+
+With a hardware keyboard, the view keeps focus without the on-screen keyboard,
+so a hardware keyboard composes Hangul the same way:
+
+- it takes focus when a keyboard connects, and again within half a second if
+  something releases it;
+- Ctrl+Space stays with iPadOS to switch input sources;
+- Shift, Alt and Ctrl+Return reach the terminal as key commands.
+
+Software keyboards are verified in the iPad simulator. The hardware keyboard
+path is not yet verified on a device.
 
 ## Detailed evidence
 

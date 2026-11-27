@@ -1,7 +1,7 @@
 extends "../../../../replay/mac_pinch.gd"
 
 func play() -> void:
-	for path in ["", "flat-2d"]:
+	for path in ["flat-3d", "flat-2d"]:
 		# Start away from the Main View: its pinch detent deliberately snaps the
 		# camera there, which is not the anchor behavior measured here.
 		await prepare(path, host.workspace_view.size * Vector2(.55, .6))

@@ -204,7 +204,7 @@ pub fn run(server: &mut Server, caller: u64, params: &Value) -> Result<Value, Er
             layout = server.workspace_state.snapshot(&workspace).layout.tabs.get(&tab).cloned().ok_or("Unknown workspace tab")?;
         }
         if placement.position.is_some() || placement.size.is_some() {
-            layout.set_rect(&key, placement.position, placement.size)?;
+            layout.set_rect(&key, placement.position, placement.size, area)?;
         }
         if let Some(rect) = layout.window(&key).map(|w| w.rect) {
             server.sessions.get_mut(&created).unwrap().rect = rect.map(f64::from);
@@ -260,7 +260,7 @@ pub fn place(server: &mut Server, caller: u64, params: &Value) -> Result<Value, 
         layout.move_beside(&target, &anchor, side, area)?;
     }
     if placement.position.is_some() || placement.size.is_some() {
-        layout.set_rect(&target, placement.position, placement.size)?;
+        layout.set_rect(&target, placement.position, placement.size, area)?;
     }
     let rect = layout.window(&target).map(|w| w.rect).ok_or("Unknown pane")?;
     if let Some(id) = graffitty_protocol::pane_id::parse(&target) {

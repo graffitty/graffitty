@@ -61,6 +61,22 @@ class BuildCacheTest(unittest.TestCase):
         self.assertEqual((destination / "main.c").read_text(), "int main(void) { return 0; }\n")
         self.assertFalse((destination / "main.o").exists())
 
+    def test_an_untagged_release_is_checked_out_by_commit(self):
+        commit = subprocess.run(["git", "rev-parse", "HEAD"], cwd=self.upstream, check=True,
+                                capture_output=True, text=True).stdout.strip()
+        destination = self.cache / "demo-snapshot"
+        build_native.checkout(str(self.upstream), "snapshot", destination, commit)
+        (destination / "main.o").write_text("compiled")
+        build_native.checkout(str(self.upstream), "snapshot", destination, commit)
+        self.assertEqual((destination / "main.o").read_text(), "compiled")
+        self.assertTrue(build_native.clean_at("snapshot", destination, commit))
+        self.assertFalse(build_native.clean_at("snapshot", destination, "0" * 40))
+
+    def test_linux_and_windows_engines_are_pinned(self):
+        for name in ("linux", "windows"):
+            self.assertRegex(build_native.godot_engine(name)["version"], r"^\d+\.\d+(\.\d+)?-\w+$")
+        self.assertRegex(build_native.godot_engine("linux")["commit"], r"^[0-9a-f]{40}$")
+
 
 if __name__ == "__main__":
     unittest.main()

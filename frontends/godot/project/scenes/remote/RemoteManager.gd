@@ -214,7 +214,12 @@ func _ready() -> void:
 	restore_cover.mouse_filter = Control.MOUSE_FILTER_IGNORE
 	restoring_label.mouse_filter = Control.MOUSE_FILTER_IGNORE
 	localization.text(restoring_label, "Connecting…")
-	restore_cover.add_child(restoring_label)
+	var restoring_row := HBoxContainer.new()
+	restoring_row.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	restoring_row.add_theme_constant_override("separation", 10)
+	restoring_row.add_child(preload("res://scenes/BusySpinner.gd").new(20.0, Color("d8dde6")))
+	restoring_row.add_child(restoring_label)
+	restore_cover.add_child(restoring_row)
 	restore_cover.hide()
 	add_child(restore_cover)
 	restore_cover.set_anchors_and_offsets_preset(Control.PRESET_CENTER)
@@ -224,6 +229,7 @@ func _ready() -> void:
 		terminal_ime = preload("res://scenes/input/AndroidTerminalIme.gd").new()
 		terminal_ime.manager = self
 		add_child(terminal_ime)
+	if OS.has_feature("android") or OS.has_feature("ios"):
 		keyboard_insets = preload("res://scenes/input/AndroidKeyboardInsets.gd").new()
 		keyboard_insets.manager = self
 		add_child(keyboard_insets)

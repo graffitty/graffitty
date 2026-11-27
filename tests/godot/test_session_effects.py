@@ -97,7 +97,7 @@ def verify_graph_landing(evidence):
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--evidence", type=Path)
-    parser.add_argument("--case", choices=("effects", "switch-lens", "landing", "graph-landing", "adaptive", "raster", "overview-fit"), default="effects")
+    parser.add_argument("--case", choices=("effects", "switch-lens", "landing", "graph-landing", "adaptive", "raster", "overview-fit", "status-strip", "agent-reveal"), default="effects")
     args = parser.parse_args()
     if args.evidence:
         args.evidence.mkdir(parents=True, exist_ok=False)
@@ -120,6 +120,8 @@ def main():
                 "adaptive": "adaptive_projection_smoke.gd",
                 "raster": "zoom_raster_quality.gd",
                 "overview-fit": "flat_3d_overview_fit_smoke.gd",
+                "status-strip": "session_status_strip_smoke.gd",
+                "agent-reveal": "agent_session_reveal_smoke.gd",
             }[args.case]
             evidence = directory / Path(script).stem
             evidence.mkdir()

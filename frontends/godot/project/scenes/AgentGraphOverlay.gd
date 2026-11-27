@@ -229,6 +229,12 @@ func sync(rectangles: Dictionary, edges: Array, project: Callable, editable := f
 	if not editing: clear_edge_hover()
 	# Selection, hover and delivery state affect paint, not wire geometry. Their
 	# input/graph signals already request redraws and refresh queue markers.
+	# A keyboard focus change has no such signal: repaint the selection glow
+	# now, so it moves with the camera instead of after it settles.
+	var painted := tools.selection()
+	if painted != _painted_selection and is_instance_valid(wire_layer):
+		_painted_selection = painted
+		wire_layer.queue_redraw()
 	var colors := {}
 	for output in [false, true]:
 		for key in sockets(output): colors[("out:" if output else "in:") + key] = socket_color(key, output)
@@ -270,6 +276,7 @@ func sync(rectangles: Dictionary, edges: Array, project: Callable, editable := f
 
 
 var _projection_snapshot: Array = []
+var _painted_selection: Array = []
 var _wire_screen_scale := 1.0
 func _project_links(project: Callable) -> void:
 	var snapshot: Array = [geometry_rebuilds, project.call(Vector2.ZERO), project.call(Vector2(100, 0)), project.call(Vector2(0, 100)), project.call(Vector2(100, 100))]

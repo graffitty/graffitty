@@ -1,6 +1,6 @@
 extends "../../../../replay/mac_pinch.gd"
 func play() -> void:
-	for path in ["", "flat-2d"]:
+	for path in ["flat-3d", "flat-2d"]:
 		await prepare(path)
 		await say("Zoom and pan: move the imaginary zoom point with both fingers")
 		for step in 12: await gesture(1.02,Vector2(4,2))

@@ -64,6 +64,17 @@ func wait_closed(host) -> void:
 	while is_instance_valid(host) and Time.get_ticks_msec() < deadline: await process_frame
 	check(not is_instance_valid(host), "Window is retired")
 
+## Another window stays open: × detaches at once, without a dialog.
+func close_silently(host: Node, label: String) -> void:
+	var asked := false
+	host.get_window().close_requested.emit()
+	var deadline := Time.get_ticks_msec() + 10000
+	while is_instance_valid(host) and Time.get_ticks_msec() < deadline:
+		if host.close_dialog != null: asked = true
+		await process_frame
+	check(not asked, label + ": × with another window open detaches without asking")
+	check(not is_instance_valid(host), label + ": window is retired")
+
 func run() -> void:
 	var wrapper: Node = load("res://scenes/terminal.tscn").instantiate()
 	root.add_child(wrapper)
@@ -75,35 +86,11 @@ func run() -> void:
 	await settled(first)
 	var original: String = wrapper.connection.workspace
 	var original_pid: int = first.active_terminal().get_shell_pid()
-	# × never ends a session silently, even one idle pane: it always asks.
+	# While another window is open, closing one cannot end anything: it detaches.
 	var idle := await new_window()
 	var idle_session: String = idle.session_backend.connection.workspace
 	var idle_pid: int = idle.active_terminal().get_shell_pid()
-	var prompt := await ask(idle)
-	if prompt == null: quit(1); return
-	check(labels(prompt) == ["Kill Server", "Detach", "Cancel"], "Local close offers exactly Kill Server, Detach and Cancel: " + str(labels(prompt)))
-	check(prompt.ok_button_text == "Detach", "Detach is the dialog's confirm action")
-	for tick in 4: await process_frame
-	check(prompt.size.y <= maxf(180, prompt.get_contents_minimum_size().y) * prompt.content_scale_factor + 8, "Close dialog fits its text and actions without excess height")
-	var content_rect := Rect2(Vector2.ZERO, Vector2(prompt.size) / prompt.content_scale_factor)
-	for button in prompt.get_ok_button().get_parent().get_children():
-		check(content_rect.grow(1).encloses(button.get_global_rect()), "Close action is fully inside the native dialog")
-	check(prompt.get_label().get_global_rect().end.y <= prompt.get_ok_button().get_parent().global_position.y, "Native text stays above the action row")
-	check(prompt.get_cancel_button().has_focus(), "Cancel starts focused")
-	await key(prompt, KEY_ENTER)
-	check(is_instance_valid(idle) and idle.close_dialog == null, "Enter cancels")
-	prompt = await ask(idle)
-	await activate(prompt.get_cancel_button())
-	check(is_instance_valid(idle) and idle.close_dialog == null and alive(idle_pid), "Cancel keeps the window and its shell")
-	prompt = await ask(idle)
-	var evidence := OS.get_environment("GRAFFITTY_TEST_EVIDENCE")
-	# A headless engine never draws, so there is no frame to wait for or capture.
-	if not evidence.is_empty() and DisplayServer.get_name() != "headless":
-		await RenderingServer.frame_post_draw
-		RenderingServer.force_draw(false)
-		prompt.get_texture().get_image().save_png(evidence.path_join("close-dialog.png"))
-	await activate(prompt.get_ok_button())
-	await wait_closed(idle)
+	await close_silently(idle, "Idle window")
 	check(await listed(first, idle_session) and alive(idle_pid), "Detaching an idle window keeps its session and shell")
 	check(alive(original_pid), "Other session remains alive")
 	await wrapper.connection.request_action("create", {"kind": "pane", "session": first.active_session_id})
@@ -111,26 +98,34 @@ func run() -> void:
 	await settled(first)
 	var anchor := await new_window()
 	var anchor_pid: int = anchor.active_terminal().get_shell_pid()
-	prompt = await ask(first)
-	if prompt == null: quit(1); return
-	await activate(prompt.get_ok_button())
-	await wait_closed(first)
+	await close_silently(first, "Root window")
 	await settled(anchor)
 	check(await listed(anchor, original) and alive(original_pid), "Detach retains the numbered session and its original shell")
 	check(anchor.get_window() == root, "Surviving window is promoted into the root shell")
-	# Verify the promoted root's × was reconnected to this policy.
+	var attached := await new_window(PackedStringArray(["--workspace=" + original, "--attach-session"]))
+	check(attached.sessions.size() == 2, "Detached session can be attached again with both panes")
+	await close_silently(attached, "Attached window")
+	check(await listed(anchor, original) and alive(original_pid), "Detaching again still keeps the session")
+	check(alive(anchor_pid), "Closing other windows leaves the sibling shell unchanged")
+	# The last window asks: closing it could stop the local server. This is
+	# also the promoted root, so its × must be reconnected to this policy.
+	var prompt := await ask(anchor)
+	if prompt == null: quit(1); return
+	check(labels(prompt) == ["Kill Server", "Detach", "Cancel"], "Local close offers exactly Kill Server, Detach and Cancel: " + str(labels(prompt)))
+	check(prompt.ok_button_text == "Detach", "Detach is the dialog's confirm action")
+	for tick in 4: await process_frame
+	check(prompt.size.y <= maxf(180, prompt.get_contents_minimum_size().y) * prompt.content_scale_factor + 8, "Close dialog fits its text and actions without excess height (%s, minimum %s)" % [prompt.size, prompt.get_contents_minimum_size()])
+	var content_rect := Rect2(Vector2.ZERO, Vector2(prompt.size) / prompt.content_scale_factor)
+	for button in prompt.get_ok_button().get_parent().get_children():
+		check(content_rect.grow(1).encloses(button.get_global_rect()), "Close action is fully inside the native dialog")
+	check(prompt.get_label().get_global_rect().end.y <= prompt.get_ok_button().get_parent().global_position.y, "Native text stays above the action row")
+	check(prompt.get_cancel_button().has_focus(), "Cancel starts focused")
+	await key(prompt, KEY_ENTER)
+	check(is_instance_valid(anchor) and anchor.close_dialog == null, "Enter cancels")
 	prompt = await ask(anchor)
 	if prompt == null: quit(1); return
 	await activate(prompt.get_cancel_button())
-	check(is_instance_valid(anchor) and alive(anchor_pid), "Promoted root's × still asks first")
-	var attached := await new_window(PackedStringArray(["--workspace=" + original, "--attach-session"]))
-	check(attached.sessions.size() == 2, "Detached session can be attached again with both panes")
-	prompt = await ask(attached)
-	if prompt == null: quit(1); return
-	await activate(prompt.get_ok_button())
-	await wait_closed(attached)
-	check(await listed(anchor, original) and alive(original_pid), "Detaching again still keeps the session")
-	check(alive(anchor_pid), "Closing other windows leaves the sibling shell unchanged")
+	check(is_instance_valid(anchor) and anchor.close_dialog == null and alive(anchor_pid), "Cancel keeps the window and its shell")
 	check(error_watch.errors.is_empty(), "No engine or script errors: " + str(error_watch.errors))
 	if not failures.is_empty():
 		print("WINDOW_CLOSE_FAIL")
@@ -140,6 +135,12 @@ func run() -> void:
 	# runner checks whether the owner survived (Detach) or stopped (Kill Server).
 	prompt = await ask(anchor)
 	if prompt == null: quit(1); return
+	var evidence := OS.get_environment("GRAFFITTY_TEST_EVIDENCE")
+	# A headless engine never draws, so there is no frame to wait for or capture.
+	if not evidence.is_empty() and DisplayServer.get_name() != "headless":
+		await RenderingServer.frame_post_draw
+		RenderingServer.force_draw(false)
+		prompt.get_texture().get_image().save_png(evidence.path_join("close-dialog.png"))
 	root.tree_exiting.connect(func(): print("WINDOW_CLOSE_PASS"), CONNECT_ONE_SHOT)
 	if "--close-server" in OS.get_cmdline_user_args():
 		var server_button: Button

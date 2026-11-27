@@ -16,9 +16,15 @@ Layout changes affect grids; view-only operations do not.
 | Terminal grid | Changes with content-area size or font settings |
 
 A fitting window publishes its visible tab and focused pane to that session’s server.
-Attachment, input and window resizing can fit that tab while all windows displaying
-it share the same focused pane in Main. Inspecting a different pane or using
-Overview keeps the tab’s current area. The server checks again when a queued edit arrives.
+It can fit that tab only while all windows displaying it share the same focused
+pane in Main. Inspecting a different pane or using Overview keeps the tab’s
+current area. The server checks again when a queued edit arrives.
+
+Only input takes a tab from another window: a key, click, touch or tab switch.
+Attaching, reconnecting, window resizing, rotation and the soft keyboard refit
+only tabs the window already owns or nobody owns. An idle device never resizes
+the tab you are working in. A tab switch claims on the transition's first
+frame, and the transition waits for the new size.
 
 The `main_view` message carries the wire tab ID and pane address. An empty pane
 marks an overview, and a null tab clears the presentation when the workspace

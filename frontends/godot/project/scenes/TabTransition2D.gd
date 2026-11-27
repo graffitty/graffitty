@@ -3,6 +3,8 @@ extends Node2D
 const PaneAddress := preload("res://scenes/PaneAddress.gd")
 ## Live terminal textures for whole-pane transitions; retained drawing state
 ## for glyph transitions, and copied UI rasterized at projected density.
+## Letters and dust fly in real 3D (FlightOverlay3D); backings, chrome and
+## graph wires stay 2D panels.
 const Core := preload("res://scenes/TerminalEffects.gd")
 const Motion := preload("res://scenes/ScatterMotion.gd")
 const DepthMotion := preload("res://scenes/TabDepthMotion.gd")
@@ -12,7 +14,12 @@ var captures: Array[SubViewport] = []
 var terminal_captures := {}
 var panels: Array[CanvasItem] = []
 var raster_items: Array[Node2D] = []
-var glyphs: Array[MultiMeshInstance2D] = []
+## Flying letters and dust: CellShatter pieces in the 3D overlay.
+var glyphs: Array[Node] = []
+var overlay: Node
+## Each terminal's letters as a flat 2D panel in its own pane, shown instead
+## of the overlay while the pieces rest, so later panes still cover them.
+var rest_ink: Array[Sprite2D] = []
 var pane_groups: Array[Node2D] = []
 var ui_groups: Array[Node2D] = []
 var dust_mode := false
@@ -20,6 +27,8 @@ var effect_control: RefCounted
 var depth_mode := false
 var screen_space := false
 var depth_direction := 1.0
+## 1 flies left, -1 mirrors every lateral path right.
+var flight_side := 1.0
 var depth_center := Vector2.ZERO
 var depth_projection := Transform2D.IDENTITY
 var depth_retirement := -1.0
@@ -39,6 +48,11 @@ func presentation_point(viewport: SubViewport, point: Vector2, target: Node2D) -
 	return null
 
 func _exit_tree() -> void:
+	for piece in glyphs:
+		if is_instance_valid(piece): piece.queue_free()
+	glyphs.clear()
+	if is_instance_valid(overlay): overlay.release()
+	overlay = null
 	for item in live_panels.duplicate(): _release_live_panel(item)
 	for viewport in captures:
 		if is_instance_valid(viewport): viewport.queue_free()
@@ -76,9 +90,9 @@ func build(world: Node) -> void:
 	depth_mode = world.depth_effect()
 	screen_space = world.screen_space_session_flight()
 	depth_direction = world.tab_fx_direction
+	flight_side = world._flight_side()
 	depth_center = world.camera_2d.position
 	depth_projection = get_parent().global_transform
-	var fly_ratio: float = world.dust_flying_ratio() if dust_mode else -1.0
 	var view: Control = world.host.workspace_view
 	for border in world._workspace_border_captures(not arriving):
 		var rect: Rect2 = border.rect
@@ -128,13 +142,14 @@ func build(world: Node) -> void:
 		view.canvas.add_child(still)
 		captures.append(still)
 		var rect: Rect2 = view.control_canvas_rect(control)
-		var at := rect.position
-		var end := rect.end
-		var group := ui_group((at + end) * 0.5, view.canvas_size())
+		# Strips fade and recede with the pane backing; only text flies.
+		var group := Node2D.new()
+		group.position = rect.get_center()
 		group.z_index = 2
 		group.set_meta("workspace_chrome", true)
-		panel(still.get_texture(), Rect2((at - end) * 0.5, end - at), group)
-		if not depth_mode: panels.pop_back() # Scatter chrome moves independently.
+		add_child(group)
+		pane_groups.append(group)
+		panel(still.get_texture(), Rect2(-rect.size * 0.5, rect.size), group)
 	for key in world._shown_panes():
 		var pane: Control = view.panes[key]
 		var group := Node2D.new()
@@ -170,103 +185,76 @@ func build(world: Node) -> void:
 			pair.vp.tree_exiting.connect(_freeze_live_panel.bind(item))
 			continue
 		panel(capture(pair.vp, (1 << 17) | (1 << 19)), Rect2(origin, layout), group)
-		var snapshot := preload("res://scenes/RetainedViewport.gd").terminal_state(pair.term)
-		if snapshot == null: continue
-		var cells: Array = snapshot.flight_cells()
-		if dust_mode:
-			_build_dust(world, pair, key, origin, layout, group, cells, fly_ratio)
-			cells = preload("res://scenes/DustPieces.gd").letters(cells, fly_ratio)
-		if cells.is_empty(): continue
-		cells = Capture.limit_layers([cells], world.scatter_block_budget())[0]
-		var runs := Capture.cell_runs(cells, 3)
-		var grid: Rect2 = snapshot.flight_grid()
-		var cell_size := grid.size
-		var batch := MultiMesh.new()
-		batch.transform_format = MultiMesh.TRANSFORM_2D
-		batch.use_custom_data = true
-		batch.use_colors = true
-		var quad := QuadMesh.new()
-		quad.size = Vector2.ONE
-		batch.mesh = quad
-		batch.instance_count = runs.positions.size()
-		for i in runs.positions.size():
-			var extent := cell_size * Vector2(runs.widths[i], runs.heights[i])
-			var at: Vector2 = pair.term.position + grid.position + Vector2(runs.positions[i]) * cell_size
-			batch.set_instance_transform_2d(i, Transform2D(Vector2(extent.x, 0), Vector2(0, extent.y), origin + at + extent * 0.5))
-			batch.set_instance_custom_data(i, Color(at.x / layout.x, at.y / layout.y, extent.x / layout.x, extent.y / layout.y))
-		var layer := MultiMeshInstance2D.new()
-		layer.texture = capture(pair.vp, 1 << 18)
-		_track_raster(layer, layer.texture, layout)
-		layer.multimesh = batch
-		var material := ShaderMaterial.new()
-		material.shader = TransitionShader
-		material.set_shader_parameter("glyph_layer", true)
-		material.set_shader_parameter("arrival_flight", arriving)
-		material.set_shader_parameter("texture_size", layout)
-		material.set_shader_parameter("extent", view.canvas_size())
-		material.set_shader_parameter("flight_seed", randf())
-		material.set_shader_parameter("terminal_origin", view.terminal_origin(key))
-		layer.material = material
-		group.add_child(layer)
-		glyphs.append(layer)
+		_build_pieces(world, pair, group, Rect2(origin, layout))
 	if depth_mode:
 		for group in pane_groups + ui_groups:
 			group.set_meta("depth_origin", group.position)
 			group.set_meta("depth_scale", group.scale)
 		set_progress(1.0 if arriving else 0.0)
 		return
-	var positions := PackedFloat32Array()
-	for layer in glyphs:
-		if layer.has_meta("dust"): continue
-		var origin: Vector2 = layer.material.get_shader_parameter("terminal_origin")
-		var layout: Vector2 = layer.material.get_shader_parameter("texture_size")
-		for i in layer.multimesh.instance_count:
-			var data: Color = layer.multimesh.get_instance_custom_data(i)
-			positions.append(origin.x + (data.r + data.b * 0.5) * layout.x)
-	var ranks := Capture.release_ranks(positions)
-	var index := 0
-	for layer in glyphs:
-		if layer.has_meta("dust"): continue
-		for i in layer.multimesh.instance_count:
-			layer.multimesh.set_instance_color(i, Color(ranks[index], 1, 1, 1))
-			index += 1
+	Capture.assign_release_ranks(glyphs.filter(func(piece): return piece.get_meta("glyph_layer", false)), flight_side)
+	visibility_changed.connect(_update_pieces)
+	# An arrival waits fully scattered until its clock starts.
+	if arriving: progress = 1.0
+	_update_pieces()
 
-func _build_dust(world: Node, pair: Dictionary, key: String, origin: Vector2, layout: Vector2, group: Node2D, cells: Array, fly_ratio: float) -> void:
-	var builder := preload("res://scenes/DustPieces.gd")
-	var positions := PackedFloat32Array()
-	for item in cells: positions.append(float(item.x))
-	var particles := builder.particles(pair.term, Rect2(pair.term.position, pair.term.size), cells, world.dust_particle_budget(), Capture.release_ranks(positions), fly_ratio)
-	var regions: Array = particles.rects
-	if regions.is_empty(): return
-	var batch := MultiMesh.new()
-	batch.transform_format = MultiMesh.TRANSFORM_2D
-	batch.use_custom_data = true
-	var quad := QuadMesh.new()
-	quad.size = Vector2.ONE
-	batch.mesh = quad
-	batch.use_colors = true
-	batch.instance_count = regions.size()
-	for i in regions.size():
-		var rect: Rect2 = regions[i]
-		batch.set_instance_color(i, Color(particles.ranks[i], 1, 1, 1))
-		batch.set_instance_transform_2d(i, Transform2D(Vector2(rect.size.x, 0), Vector2(0, rect.size.y), origin + rect.get_center()))
-		batch.set_instance_custom_data(i, Color(rect.position.x / layout.x, rect.position.y / layout.y, rect.size.x / layout.x, rect.size.y / layout.y))
-	var layer := MultiMeshInstance2D.new()
-	layer.multimesh = batch
-	layer.texture = capture(pair.vp, 1 << 18)
-	_track_raster(layer, layer.texture, layout)
-	layer.set_meta("dust", true)
-	var material := ShaderMaterial.new()
-	material.shader = TransitionShader
-	material.set_shader_parameter("dust_mode", true)
-	material.set_shader_parameter("dust_count", regions.size())
-	material.set_shader_parameter("arrival_flight", arriving)
-	material.set_shader_parameter("texture_size", layout)
-	material.set_shader_parameter("extent", world.host.workspace_view.canvas_size())
-	material.set_shader_parameter("terminal_origin", world.host.workspace_view.terminal_origin(key))
-	layer.material = material
-	group.add_child(layer)
-	glyphs.append(layer)
+## The letters and dust Flat 3D flies for this terminal, built in the 3D
+## overlay. `local` is the terminal texture's rectangle in `group`.
+func _build_pieces(world: Node, pair: Dictionary, group: Node2D, local: Rect2) -> void:
+	var fly_ratio: float = world.dust_flying_ratio(pair.term) if dust_mode else -1.0
+	var cells: Array = Capture.limit_layers(world._transition_cells(pair.term, fly_ratio), world.scatter_block_budget())
+	var rect := Rect2(pair.term.position, pair.term.size)
+	var built := glyphs.size()
+	var map: Array[Vector3] = world.flight_overlay.frame(group, local)
+	# Like Flat 3D, grouped travel scales with the whole workspace sheet.
+	var sheet: Array[Vector3] = world.flight_overlay.frame(self, Rect2(Vector2.ZERO, world.host.workspace_view.canvas_size()))
+	for i in world.LAYERS.size():
+		if cells[i].is_empty(): continue
+		if overlay == null:
+			overlay = world.flight_overlay
+			overlay.acquire()
+		var piece := Capture.new()
+		piece.visible = false
+		piece.flight_side = flight_side
+		overlay.viewport.add_child(piece)
+		# _update_pieces keeps this plane on the pane every frame.
+		if piece.build_cells(pair.term, pair.vp, rect, map[0], map[1], map[2], cells[i], world.LAYERS[i]["motion"], Vector2.ZERO, 3, dust_mode and i == 0, world.dust_particle_budget(), fly_ratio) <= 0:
+			piece.free()
+			continue
+		piece.set_progress(1.0)
+		world._group_transition_layer(piece, i, true)
+		# As in Flat 3D: appearance after thickness keeps the live ink's colour
+		# on every face (it resets thickness_shade).
+		piece.set_thickness(world.TAB_FX_THICKNESS)
+		piece.set_appearance(world.ink_gain, world.tonemap_exposure)
+		var mat: ShaderMaterial = piece._material()
+		mat.set_shader_parameter("group_travel_du", sheet[1])
+		mat.set_shader_parameter("group_travel_dv", sheet[2])
+		mat.set_shader_parameter("arrival_flight", arriving)
+		mat.set_shader_parameter("retire_flight_pieces", true)
+		mat.set_shader_parameter("flight_side", flight_side)
+		piece.set_meta("anchor", group)
+		piece.set_meta("local_rect", local)
+		glyphs.append(piece)
+	if glyphs.size() > built:
+		panel(glyphs[built]._material().get_shader_parameter("terminal_tex"), local, group)
+		rest_ink.append(panels.back())
+
+func _update_pieces() -> void:
+	if overlay == null: return
+	overlay.sync()
+	var shown := is_visible_in_tree()
+	var resting := progress <= 0.0 and retirement_time < 0.0
+	for ink in rest_ink: ink.visible = resting
+	for piece in glyphs:
+		piece.visible = shown and not resting
+		if not piece.visible: continue
+		overlay.plane(piece, piece.get_meta("anchor"), piece.get_meta("local_rect"))
+		var mat: ShaderMaterial = piece._material()
+		mat.set_shader_parameter("retirement_time", retirement_time)
+		mat.set_shader_parameter("retirement_phase", retirement_phase)
+		piece.set_fly(overlay.eye(), progress)
+		piece.update_raster(overlay.camera)
 
 func ui_group(center: Vector2, extent: Vector2) -> Node2D:
 	var group := Node2D.new()
@@ -320,7 +308,7 @@ func set_progress(value: float) -> void:
 		var wind: Vector2 = group.get_meta("wind")
 		var drift: Vector2 = group.get_meta("drift")
 		var lateral := drift * flight + wind * Motion.wind_distance(flight)
-		if arriving: lateral.x = -lateral.x
+		lateral.x *= -flight_side if arriving else flight_side
 		group.position = group.get_meta("origin") + lateral * float(group.get_meta("span")) * group.scale.x
 		group.rotation = group.get_meta("spin") * flight
 		group.modulate.a = 1.0 if depth < 0.99 else 0.0
@@ -329,12 +317,7 @@ func set_progress(value: float) -> void:
 		if item.material is ShaderMaterial: item.material.set_shader_parameter("progress", backing_flight)
 		else: item.modulate.a = 1.0 - backing_flight
 	for group in pane_groups: group.scale = group.get_meta("pane_scale", Vector2.ONE) * (1.0 - 0.06 * backing_flight)
-	for layer in glyphs:
-		# Sibling pane groups must not paint their backings over flying ink.
-		layer.z_index = 1 if progress > 0.0 else 0
-		layer.material.set_shader_parameter("progress", progress)
-		layer.material.set_shader_parameter("retirement_time", retirement_time)
-		layer.material.set_shader_parameter("retirement_phase", retirement_phase)
+	_update_pieces()
 	_update_raster()
 
 

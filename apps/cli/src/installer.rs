@@ -175,9 +175,20 @@ fn script_file(script: &[u8]) -> Result<tempfile::NamedTempFile> {
     Ok(file)
 }
 
+/// Windows PowerShell 5.1, the shell the installers are written for.
+///
+/// It must not inherit `PSModulePath` from PowerShell 7: 5.1 would then load
+/// 7's copies of its built-in modules, which it cannot use, and lose commands
+/// such as `Get-FileHash`. Without the variable it uses its own module paths.
+fn windows_powershell() -> Command {
+    let mut command = Command::new("powershell");
+    command.env_remove("PSModulePath");
+    command
+}
+
 fn interpreter(file: &Path) -> Command {
     if cfg!(windows) {
-        let mut command = Command::new("powershell");
+        let mut command = windows_powershell();
         command.args(["-NoProfile", "-ExecutionPolicy", "Bypass", "-File"]).arg(file);
         command
     } else {
@@ -199,10 +210,15 @@ fn run(script: &[u8], args: &[String], env: &[(&str, OsString)]) -> Result<()> {
 
 /// Starts the script in a console window of its own and returns at once. The
 /// window deletes the script and waits for Enter, so its output stays readable.
+///
+/// The window leaves this command's job object when the job allows it, so
+/// ending an SSH session or a scheduled task does not stop an upgrade halfway.
 #[cfg(windows)]
 fn run_detached(script: &[u8], env: &[(&str, OsString)]) -> Result<()> {
     use std::os::windows::process::CommandExt;
     const CREATE_NEW_CONSOLE: u32 = 0x0000_0010;
+    const CREATE_BREAKAWAY_FROM_JOB: u32 = 0x0100_0000;
+    const ACCESS_DENIED: i32 = 5;
     let path = script_file(script)?.into_temp_path().keep()?;
     let quoted = format!("'{}'", path.to_string_lossy().replace('\'', "''"));
     let wrapper = format!(
@@ -210,11 +226,19 @@ fn run_detached(script: &[u8], env: &[(&str, OsString)]) -> Result<()> {
          finally {{ Remove-Item -LiteralPath {quoted} -ErrorAction SilentlyContinue }}; \
          Read-Host 'Press Enter to close'"
     );
-    Command::new("powershell")
+    let mut command = windows_powershell();
+    command
         .args(["-NoProfile", "-ExecutionPolicy", "Bypass", "-Command", &wrapper])
         .envs(env.iter().map(|(k, v)| (k, v)))
-        .creation_flags(CREATE_NEW_CONSOLE)
-        .spawn()?;
+        .creation_flags(CREATE_NEW_CONSOLE | CREATE_BREAKAWAY_FROM_JOB);
+    match command.spawn() {
+        Err(error) if error.raw_os_error() == Some(ACCESS_DENIED) => {
+            command.creation_flags(CREATE_NEW_CONSOLE).spawn()?;
+        }
+        started => {
+            started?;
+        }
+    }
     Ok(())
 }
 
@@ -257,6 +281,12 @@ mod tests {
         assert_eq!(requested_tag("v0.2.0").unwrap(), "v0.2.0");
         assert!(requested_tag("main").is_err());
         assert_eq!(release_tag(Some("0.2.0"), "graffitty/bistro-world").unwrap(), "v0.2.0");
+    }
+
+    #[test]
+    fn windows_powershell_does_not_inherit_powershell_7_modules() {
+        let command = windows_powershell();
+        assert!(command.get_envs().any(|(name, value)| name == "PSModulePath" && value.is_none()));
     }
 
     #[test]

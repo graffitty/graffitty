@@ -18,9 +18,12 @@ workspace graph, and close when your pane closes unless started with
 `--outlive-parent`. Each pane has a stable address like `t7`; `:2.1` means
 the first pane of the second tab. Output is JSON.
 
-Every call is scoped to the capability inherited by your terminal: your own
-workspace and, for creating and arranging panes, your own tab. Start with
-`gft identify` and `gft pane list`.
+`gft identify` names your own pane. `gft pane list` lists every session on
+this server; `gft terminal get-text`, `send-text` and `press` reach any of
+those terminals by `tN` or `session:tab.pane`. The graph, Chromium control and
+creating or arranging panes stay in your own session (and, for arranging, your
+own tab). Prefer a graph wire for messaging another agent: it carries
+permissions and turn tracking that raw typing does not.
 
 ## Delegate a task
 
@@ -140,13 +143,19 @@ before you start several panes: information should flow left to right (or
 top to bottom) and related panes should touch.
 
 Keep the user's main tiles in place. Check `gft tiling status` before
-placing children. In a tiled tab, use `--side` with `--of` pointing to a
-stashed pane (`stashed: true`) to start the graph in the overview. Place
-later reviewers beside the first one. To move an existing reviewer out of
-the main tiles, use `gft pane place --target <reviewer> --side right --of
-<stashed-pane>`. Verify that `tiles` still lists the user's original panes.
-If every pane is a main tile, ask before splitting one or changing the tab
-layout. In a floating tab, use `--at` beyond the main area.
+placing children. In a tiled tab, start the graph outside Main View:
+
+- With a stashed pane (`stashed: true`), use `--side` and `--of <stashed-pane>`.
+- Without one, give the first child `--at X,Y` so the whole pane is outside
+  Main View, for example X = the rightmost tile's `x + width + 40` in
+  `tiling status`. It waits there as a stashed pane.
+
+Place later reviewers beside the first one with `--side --of`. To move an
+existing reviewer out of the main tiles, use `gft pane place --target
+<reviewer> --side right --of <stashed-pane>` or `--at` outside Main View.
+Verify that `tiles` still lists the user's original panes. Ask before
+splitting a main tile or changing the tab layout. In a floating tab, use
+`--at` beyond the main area too.
 
 ```sh
 gft pane run --agent pi --name plan --side right                  # beside you
@@ -158,9 +167,10 @@ gft pane place --target t9 --at 1200,80 --size 800x500
 ```
 
 - `--side` puts the whole pane next to `--of` (default: you), one gap apart,
-  copying its size. In a tiled tab it splits a main tile or inherits a stashed anchor’s layer; `--at` and
-  `--size` then apply only to floating panes (`gft tiling layout floating`
-  switches the tab, `gft tiling status` shows which it is).
+  copying its size. In a tiled tab it splits a main tile or inherits a stashed
+  anchor’s layer. There, `--at` must put the whole pane outside Main View, and
+  `--size` applies only to panes outside it (`gft tiling status` shows which
+  layout the tab uses).
 - Keep rows aligned: reuse the same `--of` for siblings (`--side below` of the
   same parent stacks; `--side right --of <previous>` continues a row).
 - One role per pane and a short `--name`: the name is the pane title and the

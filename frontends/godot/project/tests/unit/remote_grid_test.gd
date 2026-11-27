@@ -6,7 +6,7 @@ class Transport extends Node:
 	signal acknowledged(message: Dictionary)
 	signal state_changed(message: String)
 	signal changed
-	var topology := {"authoritative_layout": true}
+	var topology := {"authoritative_layout": true, "tabs": [{"id": 1}]}
 	var workspace := "$1"
 	var sent: Array = []
 	func session_close_stops_server(_target: String) -> Variant: return null
@@ -30,6 +30,16 @@ class Host extends Node:
 	var sessions := {}
 	var world := {"terminal_window": {"padding": Vector4(8, 8, 8, 8)}}
 	var workspace_view := {"panes": {}, "pane_rects": {}, "size": Vector2(1280, 800), "navigation_zoom": 1.0}
+	# The pane on screen in the visible tab; only it may size the owner grid.
+	var pane_focus := "t7"
+	var workspace_layout := Layout.new()
+
+## The one visible tab, holding t7.
+class Layout extends RefCounted:
+	var active := 1
+	var tabs := [{"id": 1, "focused": "t7"}]
+	func containing(key: String) -> int: return 1 if key == "t7" else -1
+	func tab(id: int) -> Dictionary: return tabs[0] if id == 1 else {}
 
 func test_owner_grid_uses_logical_pane_and_font_not_client_camera() -> void:
 	var transport := Transport.new()

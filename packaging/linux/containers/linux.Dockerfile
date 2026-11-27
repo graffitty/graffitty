@@ -10,7 +10,8 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     libvulkan-dev libfontconfig1-dev libspeechd-dev \
     zstd libnss3 libnspr4 libatk1.0-0 libatk-bridge2.0-0 libatspi2.0-0 libcairo2 libcups2 \
     libpango-1.0-0 libxcomposite1 libxdamage1 libgbm1 && rm -rf /var/lib/apt/lists/*
-RUN python3 -m venv /opt/build-tools && /opt/build-tools/bin/pip install 'scons==4.9.1' 'tomli==2.2.1' 'version-pioneer==0.0.16' 'uv==0.13.8'
+# Godot 4.8's build compresses generated sources with zstandard.
+RUN python3 -m venv /opt/build-tools && /opt/build-tools/bin/pip install 'scons==4.9.1' 'tomli==2.2.1' 'version-pioneer==0.0.16' 'uv==0.13.8' 'zstandard==0.23.0'
 ENV PATH="/opt/build-tools/bin:/root/.cargo/bin:/opt/zig:${PATH}"
 WORKDIR /work
 ENTRYPOINT ["python3", "packaging/linux/build_native.py"]

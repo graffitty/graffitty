@@ -10,6 +10,9 @@ class ErrorWatch extends Logger:
 	func _log_message(_message: String,_error: bool) -> void: pass
 var watch := ErrorWatch.new()
 func _initialize() -> void:
+	# With --disable-render-loop (background E2E) nothing draws unless the
+	# background renderer schedules frames; capture() would wait forever.
+	preload("../../../../tests/llm-e2e/replay/background.gd").install(self)
 	OS.add_logger(watch)
 	OS.set_environment("XDG_CONFIG_HOME",OS.get_cache_dir().path_join("flat-2d-test-%d" % OS.get_process_id()))
 	OS.set_environment("XDG_STATE_HOME",OS.get_cache_dir().path_join("flat-2d-state-%d" % OS.get_process_id()))
@@ -29,6 +32,10 @@ func run() -> void:
 	if wrapper.host == null: await wrapper.host_ready
 	var host = wrapper.host
 	await create_timer(2).timeout
+	# New workspaces open in Flat 2D; start from Flat 3D so the parity
+	# capture and the round trip compare the two renderers.
+	check(host.switch_world("flat-3d"),"Start in Flat 3D")
+	await create_timer(1).timeout
 	var session: int = host.active_session_id
 	var terminal: Node = host.active_terminal()
 	var pid: int = terminal.get_shell_pid()
@@ -59,9 +66,13 @@ func run() -> void:
 	check(world.fx_last_key > before_key,"Native terminal typing drives the 2D effects")
 	for point in [Vector2(0,0),Vector2(300,200),Vector2(1100,600)]:
 		check(world.sheet_point_at(world.sheet_window_fraction(point)).distance_to(point)<.01,"2D input projection round trip")
+	# Adaptive framing (the default) resolves every state's zoom to 1.0, so a
+	# pinch edits a fixed state zoom only in typing zoom mode.
+	world.fx_cfg.set_option("scene.camera", "zoom_mode", "typing")
 	world.pinch_zoom(1.5)
 	await process_frame
 	check(world.camera_2d.zoom.x>1.4,"Pinch zoom uses Camera2D")
+	world.fx_cfg.set_option("scene.camera", "zoom_mode", "adaptive")
 	host.workspace_view.pan_workspace(Vector2(100,50),Vector2(500,300))
 	await process_frame
 	check(host.workspace_view.overview,"Pan enters navigation")
@@ -90,7 +101,7 @@ func run() -> void:
 	await create_timer(.1).timeout
 	check(host.world.effects_2d.particles.sparks.size()>0,"Typing particles run in 2D")
 	await capture("flat-2d-effects")
-	check(host.switch_world(""),"Switch back to Flat")
+	check(host.switch_world("flat-3d"),"Switch back to Flat")
 	await create_timer(.5).timeout
 	check(host.world.cam != null and not host.world.cam.get_viewport().disable_3d,"Restores 3D viewport")
 	check(host.active_terminal()==terminal,"Original terminal retained after round trip")

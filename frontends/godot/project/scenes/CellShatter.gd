@@ -11,6 +11,9 @@ const BACKING_FLIGHT_FRACTION := 0.30
 var departing_lens := Vector3.ZERO # focus distance, base radius, relative depth range
 var aperture_end_phase := 1.0
 var departing_radius := 0.0
+## 1 flies left, -1 mirrors the flight right. Set before building; the world
+## keeps the material's `flight_side` equal to it.
+var flight_side := 1.0
 
 var _cells := 0
 var _spread := 7.0
@@ -174,7 +177,7 @@ func build_cells(
 	if fragment:
 		var positions := PackedFloat32Array()
 		for item in cells: positions.append(float(item.x))
-		var particles := preload("res://scenes/DustPieces.gd").particles(term, rect, cells, dust_budget, release_ranks(positions), fly_ratio)
+		var particles := preload("res://scenes/DustPieces.gd").particles(term, rect, cells, dust_budget, release_ranks(positions, -1, flight_side), fly_ratio)
 		var regions: Array = particles.rects
 		if regions.is_empty(): return 0
 		build_regions(viewport, regions, rect, uv_origin, uv_du, uv_dv, Vector2.ZERO, 1 << 18, true)
@@ -544,13 +547,18 @@ func set_fly_character(
 	m.set_shader_parameter("fly_ease", maxf(ease, 1.0))
 
 
-static func release_ranks(positions: PackedFloat32Array, random_seed: int = -1) -> PackedFloat32Array:
-	# A random first 20% from the right half of the occupied text gives the
-	# release a direction. The next 60% and final 20% mix the entire remainder.
+static func release_ranks(positions: PackedFloat32Array, random_seed: int = -1, side := 1.0) -> PackedFloat32Array:
+	# A random first 20% from the half the wind leaves from gives the release
+	# a direction: the right half for a leftward flight (side 1), the left half
+	# for a rightward one (side -1). The next 60% and final 20% mix the rest.
 	#
 	# Measure occupied bounds so a short prompt also catches the same gust.
 	var count := positions.size()
 	if count == 0: return PackedFloat32Array()
+	if side < 0.0:
+		var mirrored := PackedFloat32Array()
+		for x in positions: mirrored.append(-x)
+		positions = mirrored
 	var rng := RandomNumberGenerator.new()
 	if random_seed < 0: rng.randomize()
 	else: rng.seed = random_seed
@@ -568,10 +576,10 @@ static func release_ranks(positions: PackedFloat32Array, random_seed: int = -1) 
 	for i in order:
 		if positions[i] >= midpoint and first.size() < first_count: first.append(i)
 		else: remaining.append(i)
-	# Removing the first right-hand picks biases the old order toward the left.
+	# Removing the first leading-half picks biases the old order to the other half.
 	# Reshuffle the remainder so stage two samples both halves uniformly.
 	_shuffle_release_order(remaining, rng)
-	# Sparse right halves use the already shuffled remainder to fill the quota.
+	# Sparse leading halves use the already shuffled remainder to fill the quota.
 	# No piece is sampled twice, even for one-column or highly uneven content.
 	order = first + remaining
 	var ranks := PackedFloat32Array()
@@ -589,7 +597,7 @@ static func _shuffle_release_order(order: Array, rng: RandomNumberGenerator) -> 
 		order[j] = previous
 
 
-static func assign_release_ranks(layers: Array) -> void:
+static func assign_release_ranks(layers: Array, side := 1.0) -> void:
 	layers = layers.filter(func(layer): return not layer.has_meta("dust"))
 	# Sample across the entire captured text, including every semantic batch
 	# and pane. Small styled batches must not each release their own first 20%.
@@ -602,7 +610,7 @@ static func assign_release_ranks(layers: Array) -> void:
 		for i in layer.multimesh.instance_count:
 			var data: Color = layer.multimesh.get_instance_custom_data(i)
 			positions.append(rect.x + (data.r + cell.x * (1.0 + floorf(data.b)) * 0.5) * rect.z)
-	var ranks := release_ranks(positions)
+	var ranks := release_ranks(positions, -1, side)
 	var index := 0
 	for layer in layers:
 		for i in layer.multimesh.instance_count:

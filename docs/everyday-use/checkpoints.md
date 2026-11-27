@@ -9,10 +9,18 @@ terminal scrollback, or unsaved editor buffers.
 On desktop, open **Sessions**:
 
 - **Save checkpoint** saves all windows and their positions.
-- **Resume manual checkpoint** opens the saved workspace in new windows.
+- **Resume manual checkpoint** opens the saved workspace in one new window.
 - **Save checkpoint and quit** quits after saving successfully.
 
-Existing windows stay open during restore. These local menu actions are unavailable on Android.
+Restore opens one window, whatever the checkpoint holds:
+
+- The window shows the first saved session.
+- Every other saved session keeps running without a window. Open it from
+  **Sessions → All Sessions…**; its tabs, layout, browsers, and graph
+  connections are already in place.
+- Existing windows stay open.
+
+These local menu actions are unavailable on Android.
 
 From a Graffitty terminal:
 
@@ -23,7 +31,8 @@ gft checkpoint restore
 ```
 
 CLI saves cover all sessions on the selected local server. Restore opens the
-newest manual checkpoint by default. Window positions require a desktop menu save.
+newest manual checkpoint by default, in the running Graffitty app if there is
+one, and starts the app if not. Window positions require a desktop menu save.
 
 Restore is always something you start; Graffitty never restores by itself.
 

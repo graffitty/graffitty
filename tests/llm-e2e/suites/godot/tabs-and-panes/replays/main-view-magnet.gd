@@ -27,7 +27,7 @@ func play() -> void:
 	var key: String = host.pane_focus
 	var pid: int = host.sessions[PaneAddress.id(key)].term.get_shell_pid()
 	var rectangles: Dictionary = view.pane_rects.duplicate()
-	for world in ["", "flat-2d"]:
+	for world in ["flat-3d", "flat-2d"]:
 		host.switch_world(world)
 		await camera_at_rest()
 		await check_gestures()

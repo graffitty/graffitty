@@ -59,7 +59,7 @@ session survival still need device testing; do not assume a forced restart is ha
 | Feature | Support |
 | --- | --- |
 | Rendering | Flat 2D by default; Metal on A11 or newer, Compatibility on older supported devices |
-| Input | Native keyboard; Command shortcuts; clipboard images without photo-library access |
+| Input | Native keyboard with Korean, Chinese and Japanese composition ([details](../internals/korean-input.md#ios-and-ipados)); Command shortcuts; clipboard images without photo-library access |
 | Passwords | Keychain |
 | Dictation | Microphone permission required; interruptions cancel capture |
 | Browser video | Hardware H.264/HEVC, PNG fallback; no AV1 |

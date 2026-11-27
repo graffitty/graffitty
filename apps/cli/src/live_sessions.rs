@@ -115,6 +115,38 @@ pub(crate) fn keep_output_private() {
     }
 }
 
+/// Starts `command` as a session server that outlives its caller.
+///
+/// On Windows it leaves the caller's job object when the job allows it. An
+/// installer, an SSH session or a scheduled task runs in a job, and ending that
+/// job ends every process in it: the server and, through the holders it starts,
+/// every terminal. A job that forbids leaving keeps the server inside.
+fn spawn_independent(command: &mut Command) -> std::io::Result<std::process::Child> {
+    #[cfg(unix)]
+    {
+        use std::os::unix::process::CommandExt;
+        command.process_group(0);
+        command.spawn()
+    }
+    #[cfg(windows)]
+    {
+        use std::os::windows::process::CommandExt;
+        const CREATE_NEW_PROCESS_GROUP: u32 = 0x0000_0200;
+        const CREATE_BREAKAWAY_FROM_JOB: u32 = 0x0100_0000;
+        const CREATE_NO_WINDOW: u32 = 0x0800_0000;
+        const ACCESS_DENIED: i32 = 5;
+        keep_output_private();
+        command.creation_flags(CREATE_NO_WINDOW | CREATE_NEW_PROCESS_GROUP | CREATE_BREAKAWAY_FROM_JOB);
+        match command.spawn() {
+            Err(error) if error.raw_os_error() == Some(ACCESS_DENIED) => {
+                command.creation_flags(CREATE_NO_WINDOW | CREATE_NEW_PROCESS_GROUP);
+                command.spawn()
+            }
+            started => started,
+        }
+    }
+}
+
 /// Starts a session server as an independent process. `command` is its full
 /// command line.
 pub(crate) fn spawn_server(command: &[String]) -> Result<()> {
@@ -133,18 +165,7 @@ pub(crate) fn spawn_server(command: &[String]) -> Result<()> {
             .map_err(|_| "The previous session server left an unreadable environment")?;
         server.env_clear().envs(environment);
     }
-    #[cfg(unix)]
-    {
-        use std::os::unix::process::CommandExt;
-        server.process_group(0);
-    }
-    #[cfg(windows)]
-    {
-        use std::os::windows::process::CommandExt;
-        server.creation_flags(0x08000000);
-        keep_output_private();
-    }
-    server.spawn()?;
+    spawn_independent(&mut server)?;
     Ok(())
 }
 
@@ -200,18 +221,7 @@ fn start_server() -> Result<()> {
         .stdin(Stdio::null())
         .stdout(log.try_clone()?)
         .stderr(log);
-    #[cfg(unix)]
-    {
-        use std::os::unix::process::CommandExt;
-        command.process_group(0);
-    }
-    #[cfg(windows)]
-    {
-        use std::os::windows::process::CommandExt;
-        command.creation_flags(0x08000000);
-        keep_output_private();
-    }
-    let mut child = command.spawn()?;
+    let mut child = spawn_independent(&mut command)?;
     let deadline = Instant::now() + Duration::from_secs(20);
     loop {
         if call("session.list", json!({})).is_ok() {

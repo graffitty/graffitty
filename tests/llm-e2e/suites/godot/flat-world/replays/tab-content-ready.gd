@@ -173,7 +173,7 @@ func exercise(operation: String, effect: String, label: String) -> void:
 func play() -> void:
 	client = get_nodes_in_group("shared_presentations").filter(func(node): return node.host == host)[0]
 	await open_tabs(2)
-	for path in ["", "flat-2d"]:
+	for path in ["flat-3d", "flat-2d"]:
 		for tab in host.get_tabs():
 			host.select_workspace(tab.id, true)
 			check(host.switch_world(path), "Choose test renderer")
@@ -182,9 +182,9 @@ func play() -> void:
 			await type("printf '\\033[32mREADY DESTINATION\\033[0m\\n'{enter}")
 		for effect in ["push_pull"]:
 			host.select_workspace(host.get_tabs()[1].id, true)
-			await exercise("switch", effect, ("flat-3d" if path.is_empty() else path) + "-" + effect)
-			await exercise("create", effect, ("flat-3d" if path.is_empty() else path) + "-" + effect)
-			await exercise("close", effect, ("flat-3d" if path.is_empty() else path) + "-" + effect)
+			await exercise("switch", effect, path + "-" + effect)
+			await exercise("create", effect, path + "-" + effect)
+			await exercise("close", effect, path + "-" + effect)
 		await interrupt_preparation(false)
 		await interrupt_preparation(true)
 		await interrupt_live_arrival()

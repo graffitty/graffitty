@@ -88,8 +88,8 @@ infocmp -x xterm-ghostty | ssh user@remote-host -- tic -x -
 ## Start using Graffitty
 
 Open Graffitty from your application launcher, then follow the
-[first steps](https://docs.graffitty.com/getting-started/) and
-[keyboard shortcuts](https://docs.graffitty.com/shortcuts/).
+[first steps](https://docs.graffitty.com/start-here/getting-started/) and
+[keyboard shortcuts](https://docs.graffitty.com/start-here/shortcuts/).
 
 ## Agent integration
 
@@ -106,19 +106,19 @@ gft integrate agent claude --apply
 gft integrate agent claude --status
 ```
 
-See [agent integration](https://docs.graffitty.com/agent-setup/) for provider details,
-custom config locations and removal, and [the agent graph](https://docs.graffitty.com/connect-agents/)
+See [agent integration](https://docs.graffitty.com/agents/agent-setup/) for provider details,
+custom config locations and removal, and [the agent graph](https://docs.graffitty.com/agents/connect-agents/)
 to connect agents and route their messages.
 
 ### Configure your workspace
 
-- **Appearance and shortcuts:** [Client configuration](https://docs.graffitty.com/configuration/)
+- **Appearance and shortcuts:** [Client configuration](https://docs.graffitty.com/customize/configuration/)
   covers themes, effects, key bindings and menus.
-- **Shell, fonts and navigation:** [Server configuration](https://docs.graffitty.com/server-configuration/)
+- **Shell, fonts and navigation:** [Server configuration](https://docs.graffitty.com/customize/server-configuration/)
   covers settings shared by the clients connected to a session server.
-- **Neovim and tmux:** [Navigation setup](https://docs.graffitty.com/integrations/nvim-tmux-navigator/)
+- **Neovim and tmux:** [Navigation setup](https://docs.graffitty.com/customize/nvim-tmux-navigator/)
   connects editor splits, tmux panes and Graffitty panes.
-- **Slack, Discord and Telegram:** [Chat integration setup](https://docs.graffitty.com/nodes/chat-integrations/)
+- **Slack, Discord and Telegram:** [Chat integration setup](https://docs.graffitty.com/agents/chat-integrations/)
   explains credentials, destinations and graph send nodes.
-- **Sessions and remote access:** Start with [sessions](https://docs.graffitty.com/sessions/) and
-  [remote control](https://docs.graffitty.com/integrations/remote-control/).
+- **Sessions and remote access:** Start with [sessions](https://docs.graffitty.com/everyday-use/sessions/) and
+  [remote control](https://docs.graffitty.com/remote-access/).

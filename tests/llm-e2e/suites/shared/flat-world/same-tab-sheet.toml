@@ -1,0 +1,10 @@
+required_frontends = ["godot"]
+name = "same-tab-sheet"
+goal = "Selecting a pane of the tab on screen never plays a tab transition, even after the sheet stayed bound to a pane that is no longer the tab's first terminal."
+instructions = "same-tab-sheet.md"
+verify = "visual_continuity"
+turn_timeout_seconds = 300
+
+[adapters.godot]
+kind = "godot-replay"
+replay = "../../godot/flat-world/replays/same-tab-sheet.gd"

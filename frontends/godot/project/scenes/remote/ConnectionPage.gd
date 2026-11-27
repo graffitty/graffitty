@@ -2,6 +2,7 @@ extends PanelContainer
 ## A scrollable connection screen, not an exclusive dialog. Shared by the server
 ## list and editor so Back, resizing and the Android keyboard behave identically.
 const DesktopText := preload("res://scenes/DesktopText.gd")
+const BACKGROUND := Color("101720")
 signal confirmed
 signal canceled
 var heading := Label.new()
@@ -27,7 +28,7 @@ var ok_button_text := "Continue":
 func _ready() -> void:
 	set_anchors_and_offsets_preset(Control.PRESET_FULL_RECT)
 	var background := StyleBoxFlat.new()
-	background.bg_color = Color("101720")
+	background.bg_color = BACKGROUND
 	add_theme_stylebox_override("panel", background)
 	var layout := VBoxContainer.new()
 	add_child(layout)
